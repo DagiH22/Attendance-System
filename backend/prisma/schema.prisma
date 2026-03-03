@@ -1,0 +1,116 @@
+// backend/prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+
+// ENUMS
+
+enum AdminRole {
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum EventType {
+  ONE_TIME
+  WEEKLY
+  MONTHLY
+}
+
+enum MarkMethod {
+  QR
+  MANUAL
+}
+
+
+
+// MODELS
+
+model Member {
+  id           String       @id @default(uuid()) @db.Uuid
+  uniqueId     String       @unique // Unique string used for QR code generation
+  name         String
+  email        String       @unique
+  phone        String?
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  // Relations
+  attendances  Attendance[]
+
+  @@index([uniqueId])
+  @@index([email])
+  @@map("members")
+}
+
+model Admin {
+  id                String       @id @default(uuid()) @db.Uuid
+  name              String
+  email             String       @unique
+  password          String       // Hashed string
+  role              AdminRole    @default(ADMIN)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  // Relations
+  eventsCreated     Event[]      @relation("AdminToEvents")
+  attendancesMarked Attendance[] @relation("AdminToAttendances")
+
+  @@index([email])
+  @@map("admins")
+}
+
+model Event {
+  id          String       @id @default(uuid()) @db.Uuid
+  title       String
+  description String?
+  eventDate   DateTime     @db.Date
+  startTime   DateTime
+  endTime     DateTime
+  type        EventType    @default(ONE_TIME)
+  isActive    Boolean      @default(true)
+  endedAt     DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  // Foreign Keys
+  createdById String       @db.Uuid
+
+  // Relations
+  createdBy   Admin        @relation("AdminToEvents", fields: [createdById], references: [id])
+  attendances Attendance[]
+
+  @@index([eventDate])
+  @@index([createdById])
+  @@map("events")
+}
+
+model Attendance {
+  id           String     @id @default(uuid()) @db.Uuid
+  
+  // Foreign Keys
+  memberId     String     @db.Uuid
+  eventId      String     @db.Uuid
+  markedById   String     @db.Uuid
+
+  markedMethod MarkMethod // QR or MANUAL
+  markedAt     DateTime   @default(now())
+
+  // Relations
+  member       Member     @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  event        Event      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  markedBy     Admin      @relation("AdminToAttendances", fields: [markedById], references: [id])
+
+  // Constraints
+  @@unique([memberId, eventId], name: "memberId_eventId_unique")
+  @@index([eventId])
+  @@index([memberId])
+  @@map("attendances")
+}
