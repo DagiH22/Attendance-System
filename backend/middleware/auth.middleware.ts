@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 
-// Async wrapper around jwt.verify so we can use async/await
 const verifyTokenAsync = (token: string, secret: string) =>
   new Promise<any>((resolve, reject) => {
     jwt.verify(token, secret, (err: any, decoded: any) => {
@@ -44,7 +43,7 @@ export const verifyAuth = async (
       return res.status(401).json({ error: "Invalid or expired token" });
     }
 
-    // Attach admin payload to request
+    // attach admin payload to request
     // Expected payload shape: { id, email, role }
     req.admin = {
       id: decoded.id,
