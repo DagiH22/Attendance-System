@@ -3,10 +3,7 @@ import { PrismaClient, EventType } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-const requireSuperAdmin = (req: Request) => {
-  const role = req.admin?.role;
-  return role === "SUPER_ADMIN";
-};
+// Role checks are enforced with requireRole middleware at the route level
 
 /**
  * POST /api/events
@@ -19,9 +16,7 @@ export const createEvent = async (req: Request, res: Response) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    if (!requireSuperAdmin(req)) {
-      return res.status(403).json({ error: "Forbidden" });
-    }
+    // role enforced by requireRole middleware
 
     const { title, description, eventDate, startTime, endTime, type } =
       req.body ?? {};
@@ -107,9 +102,7 @@ export const deactivateEvent = async (req: Request, res: Response) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    if (!requireSuperAdmin(req)) {
-      return res.status(403).json({ error: "Forbidden" });
-    }
+    // role enforced by requireRole middleware
 
     const { id } = req.params;
     const idStr = Array.isArray(id) ? id[0] : id;

@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import authRouter from "./routes/auth.route";
 import memberRouter from "./routes/member.route";
 import eventRouter from "./routes/event.route";
+import attendanceRouter from "./routes/attendance.route";
 
 dotenv.config();
 
@@ -17,6 +18,7 @@ app.use(express.json());
 app.use("/api/auth", authRouter);
 app.use("/api/members", memberRouter);
 app.use("/api/events", eventRouter);
+app.use("/api/attendance", attendanceRouter);
 
 app.get("/", (_req, res) => res.json({ status: "ok" }));
 
