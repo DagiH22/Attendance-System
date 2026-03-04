@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
 import { getNextMezmurId } from "../utils/idGenerator";
+import { sendMemberEmail } from "../utils/email.service";
+import { generateQrWithLogo } from "../utils/qrCodeGenerator";
 
 const prisma = new PrismaClient();
 
@@ -38,6 +40,27 @@ export const createMember = async (req: Request, res: Response) => {
         isActive: typeof isActive === "boolean" ? isActive : true,
       },
     });
+
+    // Generate QR and send email in background (fire-and-forget)
+    (async () => {
+      try {
+        const qrCode = await generateQrWithLogo(created.uniqueId);
+        await sendMemberEmail(
+          created.email,
+          {
+            name: created.name,
+            uniqueId: created.uniqueId,
+            phone: created.phone,
+          },
+          qrCode,
+        );
+      } catch (bgError) {
+        console.error(
+          `Background task failed for member ${created.id}:`,
+          bgError,
+        );
+      }
+    })();
 
     // Member model doesn't contain sensitive fields by design; return created record
     return res.status(201).json({ member: created });
