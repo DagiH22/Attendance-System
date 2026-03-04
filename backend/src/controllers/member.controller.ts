@@ -1,35 +1,8 @@
 import { Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
-import crypto from "crypto";
+import { getNextMezmurId } from "../utils/idGenerator";
 
 const prisma = new PrismaClient();
-
-// Generate an alphanumeric id of length between min and max (inclusive)
-const generateRandomId = (min = 10, max = 12) => {
-  const chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  const length = Math.floor(Math.random() * (max - min + 1)) + min;
-  // Use crypto for secure randomness
-  const bytes = crypto.randomBytes(length);
-  let out = "";
-  for (let i = 0; i < length; i++) {
-    const idx = bytes[i] % chars.length;
-    out += chars[idx];
-  }
-  return out;
-};
-
-// Try to produce a unique uniqueId by checking the DB; limit attempts to avoid infinite loops
-const makeUniqueUniqueId = async (attempts = 10) => {
-  for (let i = 0; i < attempts; i++) {
-    const candidate = generateRandomId();
-    const existing = await prisma.member.findUnique({
-      where: { uniqueId: candidate },
-    });
-    if (!existing) return candidate;
-  }
-  throw new Error("Unable to generate unique uniqueId after multiple attempts");
-};
 
 export const createMember = async (req: Request, res: Response) => {
   try {
@@ -49,7 +22,12 @@ export const createMember = async (req: Request, res: Response) => {
         .json({ error: "A member with that email already exists" });
     }
 
-    const uniqueId = await makeUniqueUniqueId();
+    const currentYear = new Date().getFullYear().toString();
+    const existingMembers = await prisma.member.findMany({
+      where: { uniqueId: { startsWith: `MEZ-${currentYear}-` } },
+      select: { uniqueId: true },
+    });
+    const uniqueId = getNextMezmurId(existingMembers.map((m) => m.uniqueId));
 
     const created = await prisma.member.create({
       data: {
