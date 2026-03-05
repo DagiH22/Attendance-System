@@ -69,12 +69,10 @@ async function sendBrevoEmail(
 }
 
 /**
- * Sends a welcome email with the member's details and QR code.
- * This function handles the specific logic for member registration.
- *
- * @param memberEmail - The recipient's email address.
- * @param memberData - An object containing name, uniqueId, and phone.
- * @param qrBase64 - The base64 string of the QR code image.
+ Sends a welcome email with the member's details and QR code 
+ @param memberEmail - member's email address
+ @param memberData - object containing name, uniqueId, and phone
+ @param qrBase64 - base64 string of the qr code image
  */
 export const sendMemberEmail = async (
   memberEmail: string,
