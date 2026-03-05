@@ -5,6 +5,7 @@ import {
   Navigate,
 } from "react-router-dom";
 import Login from "./pages/Login";
+import EventsPage from "./pages/EventsPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import "./App.css";
 
@@ -16,19 +17,20 @@ function App() {
 
         {/* Protected Routes */}
         <Route element={<ProtectedRoute />}>
+          <Route path="/events" element={<EventsPage />} />
           <Route
-            path="/events"
+            path="/events/create"
             element={
-              <div>
-                <h1>Events</h1>
-                <button
-                  onClick={() => {
-                    localStorage.removeItem("token");
-                    window.location.href = "/login";
-                  }}
-                >
-                  Logout
-                </button>
+              <div className="p-4 text-center">
+                Create Event Page (Coming Soon)
+              </div>
+            }
+          />
+          <Route
+            path="/events/:id/attendance"
+            element={
+              <div className="p-4 text-center">
+                Attendance Page (Coming Soon)
               </div>
             }
           />
