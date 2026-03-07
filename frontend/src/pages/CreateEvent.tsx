@@ -7,6 +7,29 @@ const CreateEvent: React.FC = () => {
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const descriptionRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const MAX_DESCRIPTION_HEIGHT = 240; // (px)
+
+  const adjustDescriptionHeight = () => {
+    const el = descriptionRef.current;
+    if (!el) return;
+    // reset height to allow shrink
+    el.style.height = "auto";
+    const needed = el.scrollHeight;
+    if (needed <= MAX_DESCRIPTION_HEIGHT) {
+      el.style.height = `${needed}px`;
+      el.style.overflowY = "hidden";
+    } else {
+      el.style.height = `${MAX_DESCRIPTION_HEIGHT}px`;
+      el.style.overflowY = "auto";
+    }
+  };
+
+  useEffect(() => {
+    // adjust when content changes from code or initial render
+    adjustDescriptionHeight();
+  }, [description]);
   const [type, setType] = useState("one-time");
   const [eventDate, setEventDate] = useState("");
   const [startTime, setStartTime] = useState("");
@@ -211,11 +234,14 @@ const CreateEvent: React.FC = () => {
             </label>
             <textarea
               id="description"
+              ref={descriptionRef}
               rows={3}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
+              onInput={adjustDescriptionHeight}
               placeholder="Add some details about the event..."
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors resize-none"
+              style={{ maxHeight: `${MAX_DESCRIPTION_HEIGHT}px` }}
             />
           </div>
 
