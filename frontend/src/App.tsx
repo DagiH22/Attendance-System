@@ -7,6 +7,7 @@ import {
 import Login from "./pages/Login";
 import EventsPage from "./pages/EventsPage";
 import CreateEvent from "./pages/CreateEvent";
+import EventDetailsPage from "./pages/EventDetailsPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import "./App.css";
 
@@ -20,6 +21,7 @@ function App() {
         <Route element={<ProtectedRoute />}>
           <Route path="/events" element={<EventsPage />} />
           <Route path="/events/create" element={<CreateEvent />} />
+          <Route path="/events/:id" element={<EventDetailsPage />} />
           <Route
             path="/events/:id/attendance"
             element={

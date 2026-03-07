@@ -1,17 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
-
-export interface DashboardEvent {
-  id: string;
-  name: string;
-  startTime: string;
-  endTime: string;
-  status: "UPCOMING" | "ACTIVE" | "COMPLETED";
-  eventType: "WEEKLY" | "MONTHLY" | "ONE_TIME";
-  attendanceCount: number;
-  createdAt: string;
-}
+import type { DashboardEvent } from "../types/events";
 
 type StatusFilter = "ALL" | "ACTIVE" | "UPCOMING" | "COMPLETED";
 type TypeFilter = "ALL" | "WEEKLY" | "MONTHLY" | "ONE_TIME";
@@ -101,13 +91,20 @@ const EventsPage: React.FC = () => {
 
             return {
               id: event.id,
-              name: event.title,
+              title: event.title,
+              description: event.description || "",
               startTime: event.startTime,
               endTime: event.endTime,
               status,
               eventType: event.type as DashboardEvent["eventType"],
+              createdBy: {
+                id: event.admin?.id || event.createdBy?.id || "unknown-admin",
+                name:
+                  event.admin?.name || event.createdBy?.name || "Admin User",
+              },
               attendanceCount: event._count?.attendances || 0,
               createdAt: event.createdAt || eventStart.toISOString(),
+              totalMembers: event.totalMembers || 0,
             };
           },
         );
@@ -492,11 +489,26 @@ const EventsPage: React.FC = () => {
           sortedAndFilteredEvents.map((event) => (
             <div
               key={event.id}
-              className="bg-white rounded-xl shadow-sm border border-gray-100 p-4"
+              role="button"
+              tabIndex={0}
+              onClick={() =>
+                navigate(`/events/${event.id}`, {
+                  state: { event },
+                })
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  navigate(`/events/${event.id}`, {
+                    state: { event },
+                  });
+                }
+              }}
+              className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
             >
-              <div className="flex justify-between items-start mb-2">
+              <div className="flex justify-between items-start mb-2 gap-3">
                 <h3 className="text-lg font-bold text-gray-900 leading-tight">
-                  {event.name}
+                  {event.title}
                 </h3>
                 <span
                   className={`px-2.5 py-1 text-xs font-bold rounded-full border whitespace-nowrap ${getStatusColor(event.status)}`}
@@ -560,7 +572,10 @@ const EventsPage: React.FC = () => {
 
               <button
                 disabled={event.status !== "ACTIVE"}
-                onClick={() => navigate(`/events/${event.id}/attendance`)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/events/${event.id}/attendance`);
+                }}
                 className={`w-full py-2.5 px-4 rounded-lg font-semibold text-sm transition-colors duration-200 active:scale-[0.98] ${
                   event.status === "ACTIVE"
                     ? "bg-blue-600 hover:bg-blue-700 text-white shadow-sm"
