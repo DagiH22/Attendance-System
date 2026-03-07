@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
 
@@ -22,6 +22,38 @@ const CreateEvent: React.FC = () => {
 
   // Get today's string format (YYYY-MM-DD) for min date constraint
   const todayStr = new Date().toLocaleDateString("en-CA"); // 'en-CA' outputs YYYY-MM-DD
+
+  // Custom dropdown state to keep the options list width equal to the control
+  const typeWrapperRef = useRef<HTMLDivElement | null>(null);
+  const [typeMenuOpen, setTypeMenuOpen] = useState(false);
+  const [typeMenuWidth, setTypeMenuWidth] = useState<number | undefined>(
+    undefined,
+  );
+
+  useEffect(() => {
+    const updateWidth = () => {
+      if (typeWrapperRef.current) {
+        const rect = typeWrapperRef.current.getBoundingClientRect();
+        setTypeMenuWidth(rect.width);
+      }
+    };
+
+    updateWidth();
+    window.addEventListener("resize", updateWidth);
+    return () => window.removeEventListener("resize", updateWidth);
+  }, []);
+
+  // Close on outside click
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (!typeWrapperRef.current) return;
+      if (!typeWrapperRef.current.contains(e.target as Node)) {
+        setTypeMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
 
   // When type or eventDate changes, auto-set endDate if weekly
   React.useEffect(() => {
@@ -51,7 +83,6 @@ const CreateEvent: React.FC = () => {
     }
 
     if (!startTime || !endTime) return false;
-
 
     // If today, start time cannot be in the past
     if (eventDate === todayStr) {
@@ -83,16 +114,14 @@ const CreateEvent: React.FC = () => {
     setSuccess("");
 
     try {
- 
       // combine the date and time strings into an iso format
       // E.g., eventDate "2026-03-10", startTime "14:30" => "2026-03-10T14:30:00.000Z"
       const startDateTime = new Date(`${eventDate}T${startTime}`).toISOString();
       const endDateTime = new Date(`${eventDate}T${endTime}`).toISOString();
 
-
       let backendType = "ONE_TIME";
       if (type === "weekly") backendType = "WEEKLY";
-      if (type === "custom") backendType = "MONTHLY"; 
+      if (type === "custom") backendType = "MONTHLY";
 
       const payload = {
         title,
@@ -198,16 +227,78 @@ const CreateEvent: React.FC = () => {
             >
               Event Type
             </label>
-            <select
-              id="type"
-              value={type}
-              onChange={(e) => setType(e.target.value)}
-              className="w-full px-4 py-2.5 bg-white border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
-            >
-              <option value="one-time">One-time Event</option>
-              <option value="weekly">Weekly</option>
-              <option value="custom">Custom / Monthly</option>
-            </select>
+            {/* Custom select: keeps options list width equal to control width on mobile */}
+            <div ref={typeWrapperRef} className="relative w-full">
+              <button
+                type="button"
+                onClick={() => setTypeMenuOpen((s) => !s)}
+                aria-haspopup="listbox"
+                aria-expanded={typeMenuOpen}
+                className="w-full text-left px-4 py-2.5 bg-white border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors flex items-center justify-between"
+              >
+                <span>
+                  {type === "one-time"
+                    ? "One-time Event"
+                    : type === "weekly"
+                      ? "Weekly"
+                      : "Custom / Monthly"}
+                </span>
+                <svg
+                  className="w-4 h-4 text-gray-500"
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    d="M5 7l5 5 5-5"
+                    stroke="currentColor"
+                    strokeWidth={1.5}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+
+              {typeMenuOpen && (
+                <ul
+                  role="listbox"
+                  tabIndex={-1}
+                  className="absolute left-0 mt-1 z-50 bg-white border border-gray-200 rounded shadow-sm overflow-hidden"
+                  style={{ width: typeMenuWidth || "100%" }}
+                >
+                  <li
+                    role="option"
+                    className="px-4 py-2 hover:bg-blue-50 text-sm cursor-pointer"
+                    onClick={() => {
+                      setType("one-time");
+                      setTypeMenuOpen(false);
+                    }}
+                  >
+                    One-time Event
+                  </li>
+                  <li
+                    role="option"
+                    className="px-4 py-2 hover:bg-blue-50 text-sm cursor-pointer"
+                    onClick={() => {
+                      setType("weekly");
+                      setTypeMenuOpen(false);
+                    }}
+                  >
+                    Weekly
+                  </li>
+                  <li
+                    role="option"
+                    className="px-4 py-2 hover:bg-blue-50 text-sm cursor-pointer"
+                    onClick={() => {
+                      setType("custom");
+                      setTypeMenuOpen(false);
+                    }}
+                  >
+                    Custom / Monthly
+                  </li>
+                </ul>
+              )}
+            </div>
           </div>
 
           {/* Date & Time Grid */}
