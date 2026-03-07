@@ -14,11 +14,10 @@ const port = process.env.PORT ?? 4000;
 app.use(cors());
 app.use(express.json());
 
-// Mount routers
-app.use("/api/auth", authRouter);
-app.use("/api/members", memberRouter);
-app.use("/api/events", eventRouter);
-app.use("/api/attendance", attendanceRouter);
+app.use("/auth", authRouter);
+app.use("/members", memberRouter);
+app.use("/events", eventRouter);
+app.use("/attendance", attendanceRouter);
 
 app.get("/", (_req, res) => res.json({ status: "ok" }));
 
