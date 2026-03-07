@@ -10,6 +10,10 @@ export interface EventType {
   startTime: string;
   endTime: string;
   status: "UPCOMING" | "ACTIVE" | "CLOSED";
+  type: string;
+  _count?: {
+    attendances: number;
+  };
 }
 
 const EventsPage: React.FC = () => {
@@ -25,7 +29,6 @@ const EventsPage: React.FC = () => {
         // Backend returns { events: [...] }
         const fetchedEvents = response.data?.events || [];
 
-        // Ensure fetchedEvents is an array to prevent "map is not a function" error
         if (Array.isArray(fetchedEvents)) {
           // Transform backend data to match frontend EventType
           const transformedEvents = fetchedEvents.map((event: any) => {
@@ -46,10 +49,6 @@ const EventsPage: React.FC = () => {
               status = "UPCOMING";
             }
 
-            // If the backend has an explicit isActive flag that is false, consider it CLOSED or handle separately?
-            // The prompt requirements said status: "UPCOMING" | "ACTIVE" | "CLOSED".
-            // The DB has "isActive" boolean. Often "isActive=false" means cancelled/deleted soft.
-            // For now, let's stick to time-based status but respect explicit deactivation.
             if (event.isActive === false) {
               status = "CLOSED";
             }
@@ -172,8 +171,11 @@ const EventsPage: React.FC = () => {
             >
               <div className="p-5 md:p-6">
                 <div className="flex justify-between items-start mb-3 gap-2">
-                  <h2 className="text-xl font-semibold text-gray-900 leading-tight line-clamp-2">
-                    {event.title}
+                  <h2 className="text-xl font-semibold text-gray-900 leading-tight line-clamp-2 flex flex-col gap-1">
+                    <span>{event.title}</span>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 self-start border border-indigo-200 uppercase tracking-wide">
+                      {event.type.replace("_", " ")}
+                    </span>
                   </h2>
                   <span
                     className={`px-2.5 py-1 text-xs font-bold rounded-full border whitespace-nowrap ${getStatusBadgeStyles(event.status)}`}
@@ -189,6 +191,22 @@ const EventsPage: React.FC = () => {
                 )}
 
                 <div className="space-y-2 mb-6 text-sm md:text-base text-gray-600">
+                  <div className="flex items-center text-gray-800 font-medium bg-gray-50 p-2 rounded-lg border border-gray-100 mb-2">
+                    <svg
+                      className="w-5 h-5 mr-2 text-indigo-500"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
+                      ></path>
+                    </svg>
+                    Attendance: {event._count?.attendances || 0}
+                  </div>
                   <div className="flex items-center">
                     <svg
                       className="w-4 h-4 md:w-5 md:h-5 mr-2.5 text-gray-400"
@@ -229,6 +247,48 @@ const EventsPage: React.FC = () => {
                       : event.endTime}
                   </div>
                 </div>
+
+                {event.type === "WEEKLY" && (
+                  <div className="mb-6 bg-blue-50 p-3 rounded-lg border border-blue-100">
+                    <h3 className="text-sm font-semibold text-blue-900 mb-2 flex items-center">
+                      <svg
+                        className="w-4 h-4 mr-1.5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                        ></path>
+                      </svg>
+                      Next Occurrences
+                    </h3>
+                    <div className="flex flex-wrap gap-2">
+                      {[1, 2, 3].map((weekOffset) => {
+                        const d = new Date(event.eventDate);
+                        if (isNaN(d.getTime())) return null;
+
+                        // Add 7 days * offset
+                        d.setDate(d.getDate() + 7 * weekOffset);
+
+                        return (
+                          <span
+                            key={weekOffset}
+                            className="text-xs font-medium text-blue-800 bg-white px-2 py-1 rounded border border-blue-200 shadow-sm"
+                          >
+                            {d.toLocaleDateString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                            })}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 <button
                   disabled={event.status !== "ACTIVE"}

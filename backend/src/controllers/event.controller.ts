@@ -68,7 +68,12 @@ export const createEvent = async (req: Request, res: Response) => {
 export const getAllEvents = async (_req: Request, res: Response) => {
   try {
     const events = await prisma.event.findMany({
-      orderBy: [{ eventDate: "desc" }, { startTime: "desc" }],
+      orderBy: [{ eventDate: "asc" }, { startTime: "asc" }],
+      include: {
+        _count: {
+          select: { attendances: true },
+        },
+      },
     });
     return res.status(200).json({ events });
   } catch (err: any) {

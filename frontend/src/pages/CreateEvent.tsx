@@ -17,24 +17,82 @@ const CreateEvent: React.FC = () => {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  const [dateError, setDateError] = useState("");
+  const [timeError, setTimeError] = useState("");
+
+  // Get today's string format (YYYY-MM-DD) for min date constraint
+  const todayStr = new Date().toLocaleDateString("en-CA"); // 'en-CA' outputs YYYY-MM-DD
+
+  // When type or eventDate changes, auto-set endDate if weekly
+  React.useEffect(() => {
+    if (type === "weekly" && eventDate) {
+      const start = new Date(eventDate);
+      if (!isNaN(start.getTime())) {
+        const end = new Date(start.getTime());
+        end.setMonth(end.getMonth() + 1);
+        setEndDate(end.toLocaleDateString("en-CA"));
+      }
+    }
+  }, [type, eventDate]);
+
+  // Validation logic
+  const validateForm = () => {
+    let isValid = true;
+    setDateError("");
+    setTimeError("");
+
+    if (!eventDate) return false;
+
+    // Event Date Validation (no past dates)
+    // We add timezone offset handling to compare dates directly or use the string comparison
+    if (eventDate < todayStr) {
+      setDateError("Event date cannot be in the past");
+      isValid = false;
+    }
+
+    if (!startTime || !endTime) return false;
+
+
+    // If today, start time cannot be in the past
+    if (eventDate === todayStr) {
+      const now = new Date();
+      const currentHoursStr = now.getHours().toString().padStart(2, "0");
+      const currentMinutesStr = now.getMinutes().toString().padStart(2, "0");
+      const currentTimeStr = `${currentHoursStr}:${currentMinutesStr}`;
+
+      if (startTime < currentTimeStr) {
+        setTimeError("Start time cannot be in the past");
+        isValid = false;
+      }
+    }
+
+    // End time must be after start time
+    if (endTime <= startTime) {
+      setTimeError("End time must be after start time");
+      isValid = false;
+    }
+
+    return isValid;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!validateForm()) return;
     setLoading(true);
     setError("");
     setSuccess("");
 
     try {
-      // The backend expects a valid date-time string.
-      // We combine the date and time strings into an ISO format.
+ 
+      // combine the date and time strings into an iso format
       // E.g., eventDate "2026-03-10", startTime "14:30" => "2026-03-10T14:30:00.000Z"
       const startDateTime = new Date(`${eventDate}T${startTime}`).toISOString();
       const endDateTime = new Date(`${eventDate}T${endTime}`).toISOString();
 
-      // Determine what enum value the backend expects.
-      // Prisma has: ONE_TIME, WEEKLY, MONTHLY.
+
       let backendType = "ONE_TIME";
       if (type === "weekly") backendType = "WEEKLY";
-      if (type === "custom") backendType = "MONTHLY"; // Or leave as ONE_TIME if CUSTOM isn't in backend
+      if (type === "custom") backendType = "MONTHLY"; 
 
       const payload = {
         title,
@@ -55,7 +113,7 @@ const CreateEvent: React.FC = () => {
       // Redirect after a short delay so the user sees the success message
       setTimeout(() => {
         navigate("/events");
-      }, 1500);
+      }, 1000);
     } catch (err: any) {
       console.error("Error creating event:", err);
       setError(
@@ -165,10 +223,16 @@ const CreateEvent: React.FC = () => {
                 type="date"
                 id="eventDate"
                 required
+                min={todayStr}
                 value={eventDate}
                 onChange={(e) => setEventDate(e.target.value)}
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+                className={`w-full px-4 py-2.5 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${dateError ? "border-red-300 bg-red-50" : "border-gray-300"}`}
               />
+              {dateError && (
+                <p className="mt-1 text-xs text-red-600 font-medium">
+                  {dateError}
+                </p>
+              )}
             </div>
 
             {(type === "weekly" || type === "custom") && (
@@ -182,6 +246,7 @@ const CreateEvent: React.FC = () => {
                 <input
                   type="date"
                   id="endDate"
+                  min={eventDate || todayStr}
                   required={type === "weekly" || type === "custom"}
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
@@ -203,7 +268,7 @@ const CreateEvent: React.FC = () => {
                 required
                 value={startTime}
                 onChange={(e) => setStartTime(e.target.value)}
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+                className={`w-full px-4 py-2.5 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${timeError ? "border-red-300 bg-red-50" : "border-gray-300"}`}
               />
             </div>
 
@@ -220,10 +285,60 @@ const CreateEvent: React.FC = () => {
                 required
                 value={endTime}
                 onChange={(e) => setEndTime(e.target.value)}
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+                className={`w-full px-4 py-2.5 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${timeError ? "border-red-300 bg-red-50" : "border-gray-300"}`}
               />
             </div>
+            {timeError && (
+              <div className="md:col-span-2">
+                <p className="text-xs text-red-600 font-medium">{timeError}</p>
+              </div>
+            )}
           </div>
+
+          {/* Weekly Occurrences Preview */}
+          {type === "weekly" && eventDate && (
+            <div className="bg-blue-50/50 p-4 rounded-lg border border-blue-100">
+              <h3 className="text-sm font-semibold text-blue-900 mb-3">
+                Next Occurrences
+              </h3>
+              <ul className="space-y-2">
+                {[1, 2, 3].map((weekOffset) => {
+                  const d = new Date(eventDate);
+                  if (isNaN(d.getTime())) return null;
+
+                  // Add 7 days * offset
+                  d.setDate(d.getDate() + 7 * weekOffset);
+
+                  const formattedDate = d.toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                  });
+
+                  return (
+                    <li
+                      key={weekOffset}
+                      className="flex items-center text-sm text-blue-800 bg-white px-3 py-2 rounded border border-blue-100 shadow-sm"
+                    >
+                      <svg
+                        className="w-4 h-4 mr-2 text-blue-500"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                        ></path>
+                      </svg>
+                      {formattedDate}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
 
           <div className="pt-4">
             <button
