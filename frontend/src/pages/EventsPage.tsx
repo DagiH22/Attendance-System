@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
 import type { DashboardEvent } from "../types/events";
+import { useAuth } from "../contexts/AuthContext";
 
 type StatusFilter = "ALL" | "ACTIVE" | "UPCOMING" | "COMPLETED";
 type TypeFilter = "ALL" | "WEEKLY" | "MONTHLY" | "ONE_TIME";
@@ -22,6 +23,19 @@ const EventsPage: React.FC = () => {
   const [sortBy, setSortBy] = useState<SortOption>("NEXT_EVENT");
   const [isSortModalOpen, setIsSortModalOpen] = useState(false);
 
+  // Search State
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+
+  // Debounce effect
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
   // Dropdown states for desktop
   const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
   const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
@@ -32,6 +46,7 @@ const EventsPage: React.FC = () => {
   const typeDropdownRef = React.useRef<HTMLDivElement>(null);
 
   const navigate = useNavigate();
+  const { logout } = useAuth();
 
   useEffect(() => {
     fetchEvents();
@@ -126,7 +141,16 @@ const EventsPage: React.FC = () => {
   const filteredEvents = events.filter((e) => {
     const matchStatus = statusFilter === "ALL" || e.status === statusFilter;
     const matchType = typeFilter === "ALL" || e.eventType === typeFilter;
-    return matchStatus && matchType;
+
+    // Search matching logic (case-insensitive on title, description, and eventType)
+    const normalizedSearch = debouncedSearchQuery.toLowerCase().trim();
+    const matchSearch =
+      normalizedSearch === "" ||
+      e.title.toLowerCase().includes(normalizedSearch) ||
+      e.description.toLowerCase().includes(normalizedSearch) ||
+      e.eventType.toLowerCase().replace("_", " ").includes(normalizedSearch);
+
+    return matchStatus && matchType && matchSearch;
   });
 
   const sortedAndFilteredEvents = [...filteredEvents].sort((a, b) => {
@@ -195,9 +219,9 @@ const EventsPage: React.FC = () => {
         <div className="flex justify-between items-center mb-4 max-w-4xl mx-auto w-full">
           <h1 className="text-2xl font-bold text-gray-900">Events</h1>
           <button
-            onClick={() => {
-              localStorage.removeItem("token");
-              navigate("/login");
+            onClick={async () => {
+              await logout();
+              navigate("/login", { replace: true });
             }}
             className="text-sm font-medium text-red-600 bg-red-50 px-3 py-1.5 rounded-md"
           >
@@ -206,6 +230,53 @@ const EventsPage: React.FC = () => {
         </div>
 
         <div className="max-w-4xl mx-auto w-full">
+          {/* Search Bar */}
+          <div className="relative mb-4">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <svg
+                className="w-5 h-5 text-gray-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                ></path>
+              </svg>
+            </div>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by title, description, or type..."
+              className="w-full pl-10 pr-10 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors placeholder-gray-400 text-gray-900"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                aria-label="Clear search"
+              >
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M6 18L18 6M6 6l12 12"
+                  ></path>
+                </svg>
+              </button>
+            )}
+          </div>
+
           {/* Mobile view filters (visible only on small screens) */}
           <div className="md:hidden">
             <div className="flex overflow-x-auto no-scrollbar gap-2 mb-3 pb-1">

@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import api from "../lib/api";
+import { useAuth } from "../contexts/AuthContext";
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState("");
@@ -9,28 +9,33 @@ const Login: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
 
   const navigate = useNavigate();
+  const { login, isAuthenticated, sessionMessage, clearSessionMessage } =
+    useAuth();
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate("/events", { replace: true });
+    }
+  }, [isAuthenticated, navigate]);
+
+  useEffect(() => {
+    if (sessionMessage) {
+      setError(sessionMessage);
+    }
+  }, [sessionMessage]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError("");
+    clearSessionMessage();
 
     try {
-      // The backend mounts auth routes under /api/auth
-      const response = await api.post("/auth/login", { email, password });
-
-      const { token } = response.data;
-
-      if (token) {
-        localStorage.setItem("token", token);
-        navigate("/events");
-      } else {
-        setError("Login failed. No token received.");
-      }
+      await login(email, password);
+      navigate("/events", { replace: true });
     } catch (err: any) {
-      // Improved error handling to surface server messages and status
       console.error("Login error:", err);
-      const serverMessage = err?.response?.data?.message;
+      const serverMessage = err?.response?.data?.error;
       const statusText = err?.response?.statusText;
       const statusCode = err?.response?.status;
 

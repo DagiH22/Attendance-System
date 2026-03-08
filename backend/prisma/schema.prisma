@@ -61,9 +61,28 @@ model Admin {
   // Relations
   eventsCreated     Event[]      @relation("AdminToEvents")
   attendancesMarked Attendance[] @relation("AdminToAttendances")
+  refreshSessions   RefreshSession[]
 
   @@index([email])
   @@map("admins")
+}
+
+model RefreshSession {
+  id         String   @id @default(uuid()) @db.Uuid
+  adminId    String   @db.Uuid
+  tokenHash  String
+  userAgent  String?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  admin      Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([expiresAt])
+  @@index([revokedAt])
+  @@map("refresh_sessions")
 }
 
 model Event {

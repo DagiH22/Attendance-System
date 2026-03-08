@@ -1,13 +1,6 @@
-import { Request, Response, NextFunction } from "express";
+import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-
-const verifyTokenAsync = (token: string, secret: string) =>
-  new Promise<any>((resolve, reject) => {
-    jwt.verify(token, secret, (err: any, decoded: any) => {
-      if (err) return reject(err);
-      return resolve(decoded);
-    });
-  });
+import { verifyAccessToken } from "../utils/token.utils";
 
 export const verifyAuth = async (
   req: Request,
@@ -27,20 +20,18 @@ export const verifyAuth = async (
     }
 
     const token = parts[1];
-    const jwtSecret = process.env.JWT_SECRET;
-    if (!jwtSecret) {
-      console.error("JWT_SECRET is not configured");
-      return res
-        .status(500)
-        .json({ error: "Authentication configuration error" });
-    }
-
     let decoded: any;
     try {
-      decoded = await verifyTokenAsync(token, jwtSecret);
+      decoded = verifyAccessToken(token);
     } catch (err) {
-      console.warn("Invalid JWT:", err);
-      return res.status(401).json({ error: "Invalid or expired token" });
+      const isExpired = err instanceof jwt.TokenExpiredError;
+      console.warn("Access token verification failed:", err);
+      return res.status(401).json({
+        error: isExpired
+          ? "Session expired. Please sign in again."
+          : "Unauthorized",
+        code: isExpired ? "ACCESS_TOKEN_EXPIRED" : "UNAUTHORIZED",
+      });
     }
 
     // attach admin payload to request
