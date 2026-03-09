@@ -52,6 +52,7 @@ const mapEventToDashboardEvent = (event: any): DashboardEvent => {
     endTime: event.endTime ?? eventEnd.toISOString(),
     status,
     attendanceOpen,
+    location: event.location || "",
     eventType: event.type as DashboardEvent["eventType"],
     createdBy: {
       id: event.admin?.id || event.createdBy?.id || "unknown-admin",
@@ -836,6 +837,27 @@ const EventsPage: React.FC = () => {
                   </svg>
                   {formatTime(event.startTime)} - {formatTime(event.endTime)}
                 </div>
+                {event.location && (
+                  <div className="flex items-center">
+                    <svg
+                      className="w-4 h-4 mr-2 text-gray-400"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M12 2C8.686 2 6 4.686 6 8c0 5.25 6 12 6 12s6-6.75 6-12c0-3.314-2.686-6-6-6zm0 8a2 2 0 110-4 2 2 0 010 4z"
+                      />
+                    </svg>
+                    <span className="truncate font-medium text-gray-800">
+                      {event.location}
+                    </span>
+                  </div>
+                )}
+                
               </div>
 
               <button

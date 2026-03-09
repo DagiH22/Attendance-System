@@ -7,6 +7,7 @@ const CreateEvent: React.FC = () => {
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [location, setLocation] = useState("");
   const descriptionRef = useRef<HTMLTextAreaElement | null>(null);
 
   const MAX_DESCRIPTION_HEIGHT = 240; // (px)
@@ -42,6 +43,7 @@ const CreateEvent: React.FC = () => {
 
   const [dateError, setDateError] = useState("");
   const [timeError, setTimeError] = useState("");
+  const [locationError, setLocationError] = useState("");
 
   // Get today's string format (YYYY-MM-DD) for min date constraint
   const todayStr = new Date().toLocaleDateString("en-CA"); // 'en-CA' outputs YYYY-MM-DD
@@ -95,6 +97,7 @@ const CreateEvent: React.FC = () => {
     let isValid = true;
     setDateError("");
     setTimeError("");
+    setLocationError("");
 
     if (!eventDate) return false;
 
@@ -106,6 +109,12 @@ const CreateEvent: React.FC = () => {
     }
 
     if (!startTime || !endTime) return false;
+
+    // Location must be provided
+    if (!location || location.trim() === "") {
+      setLocationError("Location is required");
+      isValid = false;
+    }
 
     // If today, start time cannot be in the past
     if (eventDate === todayStr) {
@@ -153,6 +162,7 @@ const CreateEvent: React.FC = () => {
         eventDate: new Date(eventDate).toISOString(),
         startTime: startDateTime,
         endTime: endDateTime,
+        location: location.trim(),
         ...((type === "weekly" || type === "custom") && endDate
           ? { endDate: new Date(endDate).toISOString() }
           : {}),
@@ -243,6 +253,30 @@ const CreateEvent: React.FC = () => {
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors resize-none"
               style={{ maxHeight: `${MAX_DESCRIPTION_HEIGHT}px` }}
             />
+          </div>
+
+          {/* Location */}
+          <div>
+            <label
+              htmlFor="location"
+              className="block text-sm font-medium text-gray-700 mb-1"
+            >
+              Location
+            </label>
+            <input
+              type="text"
+              id="location"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder="e.g. Main Hall, Building A"
+              required
+              className={`w-full px-4 py-2.5 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${locationError ? "border-red-300 bg-red-50" : "border-gray-300"}`}
+            />
+            {locationError && (
+              <p className="mt-1 text-xs text-red-600 font-medium">
+                {locationError}
+              </p>
+            )}
           </div>
 
           {/* Event Type */}

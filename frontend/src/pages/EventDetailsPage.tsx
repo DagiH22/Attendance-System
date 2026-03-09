@@ -42,6 +42,7 @@ const mapEventToDashboardEvent = (rawEvent: any): DashboardEvent => {
     endTime: rawEvent.endTime ?? eventEnd.toISOString(),
     status,
     attendanceOpen,
+    location: rawEvent.location || "",
     eventType: rawEvent.type,
     createdAt: rawEvent.createdAt || eventStart.toISOString(),
     createdBy: {
@@ -272,6 +273,18 @@ const EventDetailsPage: React.FC = () => {
                 }
                 label="Date"
                 value={formatDate(event.startTime)}
+              />
+              <InfoRow
+                icon={
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M12 2C8.686 2 6 4.686 6 8c0 5.25 6 12 6 12s6-6.75 6-12c0-3.314-2.686-6-6-6zm0 8a2 2 0 110-4 2 2 0 010 4z"
+                  />
+                }
+                label="Location"
+                value={event.location || "—"}
               />
               <InfoRow
                 icon={

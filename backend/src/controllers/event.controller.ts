@@ -23,12 +23,19 @@ export const createEvent = async (req: Request, res: Response) => {
 
     // role enforced by requireRole middleware
 
-    const { title, description, eventDate, startTime, endTime, type } =
-      req.body ?? {};
+    const {
+      title,
+      description,
+      eventDate,
+      startTime,
+      endTime,
+      type,
+      location,
+    } = req.body ?? {};
 
-    if (!title || !eventDate || !startTime || !endTime) {
+    if (!title || !eventDate || !startTime || !endTime || !location) {
       return res.status(400).json({
-        error: "title, eventDate, startTime and endTime are required",
+        error: "title, eventDate, startTime, endTime and location are required",
       });
     }
 
@@ -49,6 +56,13 @@ export const createEvent = async (req: Request, res: Response) => {
         ? type
         : EventType.ONE_TIME;
 
+    // validate location string
+    if (typeof location !== "string" || location.trim() === "") {
+      return res
+        .status(400)
+        .json({ error: "location must be a non-empty string" });
+    }
+
     const created = await prisma.event.create({
       data: {
         title,
@@ -57,6 +71,7 @@ export const createEvent = async (req: Request, res: Response) => {
         startTime: parsedStartTime,
         endTime: parsedEndTime,
         type: eventType,
+        location: location.trim(),
         createdById: req.admin.id,
       },
       include: { _count: { select: { attendances: true } } },
