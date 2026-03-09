@@ -1,28 +1,12 @@
 import { Request, Response } from "express";
 import { PrismaClient, EventType } from "@prisma/client";
+import {
+  computeEventLifecycle,
+  serializeEventForResponse,
+  type EventStatus,
+} from "../services/event-lifecycle.service";
 
 const prisma = new PrismaClient();
-
-type EventStatus = "UPCOMING" | "ACTIVE" | "PAST" | "DEACTIVATED";
-
-const buildEventClassificationDate = (
-  eventDate: Date,
-  startTime?: Date | null,
-) => {
-  const baseEventDate = new Date(eventDate);
-
-  if (startTime) {
-    const normalizedStartTime = new Date(startTime);
-    baseEventDate.setHours(
-      normalizedStartTime.getHours(),
-      normalizedStartTime.getMinutes(),
-      normalizedStartTime.getSeconds(),
-      normalizedStartTime.getMilliseconds(),
-    );
-  }
-
-  return baseEventDate;
-};
 
 // Role checks are enforced with requireRole middleware at the route level
 
@@ -75,9 +59,10 @@ export const createEvent = async (req: Request, res: Response) => {
         type: eventType,
         createdById: req.admin.id,
       },
+      include: { _count: { select: { attendances: true } } },
     });
 
-    return res.status(201).json({ event: created });
+    return res.status(201).json({ event: serializeEventForResponse(created) });
   } catch (err: any) {
     console.error("Error in createEvent:", err?.message ?? err);
     return res.status(500).json({ error: "Internal server error" });
@@ -108,7 +93,7 @@ export const getAllEvents = async (req: Request, res: Response) => {
       prisma.event.findMany({
         where: {
           isActive: true,
-          startTime: { gt: now },
+          AND: [{ startTime: { gt: now } }],
         },
         orderBy: [{ startTime: "asc" }, { eventDate: "asc" }],
         include: { _count: { select: { attendances: true } } },
@@ -149,78 +134,32 @@ export const getAllEvents = async (req: Request, res: Response) => {
     const idSeen = new Set<string>();
     const ordered: Array<any> = [];
 
-    const toISO = (d?: Date | null) => (d ? new Date(d).toISOString() : null);
-    const assumeEndTime = (start?: Date | null) => {
-      if (!start) return null;
-      const s = new Date(start);
-      s.setHours(s.getHours() + 2);
-      return s;
-    };
+    const classifyAndPush = (evs: any[], expectedStatuses: EventStatus[]) => {
+      for (const event of evs) {
+        if (idSeen.has(event.id)) continue;
 
-    const classifyAndPush = (
-      evs: any[],
-      classifier: (e: any) => EventStatus,
-    ) => {
-      for (const e of evs) {
-        if (idSeen.has(e.id)) continue;
-        idSeen.add(e.id);
+        const lifecycle = computeEventLifecycle(event, now);
+        if (!expectedStatuses.includes(lifecycle.status)) {
+          continue;
+        }
 
-        const start = e.startTime
-          ? new Date(e.startTime)
-          : new Date(e.eventDate);
-        const end = e.endTime ? new Date(e.endTime) : assumeEndTime(start);
-
-        const status = !e.isActive
-          ? ("DEACTIVATED" as EventStatus)
-          : classifier({ start, end, now });
-
-        ordered.push({
-          ...e,
-          startTime: toISO(start),
-          endTime: toISO(end),
-          createdAt: toISO(e.createdAt),
-          updatedAt: toISO(e.updatedAt),
-          status,
-        });
+        idSeen.add(event.id);
+        ordered.push(serializeEventForResponse(event, now));
       }
     };
 
-    const upcomingClassifier = ({ start }: { start: Date }) =>
-      start > now ? ("UPCOMING" as EventStatus) : ("ACTIVE" as EventStatus);
-    const activeClassifier = ({
-      start,
-      end,
-      now: n,
-    }: {
-      start: Date;
-      end: Date | null;
-      now: Date;
-    }) => {
-      if (end && start <= n && n <= end) return "ACTIVE" as EventStatus;
-      if (!end && start <= n && assumeEndTime(start)! >= n)
-        return "ACTIVE" as EventStatus;
-      return start > n ? ("UPCOMING" as EventStatus) : ("PAST" as EventStatus);
-    };
-    const pastClassifier = ({
-      start,
-      end,
-      now: n,
-    }: {
-      start: Date;
-      end: Date | null;
-      now: Date;
-    }) => {
-      if (end && end < n) return "PAST" as EventStatus;
-      if (!end && start < n) return "PAST" as EventStatus;
-      return start > n
-        ? ("UPCOMING" as EventStatus)
-        : ("ACTIVE" as EventStatus);
-    };
+    // Priority order: ACTIVE events should appear before UPCOMING ones
+    // First include events that are already ACTIVE (startTime <= now)
+    classifyAndPush(activeCandidates, ["ACTIVE"]);
 
-    classifyAndPush(upcomingCandidates, upcomingClassifier);
-    classifyAndPush(activeCandidates, activeClassifier);
-    classifyAndPush(deactivatedEvents, () => "DEACTIVATED");
-    classifyAndPush(pastCandidates, pastClassifier);
+    // upcomingCandidates may include events whose startTime is in the future
+    // but whose activationTime (startTime - PRE_ACTIVE_WINDOW) has already
+    // passed — these should be treated as ACTIVE. Allow upcomingCandidates
+    // to contribute both ACTIVE and UPCOMING statuses so pre-active events
+    // are not accidentally omitted.
+    classifyAndPush(upcomingCandidates, ["ACTIVE", "UPCOMING"]);
+    classifyAndPush(deactivatedEvents, ["DEACTIVATED"]);
+    classifyAndPush(pastCandidates, ["PAST"]);
 
     const events = ordered.slice(offset, offset + limit);
 
@@ -238,10 +177,13 @@ export const getEventById = async (req: Request, res: Response) => {
     const idStr = Array.isArray(id) ? id[0] : id;
     if (!idStr) return res.status(400).json({ error: "Event id is required" });
 
-    const event = await prisma.event.findUnique({ where: { id: idStr } });
+    const event = await prisma.event.findUnique({
+      where: { id: idStr },
+      include: { _count: { select: { attendances: true } } },
+    });
     if (!event) return res.status(404).json({ error: "Event not found" });
 
-    return res.status(200).json({ event });
+    return res.status(200).json({ event: serializeEventForResponse(event) });
   } catch (err: any) {
     console.error("Error in getEventById:", err?.message ?? err);
     return res.status(500).json({ error: "Internal server error" });
@@ -268,13 +210,51 @@ export const deactivateEvent = async (req: Request, res: Response) => {
     const updated = await prisma.event.update({
       where: { id: idStr },
       data: { isActive: false },
+      include: { _count: { select: { attendances: true } } },
     });
 
-    return res.status(200).json({ event: updated });
+    return res.status(200).json({ event: serializeEventForResponse(updated) });
   } catch (err: any) {
     console.error("Error in deactivateEvent:", err?.message ?? err);
     return res.status(500).json({ error: "Internal server error" });
   }
 };
 
-export default { createEvent, getAllEvents, getEventById, deactivateEvent };
+export const closeEvent = async (req: Request, res: Response) => {
+  try {
+    if (!req.admin?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { id } = req.params;
+    const idStr = Array.isArray(id) ? id[0] : id;
+    if (!idStr) return res.status(400).json({ error: "Event id is required" });
+
+    const existing = await prisma.event.findUnique({ where: { id: idStr } });
+    if (!existing) return res.status(404).json({ error: "Event not found" });
+    if (!existing.isActive) {
+      return res
+        .status(400)
+        .json({ error: "Deactivated events cannot be manually closed" });
+    }
+
+    const updated = await prisma.event.update({
+      where: { id: idStr },
+      data: { endedAt: existing.endedAt ?? new Date() },
+      include: { _count: { select: { attendances: true } } },
+    });
+
+    return res.status(200).json({ event: serializeEventForResponse(updated) });
+  } catch (err: any) {
+    console.error("Error in closeEvent:", err?.message ?? err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+export default {
+  createEvent,
+  getAllEvents,
+  getEventById,
+  deactivateEvent,
+  closeEvent,
+};

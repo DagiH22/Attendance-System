@@ -94,6 +94,7 @@ model Event {
   endTime     DateTime
   type        EventType    @default(ONE_TIME)
   isActive    Boolean      @default(true)
+  manuallyClosedAt DateTime?
   endedAt     DateTime?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt

@@ -2,6 +2,7 @@ import { Router } from "express";
 import verifyAuth from "../middleware/auth.middleware";
 import { requireRole } from "../middleware/role.middleware";
 import {
+  closeEvent,
   createEvent,
   deactivateEvent,
   getAllEvents,
@@ -24,5 +25,8 @@ router.get("/:id", getEventById);
 
 // deactivate an event (super admin only)
 router.patch("/:id/deactivate", requireRole("SUPER_ADMIN"), deactivateEvent);
+
+// manually close an event without deactivating it
+router.patch("/:id/close", requireRole("SUPER_ADMIN"), closeEvent);
 
 export default router;

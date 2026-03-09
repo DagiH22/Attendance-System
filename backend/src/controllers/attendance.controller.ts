@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { PrismaClient, MarkMethod } from "@prisma/client";
+import { computeEventLifecycle } from "../services/event-lifecycle.service";
 
 const prisma = new PrismaClient();
 
@@ -35,13 +36,19 @@ export const markAttendance = async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Member not found" });
     }
 
-    // 2. Ensure event exists and is active
+    // 2. Ensure event exists and attendance is currently open
     const event = await prisma.event.findUnique({ where: { id: eventId } });
     if (!event) {
       return res.status(404).json({ error: "Event not found" });
     }
-    if (!event.isActive) {
-      return res.status(400).json({ error: "Event is not active" });
+    const lifecycle = computeEventLifecycle(event);
+    if (!lifecycle.attendanceOpen) {
+      return res.status(400).json({
+        error:
+          lifecycle.status === "DEACTIVATED"
+            ? "Event is deactivated"
+            : "Attendance is only allowed while the event is ACTIVE",
+      });
     }
 
     // 3. Create attendance

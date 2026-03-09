@@ -13,6 +13,7 @@ export interface DashboardEvent {
   startTime: string;
   endTime: string;
   status: EventStatus;
+  attendanceOpen: boolean;
   eventType: EventType;
   createdAt: string;
   createdBy: EventCreator;

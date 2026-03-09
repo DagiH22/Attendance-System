@@ -6,10 +6,13 @@ import authRouter from "./routes/auth.route";
 import memberRouter from "./routes/member.route";
 import eventRouter from "./routes/event.route";
 import attendanceRouter from "./routes/attendance.route";
+import { PrismaClient } from "@prisma/client";
+import { startEventLifecycleScheduler } from "./services/event-lifecycle.service";
 
 dotenv.config();
 
 const app = express();
+const prisma = new PrismaClient();
 const port = process.env.PORT ?? 4000;
 const clientOrigin = process.env.CLIENT_URL ?? "http://localhost:5173";
 
@@ -28,6 +31,8 @@ app.use("/events", eventRouter);
 app.use("/attendance", attendanceRouter);
 
 app.get("/", (_req, res) => res.json({ status: "ok" }));
+
+startEventLifecycleScheduler(prisma);
 
 app.listen(port, () => {
   console.log(`Server listening on http://localhost:${port}`);

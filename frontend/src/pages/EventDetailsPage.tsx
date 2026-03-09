@@ -7,6 +7,53 @@ type LocationState = {
   event?: DashboardEvent;
 };
 
+const mapEventToDashboardEvent = (rawEvent: any): DashboardEvent => {
+  const now = new Date();
+  const eventStart = rawEvent.startTime
+    ? new Date(rawEvent.startTime)
+    : new Date(rawEvent.eventDate ?? now);
+  const eventEnd = rawEvent.endTime
+    ? new Date(rawEvent.endTime)
+    : new Date(eventStart.getTime() + 2 * 60 * 60 * 1000);
+
+  let status: DashboardEvent["status"] =
+    (rawEvent.status as DashboardEvent["status"]) ?? "UPCOMING";
+  let attendanceOpen = Boolean(rawEvent.attendanceOpen);
+
+  if (!rawEvent.status) {
+    if (rawEvent.isActive === false) {
+      status = "DEACTIVATED";
+    } else if (now >= eventStart && now <= eventEnd) {
+      status = "ACTIVE";
+    } else if (now > eventEnd) {
+      status = "PAST";
+    } else {
+      status = "UPCOMING";
+    }
+
+    attendanceOpen = status === "ACTIVE";
+  }
+
+  return {
+    id: rawEvent.id,
+    title: rawEvent.title,
+    description: rawEvent.description || "No description provided.",
+    startTime: rawEvent.startTime ?? eventStart.toISOString(),
+    endTime: rawEvent.endTime ?? eventEnd.toISOString(),
+    status,
+    attendanceOpen,
+    eventType: rawEvent.type,
+    createdAt: rawEvent.createdAt || eventStart.toISOString(),
+    createdBy: {
+      id: rawEvent.admin?.id || rawEvent.createdBy?.id || "unknown-admin",
+      name: rawEvent.admin?.name || rawEvent.createdBy?.name || "Admin User",
+    },
+    attendanceCount:
+      rawEvent._count?.attendances || rawEvent.attendanceCount || 0,
+    totalMembers: rawEvent.totalMembers || 0,
+  };
+};
+
 const EventDetailsPage: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
@@ -20,7 +67,7 @@ const EventDetailsPage: React.FC = () => {
   const [error, setError] = useState<string>("");
 
   useEffect(() => {
-    if (state?.event || !id) {
+    if (!id) {
       return;
     }
 
@@ -36,42 +83,7 @@ const EventDetailsPage: React.FC = () => {
           throw new Error("Event not found");
         }
 
-        const now = new Date();
-        const eventStart = new Date(rawEvent.startTime);
-        const eventEnd = rawEvent.endTime
-          ? new Date(rawEvent.endTime)
-          : new Date(eventStart.getTime() + 2 * 60 * 60 * 1000);
-
-        let status: DashboardEvent["status"] = "UPCOMING";
-
-        if (rawEvent.isActive === false) {
-          status = "DEACTIVATED";
-        } else if (now >= eventStart && now <= eventEnd) {
-          status = "ACTIVE";
-        } else if (now > eventEnd) {
-          status = "PAST";
-        } else {
-          status = "UPCOMING";
-        }
-
-        setEvent({
-          id: rawEvent.id,
-          title: rawEvent.title,
-          description: rawEvent.description || "No description provided.",
-          startTime: rawEvent.startTime,
-          endTime: rawEvent.endTime,
-          status,
-          eventType: rawEvent.type,
-          createdAt: rawEvent.createdAt || eventStart.toISOString(),
-          createdBy: {
-            id: rawEvent.admin?.id || rawEvent.createdBy?.id || "unknown-admin",
-            name:
-              rawEvent.admin?.name || rawEvent.createdBy?.name || "Admin User",
-          },
-          attendanceCount:
-            rawEvent._count?.attendances || rawEvent.attendanceCount || 0,
-          totalMembers: rawEvent.totalMembers || 0,
-        });
+        setEvent(mapEventToDashboardEvent(rawEvent));
       } catch (err: any) {
         console.error("Error loading event details:", err);
         setError(
@@ -86,7 +98,18 @@ const EventDetailsPage: React.FC = () => {
     };
 
     void fetchEvent();
-  }, [id, state?.event]);
+    const intervalId = window.setInterval(() => {
+      void fetchEvent();
+    }, 60_000);
+
+    return () => window.clearInterval(intervalId);
+  }, [id]);
+
+  useEffect(() => {
+    if (state?.event) {
+      setEvent(state.event);
+    }
+  }, [state?.event]);
 
   const attendanceStats = useMemo(() => {
     const totalMembers = event?.totalMembers ?? 0;
@@ -155,11 +178,7 @@ const EventDetailsPage: React.FC = () => {
   };
 
   const handleAction = () => {
-    if (
-      !event ||
-      event.status === "UPCOMING" ||
-      event.status === "DEACTIVATED"
-    ) {
+    if (!event || !event.attendanceOpen) {
       return;
     }
 
@@ -356,18 +375,18 @@ const EventDetailsPage: React.FC = () => {
           <button
             type="button"
             onClick={handleAction}
-            disabled={
-              event.status === "UPCOMING" || event.status === "DEACTIVATED"
-            }
+            disabled={!event.attendanceOpen}
             className={`w-full rounded-xl px-4 py-3.5 text-sm font-semibold shadow-sm transition-colors ${
-              event.status === "ACTIVE"
+              event.attendanceOpen
                 ? "bg-blue-600 text-white hover:bg-blue-700"
                 : event.status === "PAST"
                   ? "bg-gray-900 text-white hover:bg-gray-800"
                   : "bg-gray-100 text-gray-400 cursor-not-allowed"
             }`}
           >
-            {getActionLabel(event.status)}
+            {event.attendanceOpen
+              ? "Take Attendance"
+              : getActionLabel(event.status)}
           </button>
         </div>
       </div>

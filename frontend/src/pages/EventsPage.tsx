@@ -30,6 +30,8 @@ const mapEventToDashboardEvent = (event: any): DashboardEvent => {
   // Server sends `status` now; fallback to client calc if missing
   let status: DashboardEvent["status"] =
     (event.status as DashboardEvent["status"]) ?? "UPCOMING";
+  let attendanceOpen = Boolean(event.attendanceOpen);
+
   if (!event.status) {
     if (now > eventEnd || event.isActive === false) {
       status = "PAST";
@@ -38,6 +40,8 @@ const mapEventToDashboardEvent = (event: any): DashboardEvent => {
     } else {
       status = "UPCOMING";
     }
+
+    attendanceOpen = status === "ACTIVE";
   }
 
   return {
@@ -47,6 +51,7 @@ const mapEventToDashboardEvent = (event: any): DashboardEvent => {
     startTime: event.startTime ?? eventStart.toISOString(),
     endTime: event.endTime ?? eventEnd.toISOString(),
     status,
+    attendanceOpen,
     eventType: event.type as DashboardEvent["eventType"],
     createdBy: {
       id: event.admin?.id || event.createdBy?.id || "unknown-admin",
@@ -73,7 +78,7 @@ const EventsPage: React.FC = () => {
   // statusFilterSelected: empty array means no filter (ALL)
   const [statusFilter, setStatusFilter] = useState<StatusOption[]>([]);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("ALL");
-  const [sortBy, setSortBy] = useState<SortOption>("DEFAULT");
+  const [sortBy, setSortBy] = useState<SortOption>("NEXT_EVENT");
   const [isSortModalOpen, setIsSortModalOpen] = useState(false);
 
   // Search State
@@ -152,6 +157,20 @@ const EventsPage: React.FC = () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
+
+  useEffect(() => {
+    if (!initialLoaded) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      loadedBatchOffsetsRef.current.clear();
+      pendingBatchOffsetsRef.current.clear();
+      void fetchEventsBatch(0, { replace: true, showLoader: false });
+    }, 60_000);
+
+    return () => window.clearInterval(intervalId);
+  }, [initialLoaded]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -248,6 +267,20 @@ const EventsPage: React.FC = () => {
       : [...filteredEvents].sort((a, b) => {
           switch (sortBy) {
             case "NEXT_EVENT":
+              // Priority: ACTIVE -> UPCOMING -> PAST -> DEACTIVATED
+              const rank: Record<string, number> = {
+                ACTIVE: 0,
+                UPCOMING: 1,
+                PAST: 2,
+                DEACTIVATED: 3,
+              };
+
+              const rankA = rank[a.status] ?? 4;
+              const rankB = rank[b.status] ?? 4;
+
+              if (rankA !== rankB) return rankA - rankB;
+
+              // If same rank, fall back to startTime ascending
               return (
                 new Date(a.startTime).getTime() -
                 new Date(b.startTime).getTime()
@@ -288,13 +321,15 @@ const EventsPage: React.FC = () => {
       return "bg-green-100 text-green-800 border-green-200";
     if (status === "UPCOMING")
       return "bg-blue-100 text-blue-800 border-blue-200";
+    if (status === "DEACTIVATED")
+      return "bg-yellow-50 text-yellow-800 border-yellow-100";
     return "bg-gray-100 text-gray-800 border-gray-200";
   };
 
   const getSortLabel = (sortValue: SortOption) => {
     switch (sortValue) {
       case "DEFAULT":
-        return "Upcoming First";
+        return "Default";
       case "NEXT_EVENT":
         return "Next Event";
       case "RECENTLY_CREATED":
@@ -640,7 +675,6 @@ const EventsPage: React.FC = () => {
                   </div>
                   <ul>
                     {[
-                      { value: "DEFAULT", label: "Upcoming First" },
                       { value: "NEXT_EVENT", label: "Next Event" },
                       { value: "RECENTLY_CREATED", label: "Recently Created" },
                       {
@@ -805,18 +839,18 @@ const EventsPage: React.FC = () => {
               </div>
 
               <button
-                disabled={event.status !== "ACTIVE"}
+                disabled={!event.attendanceOpen}
                 onClick={(e) => {
                   e.stopPropagation();
                   navigate(`/events/${event.id}/attendance`);
                 }}
                 className={`w-full py-2.5 px-4 rounded-lg font-semibold text-sm transition-colors duration-200 active:scale-[0.98] ${
-                  event.status === "ACTIVE"
+                  event.attendanceOpen
                     ? "bg-blue-600 hover:bg-blue-700 text-white shadow-sm"
                     : "bg-gray-100 text-gray-400 cursor-not-allowed"
                 }`}
               >
-                {event.status === "ACTIVE"
+                {event.attendanceOpen
                   ? "Take Attendance"
                   : "Attendance Unavailable"}
               </button>
