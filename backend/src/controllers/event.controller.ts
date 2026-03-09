@@ -63,19 +63,32 @@ export const createEvent = async (req: Request, res: Response) => {
   }
 };
 
-// GET /api/events
+// GET /api/events?offset=0&limit=30
 
-export const getAllEvents = async (_req: Request, res: Response) => {
+export const getAllEvents = async (req: Request, res: Response) => {
   try {
-    const events = await prisma.event.findMany({
-      orderBy: [{ eventDate: "asc" }, { startTime: "asc" }],
-      include: {
-        _count: {
-          select: { attendances: true },
+    const rawOffset = Number(req.query.offset ?? 0);
+    const rawLimit = Number(req.query.limit ?? 30);
+
+    const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+    const limit =
+      Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 30;
+
+    const [events, totalEvents] = await Promise.all([
+      prisma.event.findMany({
+        skip: offset,
+        take: limit,
+        orderBy: [{ eventDate: "asc" }, { startTime: "asc" }],
+        include: {
+          _count: {
+            select: { attendances: true },
+          },
         },
-      },
-    });
-    return res.status(200).json({ events });
+      }),
+      prisma.event.count(),
+    ]);
+
+    return res.status(200).json({ events, totalEvents, offset, limit });
   } catch (err: any) {
     console.error("Error in getAllEvents:", err?.message ?? err);
     return res.status(500).json({ error: "Internal server error" });

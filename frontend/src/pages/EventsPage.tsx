@@ -12,10 +12,52 @@ type SortOption =
   | "HIGHEST_ATTENDANCE"
   | "LOWEST_ATTENDANCE";
 
+const UI_PAGE_SIZE = 10;
+const BATCH_SIZE = 30;
+
+const mapEventToDashboardEvent = (event: any): DashboardEvent => {
+  const now = new Date();
+  const eventStart = new Date(event.startTime);
+  const eventEnd = event.endTime
+    ? new Date(event.endTime)
+    : new Date(eventStart.getTime() + 2 * 60 * 60 * 1000);
+
+  let status: DashboardEvent["status"] = "UPCOMING";
+
+  if (now > eventEnd || event.isActive === false) {
+    status = "COMPLETED";
+  } else if (now >= eventStart && now <= eventEnd) {
+    status = "ACTIVE";
+  }
+
+  return {
+    id: event.id,
+    title: event.title,
+    description: event.description || "",
+    startTime: event.startTime,
+    endTime: event.endTime,
+    status,
+    eventType: event.type as DashboardEvent["eventType"],
+    createdBy: {
+      id: event.admin?.id || event.createdBy?.id || "unknown-admin",
+      name: event.admin?.name || event.createdBy?.name || "Admin User",
+    },
+    attendanceCount: event._count?.attendances || 0,
+    createdAt: event.createdAt || eventStart.toISOString(),
+    totalMembers: event.totalMembers || 0,
+  };
+};
+
 const EventsPage: React.FC = () => {
   const [events, setEvents] = useState<DashboardEvent[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
+  const [totalEvents, setTotalEvents] = useState<number>(0);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [initialLoaded, setInitialLoaded] = useState(false);
+
+  const loadedBatchOffsetsRef = React.useRef<Set<number>>(new Set());
+  const pendingBatchOffsetsRef = React.useRef<Set<number>>(new Set());
 
   // Filters and Sorting State
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
@@ -49,7 +91,7 @@ const EventsPage: React.FC = () => {
   const { logout } = useAuth();
 
   useEffect(() => {
-    fetchEvents();
+    void fetchEventsBatch(0, { replace: true, showLoader: true });
 
     // Close dropdowns when clicking outside
     const handleClickOutside = (event: MouseEvent) => {
@@ -79,51 +121,63 @@ const EventsPage: React.FC = () => {
     };
   }, []);
 
-  const fetchEvents = async () => {
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedSearchQuery, statusFilter, typeFilter, sortBy]);
+
+  const fetchEventsBatch = async (
+    offset: number,
+    options?: { replace?: boolean; showLoader?: boolean },
+  ) => {
+    const { replace = false, showLoader = false } = options ?? {};
+
+    if (
+      loadedBatchOffsetsRef.current.has(offset) ||
+      pendingBatchOffsetsRef.current.has(offset)
+    ) {
+      return;
+    }
+
     try {
-      setLoading(true);
-      const response = await api.get("/events");
+      pendingBatchOffsetsRef.current.add(offset);
+      if (showLoader) {
+        setLoading(true);
+      }
+
+      const response = await api.get("/events", {
+        params: {
+          offset,
+          limit: BATCH_SIZE,
+        },
+      });
       const fetchedEvents = response.data?.events || [];
+      const nextTotalEvents = response.data?.totalEvents ?? 0;
+
+      setTotalEvents(nextTotalEvents);
 
       if (Array.isArray(fetchedEvents)) {
         const transformedEvents: DashboardEvent[] = fetchedEvents.map(
-          (event: any) => {
-            const now = new Date();
-            const eventStart = new Date(event.startTime);
-            const eventEnd = event.endTime
-              ? new Date(event.endTime)
-              : new Date(eventStart.getTime() + 2 * 60 * 60 * 1000);
-
-            let status: DashboardEvent["status"] = "UPCOMING";
-
-            if (now > eventEnd || event.isActive === false) {
-              status = "COMPLETED";
-            } else if (now >= eventStart && now <= eventEnd) {
-              status = "ACTIVE";
-            } else {
-              status = "UPCOMING";
-            }
-
-            return {
-              id: event.id,
-              title: event.title,
-              description: event.description || "",
-              startTime: event.startTime,
-              endTime: event.endTime,
-              status,
-              eventType: event.type as DashboardEvent["eventType"],
-              createdBy: {
-                id: event.admin?.id || event.createdBy?.id || "unknown-admin",
-                name:
-                  event.admin?.name || event.createdBy?.name || "Admin User",
-              },
-              attendanceCount: event._count?.attendances || 0,
-              createdAt: event.createdAt || eventStart.toISOString(),
-              totalMembers: event.totalMembers || 0,
-            };
-          },
+          mapEventToDashboardEvent,
         );
-        setEvents(transformedEvents);
+
+        setEvents((prev) => {
+          if (replace) {
+            return transformedEvents;
+          }
+
+          const eventMap = new Map<string, DashboardEvent>();
+          for (const item of prev) {
+            eventMap.set(item.id, item);
+          }
+          for (const item of transformedEvents) {
+            eventMap.set(item.id, item);
+          }
+
+          return Array.from(eventMap.values());
+        });
+
+        loadedBatchOffsetsRef.current.add(offset);
+        setInitialLoaded(true);
       }
     } catch (err: any) {
       console.error("Error fetching events:", err);
@@ -133,7 +187,10 @@ const EventsPage: React.FC = () => {
           "Failed to load events.",
       );
     } finally {
-      setLoading(false);
+      pendingBatchOffsetsRef.current.delete(offset);
+      if (showLoader) {
+        setLoading(false);
+      }
     }
   };
 
@@ -211,6 +268,57 @@ const EventsPage: React.FC = () => {
         return "";
     }
   };
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(sortedAndFilteredEvents.length / UI_PAGE_SIZE),
+  );
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const paginatedEvents = sortedAndFilteredEvents.slice(
+    (currentPage - 1) * UI_PAGE_SIZE,
+    currentPage * UI_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    if (!initialLoaded) {
+      return;
+    }
+
+    const requiredIndex = currentPage * UI_PAGE_SIZE - 1;
+    const needsCurrentPageData =
+      requiredIndex >= events.length && events.length < totalEvents;
+
+    if (needsCurrentPageData) {
+      const nextOffset = Math.floor(requiredIndex / BATCH_SIZE) * BATCH_SIZE;
+      void fetchEventsBatch(nextOffset);
+    }
+  }, [currentPage, events.length, totalEvents, initialLoaded]);
+
+  useEffect(() => {
+    if (!initialLoaded || totalEvents <= events.length) {
+      return;
+    }
+
+    const batchIndex = Math.floor((currentPage - 1) / 3);
+    const pageWithinBatch = ((currentPage - 1) % 3) + 1;
+
+    if (pageWithinBatch < 2) {
+      return;
+    }
+
+    const nextBatchOffset = (batchIndex + 1) * BATCH_SIZE;
+    if (nextBatchOffset >= totalEvents) {
+      return;
+    }
+
+    void fetchEventsBatch(nextBatchOffset);
+  }, [currentPage, totalEvents, events.length, initialLoaded]);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 relative">
@@ -425,7 +533,8 @@ const EventsPage: React.FC = () => {
           {/* Sort By Toggle & Info */}
           <div className="flex justify-between items-center mt-2 border-t md:border-none pt-3 md:pt-0">
             <span className="text-sm text-gray-500 font-medium">
-              {sortedAndFilteredEvents.length} events found
+              {sortedAndFilteredEvents.length} of {totalEvents || events.length}{" "}
+              events found
             </span>
             <div className="relative" ref={sortDropdownRef}>
               <button
@@ -557,7 +666,7 @@ const EventsPage: React.FC = () => {
             </button>
           </div>
         ) : (
-          sortedAndFilteredEvents.map((event) => (
+          paginatedEvents.map((event) => (
             <div
               key={event.id}
               role="button"
@@ -660,6 +769,39 @@ const EventsPage: React.FC = () => {
             </div>
           ))
         )}
+
+        {!loading &&
+          totalEvents > UI_PAGE_SIZE &&
+          sortedAndFilteredEvents.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 flex items-center justify-between gap-3 mt-2">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Previous
+              </button>
+
+              <div className="flex items-center gap-2 text-sm text-gray-600">
+                <span className="font-semibold text-gray-900">
+                  Page {currentPage}
+                </span>
+                <span>of {totalPages}</span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setCurrentPage((prev) => Math.min(totalPages, prev + 1))
+                }
+                disabled={currentPage === totalPages}
+                className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+            </div>
+          )}
       </div>
 
       {/* Floating Action Button */}
