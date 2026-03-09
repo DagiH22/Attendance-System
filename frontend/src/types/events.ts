@@ -1,4 +1,4 @@
-export type EventStatus = "UPCOMING" | "ACTIVE" | "COMPLETED";
+export type EventStatus = "UPCOMING" | "ACTIVE" | "PAST" | "DEACTIVATED";
 export type EventType = "WEEKLY" | "MONTHLY" | "ONE_TIME";
 
 export interface EventCreator {

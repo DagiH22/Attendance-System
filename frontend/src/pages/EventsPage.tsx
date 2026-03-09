@@ -4,9 +4,10 @@ import api from "../lib/api";
 import type { DashboardEvent } from "../types/events";
 import { useAuth } from "../contexts/AuthContext";
 
-type StatusFilter = "ALL" | "ACTIVE" | "UPCOMING" | "COMPLETED";
+type StatusOption = "UPCOMING" | "ACTIVE" | "PAST" | "DEACTIVATED";
 type TypeFilter = "ALL" | "WEEKLY" | "MONTHLY" | "ONE_TIME";
 type SortOption =
+  | "DEFAULT"
   | "NEXT_EVENT"
   | "RECENTLY_CREATED"
   | "HIGHEST_ATTENDANCE"
@@ -15,27 +16,36 @@ type SortOption =
 const UI_PAGE_SIZE = 10;
 const BATCH_SIZE = 30;
 
+// Preserve backend ordering for DEFAULT sort; client-side comparator not required.
+
 const mapEventToDashboardEvent = (event: any): DashboardEvent => {
+  // Prefer server-provided normalized ISO timestamps and status when available
   const now = new Date();
-  const eventStart = new Date(event.startTime);
+  const startIso = event.startTime ?? event.eventDate;
+  const eventStart = startIso ? new Date(startIso) : now;
   const eventEnd = event.endTime
     ? new Date(event.endTime)
     : new Date(eventStart.getTime() + 2 * 60 * 60 * 1000);
 
-  let status: DashboardEvent["status"] = "UPCOMING";
-
-  if (now > eventEnd || event.isActive === false) {
-    status = "COMPLETED";
-  } else if (now >= eventStart && now <= eventEnd) {
-    status = "ACTIVE";
+  // Server sends `status` now; fallback to client calc if missing
+  let status: DashboardEvent["status"] =
+    (event.status as DashboardEvent["status"]) ?? "UPCOMING";
+  if (!event.status) {
+    if (now > eventEnd || event.isActive === false) {
+      status = "PAST";
+    } else if (now >= eventStart && now <= eventEnd) {
+      status = "ACTIVE";
+    } else {
+      status = "UPCOMING";
+    }
   }
 
   return {
     id: event.id,
     title: event.title,
     description: event.description || "",
-    startTime: event.startTime,
-    endTime: event.endTime,
+    startTime: event.startTime ?? eventStart.toISOString(),
+    endTime: event.endTime ?? eventEnd.toISOString(),
     status,
     eventType: event.type as DashboardEvent["eventType"],
     createdBy: {
@@ -60,9 +70,10 @@ const EventsPage: React.FC = () => {
   const pendingBatchOffsetsRef = React.useRef<Set<number>>(new Set());
 
   // Filters and Sorting State
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  // statusFilterSelected: empty array means no filter (ALL)
+  const [statusFilter, setStatusFilter] = useState<StatusOption[]>([]);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("ALL");
-  const [sortBy, setSortBy] = useState<SortOption>("NEXT_EVENT");
+  const [sortBy, setSortBy] = useState<SortOption>("DEFAULT");
   const [isSortModalOpen, setIsSortModalOpen] = useState(false);
 
   // Search State
@@ -89,6 +100,27 @@ const EventsPage: React.FC = () => {
 
   const navigate = useNavigate();
   const { logout } = useAuth();
+
+  const STATUS_OPTIONS: StatusOption[] = [
+    "UPCOMING",
+    "ACTIVE",
+    "DEACTIVATED",
+    "PAST",
+  ];
+
+  const formatStatusLabel = (s: StatusOption) => {
+    if (s === "DEACTIVATED") return "Deactivated";
+    if (s === "PAST") return "Past";
+    return s.charAt(0) + s.slice(1).toLowerCase();
+  };
+
+  const toggleStatus = (s: StatusOption) => {
+    setStatusFilter((prev) => {
+      const found = prev.includes(s);
+      if (found) return prev.filter((x) => x !== s);
+      return [...prev, s];
+    });
+  };
 
   useEffect(() => {
     void fetchEventsBatch(0, { replace: true, showLoader: true });
@@ -161,19 +193,17 @@ const EventsPage: React.FC = () => {
         );
 
         setEvents((prev) => {
-          if (replace) {
-            return transformedEvents;
+          const mergedEvents = replace
+            ? transformedEvents
+            : [...prev, ...transformedEvents];
+          const uniqueEvents = new Map<string, DashboardEvent>();
+
+          for (const item of mergedEvents) {
+            uniqueEvents.set(item.id, item);
           }
 
-          const eventMap = new Map<string, DashboardEvent>();
-          for (const item of prev) {
-            eventMap.set(item.id, item);
-          }
-          for (const item of transformedEvents) {
-            eventMap.set(item.id, item);
-          }
-
-          return Array.from(eventMap.values());
+          // Preserve insertion order (server-supplied ordering across batches)
+          return Array.from(uniqueEvents.values());
         });
 
         loadedBatchOffsetsRef.current.add(offset);
@@ -196,7 +226,9 @@ const EventsPage: React.FC = () => {
 
   // Filter and Sort Logic
   const filteredEvents = events.filter((e) => {
-    const matchStatus = statusFilter === "ALL" || e.status === statusFilter;
+    const matchStatus =
+      statusFilter.length === 0 ||
+      statusFilter.includes(e.status as StatusOption);
     const matchType = typeFilter === "ALL" || e.eventType === typeFilter;
 
     // Search matching logic (case-insensitive on title, description, and eventType)
@@ -210,24 +242,29 @@ const EventsPage: React.FC = () => {
     return matchStatus && matchType && matchSearch;
   });
 
-  const sortedAndFilteredEvents = [...filteredEvents].sort((a, b) => {
-    switch (sortBy) {
-      case "NEXT_EVENT":
-        return (
-          new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
-        );
-      case "RECENTLY_CREATED":
-        return (
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-      case "HIGHEST_ATTENDANCE":
-        return b.attendanceCount - a.attendanceCount;
-      case "LOWEST_ATTENDANCE":
-        return a.attendanceCount - b.attendanceCount;
-      default:
-        return 0;
-    }
-  });
+  const sortedAndFilteredEvents =
+    sortBy === "DEFAULT"
+      ? filteredEvents
+      : [...filteredEvents].sort((a, b) => {
+          switch (sortBy) {
+            case "NEXT_EVENT":
+              return (
+                new Date(a.startTime).getTime() -
+                new Date(b.startTime).getTime()
+              );
+            case "RECENTLY_CREATED":
+              return (
+                new Date(b.createdAt).getTime() -
+                new Date(a.createdAt).getTime()
+              );
+            case "HIGHEST_ATTENDANCE":
+              return b.attendanceCount - a.attendanceCount;
+            case "LOWEST_ATTENDANCE":
+              return a.attendanceCount - b.attendanceCount;
+            default:
+              return 0;
+          }
+        });
 
   // Helpers
   const formatTime = (isoString: string) => {
@@ -256,6 +293,8 @@ const EventsPage: React.FC = () => {
 
   const getSortLabel = (sortValue: SortOption) => {
     switch (sortValue) {
+      case "DEFAULT":
+        return "Upcoming First";
       case "NEXT_EVENT":
         return "Next Event";
       case "RECENTLY_CREATED":
@@ -307,8 +346,10 @@ const EventsPage: React.FC = () => {
 
     const batchIndex = Math.floor((currentPage - 1) / 3);
     const pageWithinBatch = ((currentPage - 1) % 3) + 1;
+    const loadedPages = Math.ceil(events.length / UI_PAGE_SIZE);
+    const pagesRemainingInCache = loadedPages - currentPage;
 
-    if (pageWithinBatch < 2) {
+    if (pageWithinBatch < 2 && pagesRemainingInCache > 1) {
       return;
     }
 
@@ -388,19 +429,27 @@ const EventsPage: React.FC = () => {
           {/* Mobile view filters (visible only on small screens) */}
           <div className="md:hidden">
             <div className="flex overflow-x-auto no-scrollbar gap-2 mb-3 pb-1">
-              {["ALL", "ACTIVE", "UPCOMING", "COMPLETED"].map((status) => (
+              <button
+                className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors border ${
+                  statusFilter.length === 0
+                    ? "bg-blue-600 text-white border-blue-600"
+                    : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+                }`}
+                onClick={() => setStatusFilter([])}
+              >
+                All Status
+              </button>
+              {STATUS_OPTIONS.map((s) => (
                 <button
-                  key={status}
-                  onClick={() => setStatusFilter(status as StatusFilter)}
+                  key={s}
+                  onClick={() => toggleStatus(s)}
                   className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors border ${
-                    statusFilter === status
+                    statusFilter.includes(s)
                       ? "bg-blue-600 text-white border-blue-600"
                       : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
                   }`}
                 >
-                  {status === "ALL"
-                    ? "All Status"
-                    : status.charAt(0) + status.slice(1).toLowerCase()}
+                  {formatStatusLabel(s)}
                 </button>
               ))}
             </div>
@@ -436,10 +485,9 @@ const EventsPage: React.FC = () => {
                 className="flex items-center justify-between min-w-[140px] px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 <span>
-                  {statusFilter === "ALL"
+                  {statusFilter.length === 0
                     ? "All Status"
-                    : statusFilter.charAt(0) +
-                      statusFilter.slice(1).toLowerCase()}
+                    : statusFilter.map((s) => formatStatusLabel(s)).join(", ")}
                 </span>
                 <svg
                   className="w-4 h-4 text-gray-500 ml-2"
@@ -457,21 +505,26 @@ const EventsPage: React.FC = () => {
               </button>
 
               {isStatusDropdownOpen && (
-                <div className="absolute top-full left-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden py-1">
-                  {["ALL", "ACTIVE", "UPCOMING", "COMPLETED"].map((status) => (
+                <div className="absolute top-full left-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden py-1">
+                  <div className="px-2 py-1">
                     <button
-                      key={status}
-                      onClick={() => {
-                        setStatusFilter(status as StatusFilter);
-                        setIsStatusDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-4 py-2 text-sm ${statusFilter === status ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-700 hover:bg-gray-50"}`}
+                      onClick={() => setStatusFilter([])}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
                     >
-                      {status === "ALL"
-                        ? "All Status"
-                        : status.charAt(0) + status.slice(1).toLowerCase()}
+                      All Status
                     </button>
-                  ))}
+                  </div>
+                  <div className="border-t">
+                    {STATUS_OPTIONS.map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => toggleStatus(s)}
+                        className={`w-full text-left px-4 py-2 text-sm ${statusFilter.includes(s) ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-700 hover:bg-gray-50"}`}
+                      >
+                        {formatStatusLabel(s)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -587,6 +640,7 @@ const EventsPage: React.FC = () => {
                   </div>
                   <ul>
                     {[
+                      { value: "DEFAULT", label: "Upcoming First" },
                       { value: "NEXT_EVENT", label: "Next Event" },
                       { value: "RECENTLY_CREATED", label: "Recently Created" },
                       {
@@ -657,7 +711,7 @@ const EventsPage: React.FC = () => {
             </p>
             <button
               onClick={() => {
-                setStatusFilter("ALL");
+                setStatusFilter([]);
                 setTypeFilter("ALL");
               }}
               className="mt-3 text-blue-600 text-sm font-medium hover:underline"
@@ -701,7 +755,7 @@ const EventsPage: React.FC = () => {
                 <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200">
                   {event.eventType.replace("_", " ")}
                 </span>
-                {event.status === "COMPLETED" && (
+                {event.status === "PAST" && (
                   <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 flex items-center border border-purple-100">
                     <svg
                       className="w-3.5 h-3.5 mr-1"

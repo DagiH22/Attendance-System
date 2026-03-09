@@ -44,10 +44,12 @@ const EventDetailsPage: React.FC = () => {
 
         let status: DashboardEvent["status"] = "UPCOMING";
 
-        if (now > eventEnd || rawEvent.isActive === false) {
-          status = "COMPLETED";
+        if (rawEvent.isActive === false) {
+          status = "DEACTIVATED";
         } else if (now >= eventStart && now <= eventEnd) {
           status = "ACTIVE";
+        } else if (now > eventEnd) {
+          status = "PAST";
         } else {
           status = "UPCOMING";
         }
@@ -130,6 +132,10 @@ const EventDetailsPage: React.FC = () => {
         return "bg-green-100 text-green-800 border-green-200";
       case "UPCOMING":
         return "bg-blue-100 text-blue-800 border-blue-200";
+      case "DEACTIVATED":
+        return "bg-yellow-50 text-yellow-800 border-yellow-100";
+      case "PAST":
+        return "bg-gray-100 text-gray-700 border-gray-200";
       default:
         return "bg-gray-100 text-gray-700 border-gray-200";
     }
@@ -139,15 +145,21 @@ const EventDetailsPage: React.FC = () => {
     switch (status) {
       case "ACTIVE":
         return "Take Attendance";
-      case "COMPLETED":
+      case "PAST":
         return "View Attendance";
+      case "DEACTIVATED":
+        return "Attendance Unavailable";
       default:
         return "Attendance Not Available Yet";
     }
   };
 
   const handleAction = () => {
-    if (!event || event.status === "UPCOMING") {
+    if (
+      !event ||
+      event.status === "UPCOMING" ||
+      event.status === "DEACTIVATED"
+    ) {
       return;
     }
 
@@ -344,11 +356,13 @@ const EventDetailsPage: React.FC = () => {
           <button
             type="button"
             onClick={handleAction}
-            disabled={event.status === "UPCOMING"}
+            disabled={
+              event.status === "UPCOMING" || event.status === "DEACTIVATED"
+            }
             className={`w-full rounded-xl px-4 py-3.5 text-sm font-semibold shadow-sm transition-colors ${
               event.status === "ACTIVE"
                 ? "bg-blue-600 text-white hover:bg-blue-700"
-                : event.status === "COMPLETED"
+                : event.status === "PAST"
                   ? "bg-gray-900 text-white hover:bg-gray-800"
                   : "bg-gray-100 text-gray-400 cursor-not-allowed"
             }`}
