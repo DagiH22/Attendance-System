@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import api from "../lib/api";
+import formatDate, { formatDateTime } from "../lib/formatDate";
 import type { DashboardEvent } from "../types/events";
 
 type LocationState = {
@@ -127,28 +128,14 @@ const EventDetailsPage: React.FC = () => {
     };
   }, [event]);
 
-  const formatDate = (value: string) =>
-    new Date(value).toLocaleDateString([], {
-      weekday: "long",
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-    });
-
   const formatTime = (value: string) =>
     new Date(value).toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     });
 
-  const formatCreatedDate = (value: string) =>
-    new Date(value).toLocaleString([], {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+  // show date as dd/mm/yyyy (formatDate is imported)
+  const formatCreatedDate = (value: string) => formatDateTime(value);
 
   const getStatusClasses = (status: DashboardEvent["status"]) => {
     switch (status) {

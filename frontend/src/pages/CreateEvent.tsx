@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
+import formatDate from "../lib/formatDate";
 
 const CreateEvent: React.FC = () => {
   const navigate = useNavigate();
@@ -460,10 +461,7 @@ const CreateEvent: React.FC = () => {
                   // Add 7 days * offset
                   d.setDate(d.getDate() + 7 * weekOffset);
 
-                  const formattedDate = d.toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                  });
+                  const formattedDate = formatDate(d);
 
                   return (
                     <li

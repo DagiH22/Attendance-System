@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import api from "../lib/api";
+import formatDate from "../lib/formatDate";
 import type { Member } from "../types/members";
 
 interface AttendanceRecord {
@@ -28,6 +29,12 @@ const MemberDetailsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [pendingAction, setPendingAction] = useState<
+    "activate" | "deactivate" | null
+  >(null);
+  const [isResending, setIsResending] = useState(false);
+  const [resendMessage, setResendMessage] = useState<string | null>(null);
+  const [resendError, setResendError] = useState<string | null>(null);
 
   // Note: hard-coded user role for now until auth context provides it
   const isSuperAdmin = true;
@@ -71,20 +78,49 @@ const MemberDetailsPage: React.FC = () => {
       await api.patch(`/members/${memberId}/deactivate`);
       setMember((prev) => (prev ? { ...prev, isActive: false } : null));
       setShowConfirmModal(false);
-      // navigate back to members list so it can refresh from backend
-      navigate("/members");
+      setPendingAction(null);
     } catch {
       console.error("Failed to deactivate member");
     }
   };
 
-  const handleResendQR = async () => {
+  const handleActivate = async () => {
     try {
-      await api.post(`/members/${memberId}/resend-qr`);
-      alert("QR code resent successfully.");
+      await api.patch(`/members/${memberId}/activate`);
+      setMember((prev) => (prev ? { ...prev, isActive: true } : null));
+      setShowConfirmModal(false);
+      setPendingAction(null);
     } catch {
-      console.error("Failed to resend QR code");
-      alert("Failed to resend QR code.");
+      console.error("Failed to activate member");
+    }
+  };
+
+  const handleResendQR = async () => {
+    setResendMessage(null);
+    setResendError(null);
+    if (!memberId) return;
+    setIsResending(true);
+    try {
+      const response = await api.post(`/members/${memberId}/resend-qr`);
+      const remaining = response.data?.remaining;
+      setResendMessage(
+        remaining === 0
+          ? "QR resent. You have no more resends left this week."
+          : `QR resent. You have ${remaining} resend(s) remaining this week.`,
+      );
+    } catch (err: any) {
+      console.error("Failed to resend QR code", err);
+      if (err.response?.status === 429) {
+        setResendError(
+          "You've reached the weekly resend limit. Please try again later or contact support.",
+        );
+      } else {
+        setResendError(
+          "We couldn't send the email right now. Please try again later or contact support.",
+        );
+      }
+    } finally {
+      setIsResending(false);
     }
   };
 
@@ -184,9 +220,7 @@ const MemberDetailsPage: React.FC = () => {
               <div>
                 <p className="text-sm text-gray-500 mb-1">Date Registered</p>
                 <p className="font-medium text-gray-900">
-                  {member.createdAt
-                    ? new Date(member.createdAt).toLocaleDateString()
-                    : "N/A"}
+                  {formatDate(member.createdAt)}
                 </p>
               </div>
             </div>
@@ -249,7 +283,7 @@ const MemberDetailsPage: React.FC = () => {
                           {record.eventName}
                         </td>
                         <td className="py-3 text-gray-500 text-sm">
-                          {new Date(record.markedAt).toLocaleDateString()}
+                          {formatDate(record.markedAt)}
                         </td>
                         <td className="py-3 text-right">
                           <span
@@ -295,7 +329,12 @@ const MemberDetailsPage: React.FC = () => {
             <div className="w-full grid grid-cols-1 gap-3">
               <button
                 onClick={handleResendQR}
-                className="w-full py-2.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg font-medium transition-colors flex items-center justify-center border border-blue-200"
+                disabled={isResending}
+                className={`w-full py-2.5 rounded-lg font-medium transition-colors flex items-center justify-center border border-blue-200 ${
+                  isResending
+                    ? "bg-blue-100 text-blue-700 cursor-wait"
+                    : "bg-blue-50 text-blue-700 hover:bg-blue-100"
+                }`}
               >
                 <svg
                   className="w-4 h-4 mr-2"
@@ -332,6 +371,19 @@ const MemberDetailsPage: React.FC = () => {
                 </svg>
                 Download QR
               </button>
+              {/* Resend status messages (friendly) */}
+              <div className="mt-3">
+                {resendMessage && (
+                  <div className="text-sm text-green-700 bg-green-50 border border-green-100 rounded-md px-3 py-2">
+                    {resendMessage}
+                  </div>
+                )}
+                {resendError && (
+                  <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-md px-3 py-2">
+                    {resendError}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -346,10 +398,24 @@ const MemberDetailsPage: React.FC = () => {
               </button>
               {isSuperAdmin && member.isActive && (
                 <button
-                  onClick={() => setShowConfirmModal(true)}
+                  onClick={() => {
+                    setPendingAction("deactivate");
+                    setShowConfirmModal(true);
+                  }}
                   className="w-full py-2.5 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 rounded-lg font-medium transition-colors border border-red-200"
                 >
                   Deactivate Member
+                </button>
+              )}
+              {isSuperAdmin && !member.isActive && (
+                <button
+                  onClick={() => {
+                    setPendingAction("activate");
+                    setShowConfirmModal(true);
+                  }}
+                  className="w-full py-2.5 bg-green-50 text-green-700 hover:bg-green-100 hover:text-green-800 rounded-lg font-medium transition-colors border border-green-200"
+                >
+                  Activate Member
                 </button>
               )}
             </div>
@@ -377,25 +443,52 @@ const MemberDetailsPage: React.FC = () => {
               </svg>
             </div>
             <h3 className="text-lg font-medium text-gray-900 text-center mb-2">
-              Deactivate Member
+              {pendingAction === "activate"
+                ? "Activate Member"
+                : "Deactivate Member"}
             </h3>
             <p className="text-sm text-gray-500 text-center mb-6">
-              Are you sure you want to deactivate <strong>{member.name}</strong>
-              ? They will no longer be able to check in to events or access
-              their account.
+              {pendingAction === "activate" ? (
+                <>
+                  Are you sure you want to activate{" "}
+                  <strong>{member.name}</strong>? They will be able to access
+                  their account and check in to events.
+                </>
+              ) : (
+                <>
+                  Are you sure you want to deactivate{" "}
+                  <strong>{member.name}</strong>? They will no longer be able to
+                  check in to events or access their account.
+                </>
+              )}
             </p>
             <div className="flex space-x-3">
               <button
-                onClick={() => setShowConfirmModal(false)}
+                onClick={() => {
+                  setShowConfirmModal(false);
+                  setPendingAction(null);
+                }}
                 className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 bg-white hover:bg-gray-50 font-medium transition-colors"
               >
                 Cancel
               </button>
               <button
-                onClick={handleDeactivate}
-                className="flex-1 px-4 py-2 bg-red-600 border border-transparent rounded-lg text-white hover:bg-red-700 font-medium transition-colors shadow-sm"
+                onClick={() => {
+                  if (pendingAction === "activate") {
+                    handleActivate();
+                  } else {
+                    handleDeactivate();
+                  }
+                }}
+                className={`flex-1 px-4 py-2 border border-transparent rounded-lg text-white font-medium transition-colors shadow-sm ${
+                  pendingAction === "activate"
+                    ? "bg-green-600 hover:bg-green-700"
+                    : "bg-red-600 hover:bg-red-700"
+                }`}
               >
-                Yes, Deactivate
+                {pendingAction === "activate"
+                  ? "Yes, Activate"
+                  : "Yes, Deactivate"}
               </button>
             </div>
           </div>

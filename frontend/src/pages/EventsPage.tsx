@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../lib/api";
+import formatDate from "../lib/formatDate";
 import type { DashboardEvent } from "../types/events";
 import { useAuth } from "../contexts/AuthContext";
 
@@ -309,14 +310,7 @@ const EventsPage: React.FC = () => {
     });
   };
 
-  const formatDate = (isoString: string) => {
-    return new Date(isoString).toLocaleDateString([], {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  };
+  // Use dd/mm/yyyy for dates across the app (formatDate is imported)
 
   const getStatusColor = (status: DashboardEvent["status"]) => {
     if (status === "ACTIVE")

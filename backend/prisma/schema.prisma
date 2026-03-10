@@ -43,6 +43,7 @@ model Member {
 
   // Relations
   attendances  Attendance[]
+  resendLogs   ResendLog[]
 
   @@index([uniqueId])
   @@index([email])
@@ -133,4 +134,18 @@ model Attendance {
   @@index([eventId])
   @@index([memberId])
   @@map("attendances")
+}
+
+// Logs for tracking resend attempts (email/qr/etc.) so we can enforce rate limits
+model ResendLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  memberId  String   @db.Uuid
+  type      String
+  createdAt DateTime @default(now())
+
+  member    Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+  @@index([createdAt])
+  @@map("resend_logs")
 }

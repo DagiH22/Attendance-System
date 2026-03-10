@@ -3,6 +3,7 @@ import { QrReader } from "react-qr-reader";
 import { isAxiosError } from "axios";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import api from "../lib/api";
+import formatDate from "../lib/formatDate";
 import type { DashboardEvent } from "../types/events";
 import type { AttendanceRecordResponse, Member } from "../types/members";
 
@@ -120,13 +121,7 @@ const TakeAttendancePage: React.FC = () => {
   const attendanceDisabled =
     !event?.attendanceOpen || event?.status !== "ACTIVE";
 
-  const formatDate = (value: string) =>
-    new Date(value).toLocaleDateString([], {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+  // show date as dd/mm/yyyy (formatDate is imported)
 
   const formatTimeRange = (start: string, end: string) =>
     `${new Date(start).toLocaleTimeString([], {
