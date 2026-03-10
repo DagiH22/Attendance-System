@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import api from "../lib/api";
 import type { DashboardEvent } from "../types/events";
 import { useAuth } from "../contexts/AuthContext";
@@ -105,6 +105,7 @@ const EventsPage: React.FC = () => {
   const typeDropdownRef = React.useRef<HTMLDivElement>(null);
 
   const navigate = useNavigate();
+  const location = useLocation();
   const { logout } = useAuth();
 
   const STATUS_OPTIONS: StatusOption[] = [
@@ -412,6 +413,38 @@ const EventsPage: React.FC = () => {
           >
             Logout
           </button>
+        </div>
+
+        {/* Tab Navigation */}
+        <div className="max-w-4xl mx-auto w-full mb-4">
+          <nav className="flex space-x-4 border-b border-gray-200">
+            <button
+              onClick={() => navigate("/events")}
+              className={`pb-2 px-1 text-sm font-medium border-b-2 transition-colors ${
+                location.pathname === "/events"
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              Events
+            </button>
+            <button
+              onClick={() => navigate("/members")}
+              className={`pb-2 px-1 text-sm font-medium border-b-2 transition-colors ${
+                location.pathname === "/members"
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              Members
+            </button>
+            <button
+              disabled
+              className="pb-2 px-1 text-sm font-medium border-b-2 border-transparent text-gray-300 cursor-not-allowed"
+            >
+              Dashboard
+            </button>
+          </nav>
         </div>
 
         <div className="max-w-4xl mx-auto w-full">
@@ -857,7 +890,6 @@ const EventsPage: React.FC = () => {
                     </span>
                   </div>
                 )}
-                
               </div>
 
               <button
