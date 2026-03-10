@@ -4,7 +4,9 @@ import {
   getAllMembers,
   getMemberById,
   searchMembers,
+  deactivateMember,
 } from "../controllers/member.controller";
+import requireRole from "../middleware/role.middleware";
 import verifyAuth from "../middleware/auth.middleware";
 
 const router = Router();
@@ -23,5 +25,8 @@ router.get("/search", searchMembers);
 
 // get by id
 router.get("/:id", getMemberById);
+
+// deactivate member (super admin only)
+router.patch("/:id/deactivate", requireRole("SUPER_ADMIN"), deactivateMember);
 
 export default router;

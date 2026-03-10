@@ -96,6 +96,33 @@ export const getMemberById = async (req: Request, res: Response) => {
   }
 };
 
+// PATCH /api/members/:id/deactivate
+// Sets isActive false for the member. Only SUPER_ADMIN can perform this action (enforced in route middleware).
+export const deactivateMember = async (req: Request, res: Response) => {
+  try {
+    if (!req.admin?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { id } = req.params;
+    const idStr = Array.isArray(id) ? id[0] : id;
+    if (!idStr) return res.status(400).json({ error: "Member id is required" });
+
+    const existing = await prisma.member.findUnique({ where: { id: idStr } });
+    if (!existing) return res.status(404).json({ error: "Member not found" });
+
+    const updated = await prisma.member.update({
+      where: { id: idStr },
+      data: { isActive: false },
+    });
+
+    return res.status(200).json({ member: updated });
+  } catch (err: any) {
+    console.error("Error in deactivateMember:", err?.message ?? err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
 export const searchMembers = async (req: Request, res: Response) => {
   try {
     const q = (req.query.q as string) ?? "";

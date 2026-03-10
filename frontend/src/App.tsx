@@ -7,6 +7,7 @@ import {
 import Login from "./pages/Login";
 import EventsPage from "./pages/EventsPage";
 import MembersPage from "./pages/MembersPage";
+import MemberDetailsPage from "./pages/MemberDetailsPage";
 import CreateEvent from "./pages/CreateEvent";
 import EventDetailsPage from "./pages/EventDetailsPage";
 import TakeAttendancePage from "./pages/TakeAttendancePage";
@@ -23,6 +24,7 @@ function App() {
         <Route element={<ProtectedRoute />}>
           <Route path="/events" element={<EventsPage />} />
           <Route path="/members" element={<MembersPage />} />
+          <Route path="/members/:memberId" element={<MemberDetailsPage />} />
           <Route path="/events/create" element={<CreateEvent />} />
           <Route path="/events/:id" element={<EventDetailsPage />} />
           <Route
