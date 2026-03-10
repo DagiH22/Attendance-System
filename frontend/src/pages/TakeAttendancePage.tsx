@@ -83,6 +83,7 @@ const ATTENDANCE_MESSAGES: Record<
 > = {
   ALREADY_PRESENT: { title: "Already checked in", tone: "info" },
   MEMBER_NOT_FOUND: { title: "Member not found", tone: "error" },
+  DEACTIVATED: { title: "Member is deactivated", tone: "error" },
   EVENT_CLOSED: { title: "Event closed", tone: "error" },
   SUCCESS: { title: "Attendance recorded", tone: "success" },
 };
@@ -219,6 +220,13 @@ const TakeAttendancePage: React.FC = () => {
         return {
           ...ATTENDANCE_MESSAGES.MEMBER_NOT_FOUND,
           description: message || "We couldn't match that member.",
+        };
+      }
+
+      if (error.response?.status === 403) {
+        return {
+          ...ATTENDANCE_MESSAGES.DEACTIVATED,
+          description: message || "This member has been deactivated.",
         };
       }
 
@@ -639,6 +647,7 @@ const TakeAttendancePage: React.FC = () => {
               ) : (
                 filteredMembers.map((member) => {
                   const isPresent = presentMembers.has(member.id);
+                  const isDeactivated = member.isActive === false;
 
                   return (
                     <div
@@ -657,6 +666,11 @@ const TakeAttendancePage: React.FC = () => {
                           {member.uniqueId}
                           {member.phone ? ` • ${member.phone}` : ""}
                         </p>
+                        {isDeactivated && (
+                          <p className="mt-1 text-xs font-semibold text-rose-600">
+                            Deactivated
+                          </p>
+                        )}
                       </div>
 
                       <button
@@ -665,15 +679,24 @@ const TakeAttendancePage: React.FC = () => {
                           void markAttendance(member.id, "MANUAL", member)
                         }
                         disabled={
-                          attendanceDisabled || isSubmitting || isPresent
+                          attendanceDisabled ||
+                          isSubmitting ||
+                          isPresent ||
+                          isDeactivated
                         }
                         className={`shrink-0 rounded-2xl px-4 py-2.5 text-sm font-semibold transition ${
                           isPresent
                             ? "bg-green-100 text-green-700"
-                            : "bg-slate-900 text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+                            : isDeactivated
+                              ? "bg-slate-200 text-slate-500 cursor-not-allowed"
+                              : "bg-slate-900 text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
                         }`}
                       >
-                        {isPresent ? "Present ✓" : "Mark Present"}
+                        {isPresent
+                          ? "Present ✓"
+                          : isDeactivated
+                            ? "Deactivated"
+                            : "Mark Present"}
                       </button>
                     </div>
                   );

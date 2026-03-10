@@ -51,6 +51,11 @@ export const markAttendance = async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Member not found" });
     }
 
+    // 1b. Prevent marking attendance for deactivated members
+    if (!member.isActive) {
+      return res.status(403).json({ error: "Member is deactivated" });
+    }
+
     // 2. Ensure event exists and attendance is currently open
     const event = await prisma.event.findUnique({ where: { id: eventId } });
     if (!event) {

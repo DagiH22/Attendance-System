@@ -817,7 +817,7 @@ const EventsPage: React.FC = () => {
                 <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200">
                   {event.eventType.replace("_", " ")}
                 </span>
-                {event.status === "PAST" && (
+                {(event.status === "PAST" || event.status === "ACTIVE") && (
                   <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 flex items-center border border-purple-100">
                     <svg
                       className="w-3.5 h-3.5 mr-1"

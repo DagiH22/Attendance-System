@@ -72,7 +72,10 @@ export const createMember = async (req: Request, res: Response) => {
 
 export const getAllMembers = async (_req: Request, res: Response) => {
   try {
-    const members = await prisma.member.findMany();
+    // include attendance counts so frontend can show attendance numbers
+    const members = await prisma.member.findMany({
+      include: { _count: { select: { attendances: true } } },
+    });
     return res.status(200).json({ members });
   } catch (err: any) {
     console.error("Error in getAllMembers:", err?.message ?? err);
@@ -86,10 +89,66 @@ export const getMemberById = async (req: Request, res: Response) => {
     const idStr = Array.isArray(id) ? id[0] : id;
     if (!idStr) return res.status(400).json({ error: "Member id is required" });
 
-    const member = await prisma.member.findUnique({ where: { id: idStr } });
+    // Fetch member and include attendance count
+    const member = await prisma.member.findUnique({
+      where: { id: idStr },
+      include: {
+        _count: { select: { attendances: true } },
+      },
+    });
     if (!member) return res.status(404).json({ error: "Member not found" });
 
-    return res.status(200).json({ member });
+    // Compute attendance aggregates and recent records for frontend convenience
+    const totalAttended = member._count?.attendances ?? 0;
+
+    // Count only past events (ended) to derive missed count/percentage
+    const now = new Date();
+    const totalPastEvents = await prisma.event.count({
+      where: {
+        OR: [
+          // explicitly manually closed events
+          { endedAt: { lte: now } },
+          // events with an endTime that already passed
+          { endTime: { lte: now } },
+          // events whose eventDate is in the past (fallback)
+          { eventDate: { lt: now } },
+        ],
+      },
+    });
+
+    const totalMissed = Math.max(0, totalPastEvents - totalAttended);
+    const percentage =
+      totalPastEvents > 0
+        ? Math.round((totalAttended / totalPastEvents) * 100)
+        : 0;
+
+    // Recent attendance records (last 5) with event title and markedAt
+    const recentAttendances = await prisma.attendance.findMany({
+      where: { memberId: idStr },
+      include: { event: { select: { title: true } } },
+      orderBy: { markedAt: "desc" },
+      take: 5,
+    });
+
+    const recentRecords = recentAttendances.map((a) => ({
+      id: a.id,
+      eventId: a.eventId,
+      eventName: a.event?.title ?? "Unknown Event",
+      markedAt: a.markedAt,
+      status: "Present",
+    }));
+
+    const memberForResponse = {
+      ...member,
+      attendanceData: {
+        totalAttended,
+        totalMissed,
+        percentage,
+        recentRecords,
+      },
+    };
+
+    return res.status(200).json({ member: memberForResponse });
   } catch (err: any) {
     console.error("Error in getMemberById:", err?.message ?? err);
     return res.status(500).json({ error: "Internal server error" });
@@ -168,7 +227,7 @@ export const resendMemberQr = async (req: Request, res: Response) => {
       Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000,
     );
 
-    const recentCount = await prisma.resendLog.count({
+    const recentCount = await (prisma as any).resendLog.count({
       where: {
         memberId: idStr,
         createdAt: { gte: windowStart },
@@ -194,7 +253,7 @@ export const resendMemberQr = async (req: Request, res: Response) => {
       );
 
       // log the resend
-      await prisma.resendLog.create({
+      await (prisma as any).resendLog.create({
         data: { memberId: idStr, type: "QR_EMAIL" },
       });
 
