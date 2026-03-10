@@ -8,6 +8,7 @@ import Login from "./pages/Login";
 import EventsPage from "./pages/EventsPage";
 import CreateEvent from "./pages/CreateEvent";
 import EventDetailsPage from "./pages/EventDetailsPage";
+import TakeAttendancePage from "./pages/TakeAttendancePage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import "./App.css";
 
@@ -24,11 +25,7 @@ function App() {
           <Route path="/events/:id" element={<EventDetailsPage />} />
           <Route
             path="/events/:id/attendance"
-            element={
-              <div className="p-4 text-center">
-                Attendance Page (Coming Soon)
-              </div>
-            }
+            element={<TakeAttendancePage />}
           />
         </Route>
 

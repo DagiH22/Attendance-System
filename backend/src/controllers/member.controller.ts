@@ -107,6 +107,7 @@ export const searchMembers = async (req: Request, res: Response) => {
         OR: [
           { name: { contains: q, mode: "insensitive" } },
           { uniqueId: { contains: q, mode: "insensitive" } },
+          { phone: { contains: q, mode: "insensitive" } },
         ],
       },
     });

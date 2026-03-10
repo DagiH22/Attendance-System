@@ -7,6 +7,7 @@ import {
   deactivateEvent,
   getAllEvents,
   getEventById,
+  getPresentMembersForEvent,
 } from "../controllers/event.controller";
 
 const router = Router();
@@ -21,6 +22,9 @@ router.post("/", requireRole("SUPER_ADMIN"), createEvent);
 router.get("/", getAllEvents);
 
 // get specific evenet by id
+router.get("/:eventId/present-members", getPresentMembersForEvent);
+
+// get specific event by id
 router.get("/:id", getEventById);
 
 // deactivate an event (super admin only)

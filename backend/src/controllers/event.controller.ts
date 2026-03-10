@@ -205,6 +205,45 @@ export const getEventById = async (req: Request, res: Response) => {
   }
 };
 
+// GET /api/events/:eventId/present-members
+export const getPresentMembersForEvent = async (
+  req: Request,
+  res: Response,
+) => {
+  try {
+    if (!req.admin?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { eventId } = req.params;
+    const normalizedEventId = Array.isArray(eventId) ? eventId[0] : eventId;
+    if (!normalizedEventId) {
+      return res.status(400).json({ error: "Event id is required" });
+    }
+
+    const event = await prisma.event.findUnique({
+      where: { id: normalizedEventId },
+      select: { id: true },
+    });
+
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const attendances = await prisma.attendance.findMany({
+      where: { eventId: normalizedEventId },
+      select: { memberId: true },
+    });
+
+    return res.status(200).json({
+      presentMemberIds: attendances.map((attendance) => attendance.memberId),
+    });
+  } catch (err: any) {
+    console.error("Error in getPresentMembersForEvent:", err?.message ?? err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
 // PATCH /api/events/:id/deactivate
 // Sets isActive false, but doesn't delete the record. Only SUPER_ADMIN can perform this action.
 export const deactivateEvent = async (req: Request, res: Response) => {
@@ -270,6 +309,7 @@ export default {
   createEvent,
   getAllEvents,
   getEventById,
+  getPresentMembersForEvent,
   deactivateEvent,
   closeEvent,
 };

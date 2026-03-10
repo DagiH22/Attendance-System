@@ -14,23 +14,38 @@ export const markAttendance = async (req: Request, res: Response) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const { memberUniqueId, eventId, markedMethod } = req.body ?? {};
+    const { memberUniqueId, memberId, eventId, markedMethod, method } =
+      req.body ?? {};
 
-    if (!memberUniqueId || !eventId || !markedMethod) {
+    const normalizedMemberIdentifier =
+      typeof memberUniqueId === "string" && memberUniqueId.trim() !== ""
+        ? memberUniqueId.trim()
+        : typeof memberId === "string" && memberId.trim() !== ""
+          ? memberId.trim()
+          : "";
+    const normalizedMethod = markedMethod ?? method;
+
+    if (!normalizedMemberIdentifier || !eventId || !normalizedMethod) {
       return res.status(400).json({
-        error: "memberUniqueId, eventId and markedMethod are required",
+        error:
+          "memberUniqueId or memberId, eventId and markedMethod or method are required",
       });
     }
 
-    if (!Object.values(MarkMethod).includes(markedMethod)) {
+    if (!Object.values(MarkMethod).includes(normalizedMethod)) {
       return res
         .status(400)
-        .json({ error: "markedMethod must be 'QR' or 'MANUAL'" });
+        .json({ error: "markedMethod or method must be 'QR' or 'MANUAL'" });
     }
 
-    // 1. Find member by uniqueId
-    const member = await prisma.member.findUnique({
-      where: { uniqueId: memberUniqueId },
+    // 1. Find member by UUID id or public uniqueId
+    const member = await prisma.member.findFirst({
+      where: {
+        OR: [
+          { id: normalizedMemberIdentifier },
+          { uniqueId: normalizedMemberIdentifier },
+        ],
+      },
     });
     if (!member) {
       return res.status(404).json({ error: "Member not found" });
@@ -57,13 +72,19 @@ export const markAttendance = async (req: Request, res: Response) => {
         memberId: member.id,
         eventId: event.id,
         markedById: req.admin.id,
-        markedMethod,
+        markedMethod: normalizedMethod,
       },
     });
 
     return res.status(201).json({
       message: "Attendance marked successfully",
       attendance: created,
+      member: {
+        id: member.id,
+        uniqueId: member.uniqueId,
+        name: member.name,
+        phone: member.phone,
+      },
     });
   } catch (err: any) {
     // 4. Unique constraint (memberId, eventId)
