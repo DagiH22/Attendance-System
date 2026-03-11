@@ -8,7 +8,8 @@ const prisma = new PrismaClient();
 
 export const createMember = async (req: Request, res: Response) => {
   try {
-    const { name, email, phoneNumber, isActive } = req.body ?? {};
+    const { name, email, phoneNumber, department, batch, campus, isActive } =
+      req.body ?? {};
 
     if (!name || !email || !phoneNumber) {
       return res
@@ -39,6 +40,9 @@ export const createMember = async (req: Request, res: Response) => {
         name,
         email,
         phoneNumber,
+        department: department || null,
+        batch: batch || null,
+        campus: campus || null,
         isActive: typeof isActive === "boolean" ? isActive : true,
       },
     });

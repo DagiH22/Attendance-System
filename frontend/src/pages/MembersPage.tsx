@@ -22,6 +22,7 @@ const MembersPage: React.FC = () => {
   const [members, setMembers] = useState<DashboardMember[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
+  const [successMessage, setSuccessMessage] = useState<string>("");
   const [currentPage, setCurrentPage] = useState<number>(1);
 
   // Filters and Sorting State
@@ -63,6 +64,25 @@ const MembersPage: React.FC = () => {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (
+      location.state &&
+      (location.state as { registered?: boolean }).registered
+    ) {
+      setSuccessMessage("Member registered successfully.");
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.pathname, location.state, navigate]);
+
+  useEffect(() => {
+    if (!successMessage) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setSuccessMessage(""), 3500);
+    return () => window.clearTimeout(timer);
+  }, [successMessage]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -175,15 +195,23 @@ const MembersPage: React.FC = () => {
       <header className="bg-white px-4 pt-6 pb-4 border-b border-gray-200 sticky top-0 z-20">
         <div className="flex justify-between items-center mb-4 max-w-4xl mx-auto w-full">
           <h1 className="text-2xl font-bold text-gray-900">Members</h1>
-          <button
-            onClick={async () => {
-              await logout();
-              navigate("/login", { replace: true });
-            }}
-            className="text-sm font-medium text-red-600 bg-red-50 px-3 py-1.5 rounded-md"
-          >
-            Logout
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate("/members/register")}
+              className="text-sm font-medium text-white bg-blue-600 px-3 py-1.5 rounded-md shadow-sm hover:bg-blue-700 transition-colors"
+            >
+              Register
+            </button>
+            <button
+              onClick={async () => {
+                await logout();
+                navigate("/login", { replace: true });
+              }}
+              className="text-sm font-medium text-red-600 bg-red-50 px-3 py-1.5 rounded-md"
+            >
+              Logout
+            </button>
+          </div>
         </div>
 
         {/* Tab Navigation */}
@@ -219,6 +247,12 @@ const MembersPage: React.FC = () => {
         </div>
 
         <div className="max-w-4xl mx-auto w-full">
+          {successMessage && (
+            <div className="mb-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
+              {successMessage}
+            </div>
+          )}
+
           {/* Search Bar */}
           <div className="relative mb-4">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
