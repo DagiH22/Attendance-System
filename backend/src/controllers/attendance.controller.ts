@@ -88,7 +88,7 @@ export const markAttendance = async (req: Request, res: Response) => {
         id: member.id,
         uniqueId: member.uniqueId,
         name: member.name,
-        phone: member.phone,
+        phoneNumber: member.phoneNumber,
       },
     });
   } catch (err: any) {

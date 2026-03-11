@@ -63,7 +63,7 @@ model Member {
   uniqueId     String       @unique // Unique string used for QR code generation
   name         String
   email        String       @unique
-  phoneNumber  String   @map("phone")
+  phoneNumber  String       @map("phone")
   department   Department?
   batch        Batch?
   campus       Campus?

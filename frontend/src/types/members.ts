@@ -3,7 +3,10 @@ export interface Member {
   uniqueId: string;
   name: string;
   email: string;
-  phone: string | null;
+  phoneNumber: string | null;
+  department?: string | null;
+  batch?: string | null;
+  campus?: string | null;
   isActive: boolean;
   createdAt?: string;
   updatedAt?: string;
@@ -20,5 +23,5 @@ export interface AttendanceRecordResponse {
     markedMethod: "QR" | "MANUAL";
     markedAt: string;
   };
-  member?: Pick<Member, "id" | "uniqueId" | "name" | "phone">;
+  member?: Pick<Member, "id" | "uniqueId" | "name" | "phoneNumber">;
 }

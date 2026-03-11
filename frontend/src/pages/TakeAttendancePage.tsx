@@ -198,7 +198,7 @@ const TakeAttendancePage: React.FC = () => {
     if (!query) return members;
 
     return members.filter((member) =>
-      [member.name, member.uniqueId, member.phone ?? ""].some((value) =>
+      [member.name, member.uniqueId, member.phoneNumber ?? ""].some((value) =>
         value.toLowerCase().includes(query),
       ),
     );
@@ -496,8 +496,8 @@ const TakeAttendancePage: React.FC = () => {
                 </p>
                 <p className="text-sm text-slate-500">
                   {lastScannedMember.uniqueId}
-                  {lastScannedMember.phone
-                    ? ` • ${lastScannedMember.phone}`
+                  {lastScannedMember.phoneNumber
+                    ? ` • ${lastScannedMember.phoneNumber}`
                     : ""}
                 </p>
               </div>
@@ -617,7 +617,8 @@ const TakeAttendancePage: React.FC = () => {
                   Manual check-in
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Search members by name, ID, or phone, then mark them present.
+                  Search members by name, ID, or phone number, then mark them
+                  present.
                 </p>
               </div>
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
@@ -634,7 +635,7 @@ const TakeAttendancePage: React.FC = () => {
                 type="search"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search by name, ID, or phone"
+                placeholder="Search by name, ID, or phone number"
                 className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-50"
               />
             </div>
@@ -664,7 +665,7 @@ const TakeAttendancePage: React.FC = () => {
                         </p>
                         <p className="mt-1 truncate text-sm text-slate-500">
                           {member.uniqueId}
-                          {member.phone ? ` • ${member.phone}` : ""}
+                          {member.phoneNumber ? ` • ${member.phoneNumber}` : ""}
                         </p>
                         {isDeactivated && (
                           <p className="mt-1 text-xs font-semibold text-rose-600">

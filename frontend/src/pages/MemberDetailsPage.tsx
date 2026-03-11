@@ -22,6 +22,33 @@ interface MemberDetails extends Member {
   };
 }
 
+const NOT_SPECIFIED = "Not specified";
+
+const formatEnumLabel = (value?: string | null) => {
+  if (!value) {
+    return NOT_SPECIFIED;
+  }
+
+  return value
+    .split("_")
+    .map((segment) => {
+      if (/^\d+$/.test(segment)) {
+        return segment;
+      }
+
+      return segment.charAt(0) + segment.slice(1).toLowerCase();
+    })
+    .join(" ");
+};
+
+const getDisplayValue = (value?: string | null) => {
+  if (!value || value.trim() === "") {
+    return NOT_SPECIFIED;
+  }
+
+  return value;
+};
+
 const MemberDetailsPage: React.FC = () => {
   const { memberId } = useParams<{ memberId: string }>();
   const navigate = useNavigate();
@@ -159,6 +186,12 @@ const MemberDetailsPage: React.FC = () => {
     );
   }
 
+  const emailDisplay = getDisplayValue(member.email);
+  const phoneDisplay = getDisplayValue(member.phoneNumber);
+  const departmentDisplay = formatEnumLabel(member.department);
+  const batchDisplay = formatEnumLabel(member.batch);
+  const campusDisplay = formatEnumLabel(member.campus);
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
       <div className="flex items-center space-x-4 mb-6">
@@ -186,7 +219,7 @@ const MemberDetailsPage: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Info Column */}
         <div className="md:col-span-2 space-y-6">
-          {/* Basic Info */}
+          {/* Member Information */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 relative">
             <div className="absolute top-6 right-6">
               <span
@@ -196,11 +229,11 @@ const MemberDetailsPage: React.FC = () => {
               </span>
             </div>
             <h2 className="text-xl font-semibold text-gray-800 mb-4 pb-2 border-b border-gray-100">
-              Profile Information
+              Member Information
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <p className="text-sm text-gray-500 mb-1">Full Name</p>
+                <p className="text-sm text-gray-500 mb-1">Name</p>
                 <p className="font-medium text-gray-900">{member.name}</p>
               </div>
               <div>
@@ -208,14 +241,33 @@ const MemberDetailsPage: React.FC = () => {
                 <p className="font-medium text-gray-900">{member.uniqueId}</p>
               </div>
               <div>
-                <p className="text-sm text-gray-500 mb-1">Email</p>
-                <p className="font-medium text-gray-900">{member.email}</p>
+                <p className="text-sm text-gray-500 mb-1">Phone</p>
+                <p className="font-medium text-gray-900">{phoneDisplay}</p>
               </div>
               <div>
-                <p className="text-sm text-gray-500 mb-1">Phone Number</p>
-                <p className="font-medium text-gray-900">
-                  {member.phone || "N/A"}
-                </p>
+                <p className="text-sm text-gray-500 mb-1">Email</p>
+                {member.email ? (
+                  <a
+                    href={`mailto:${member.email}`}
+                    className="font-medium text-blue-600 hover:text-blue-700 hover:underline break-all"
+                  >
+                    {emailDisplay}
+                  </a>
+                ) : (
+                  <p className="font-medium text-gray-900">{emailDisplay}</p>
+                )}
+              </div>
+              <div>
+                <p className="text-sm text-gray-500 mb-1">Department</p>
+                <p className="font-medium text-gray-900">{departmentDisplay}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500 mb-1">Batch</p>
+                <p className="font-medium text-gray-900">{batchDisplay}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500 mb-1">Campus</p>
+                <p className="font-medium text-gray-900">{campusDisplay}</p>
               </div>
               <div>
                 <p className="text-sm text-gray-500 mb-1">Date Registered</p>

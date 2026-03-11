@@ -99,7 +99,7 @@ const MembersPage: React.FC = () => {
       q === "" ||
       m.name.toLowerCase().includes(q) ||
       m.uniqueId.toLowerCase().includes(q) ||
-      (m.phone && m.phone.toLowerCase().includes(q)) ||
+      (m.phoneNumber && m.phoneNumber.toLowerCase().includes(q)) ||
       (m.email && m.email.toLowerCase().includes(q));
 
     return matchStatus && matchSearch;
@@ -111,7 +111,7 @@ const MembersPage: React.FC = () => {
     if (m.name.toLowerCase().includes(q)) return 0;
     if (m.email && m.email.toLowerCase().includes(q)) return 1;
     if (m.uniqueId && m.uniqueId.toLowerCase().includes(q)) return 2;
-    if (m.phone && m.phone.toLowerCase().includes(q)) return 3;
+    if (m.phoneNumber && m.phoneNumber.toLowerCase().includes(q)) return 3;
     return 4;
   };
 
@@ -442,7 +442,7 @@ const MembersPage: React.FC = () => {
               </div>
 
               <div className="space-y-1.5 text-sm text-gray-600 mt-3 pt-3 border-t border-gray-100">
-                {member.phone && (
+                {member.phoneNumber && (
                   <div className="flex items-center">
                     <svg
                       className="w-4 h-4 mr-2 text-gray-400"
@@ -457,7 +457,7 @@ const MembersPage: React.FC = () => {
                         d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"
                       ></path>
                     </svg>
-                    {member.phone}
+                    {member.phoneNumber}
                   </div>
                 )}
                 {member.email && (

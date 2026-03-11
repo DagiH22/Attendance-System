@@ -8,10 +8,12 @@ const prisma = new PrismaClient();
 
 export const createMember = async (req: Request, res: Response) => {
   try {
-    const { name, email, phone, isActive } = req.body ?? {};
+    const { name, email, phoneNumber, isActive } = req.body ?? {};
 
-    if (!name || !email) {
-      return res.status(400).json({ error: "name and email are required" });
+    if (!name || !email || !phoneNumber) {
+      return res
+        .status(400)
+        .json({ error: "name, email, and phoneNumber are required" });
     }
 
     // Optionally ensure email uniqueness
@@ -36,7 +38,7 @@ export const createMember = async (req: Request, res: Response) => {
         uniqueId,
         name,
         email,
-        phone: phone ?? null,
+        phoneNumber,
         isActive: typeof isActive === "boolean" ? isActive : true,
       },
     });
@@ -50,7 +52,7 @@ export const createMember = async (req: Request, res: Response) => {
           {
             name: created.name,
             uniqueId: created.uniqueId,
-            phone: created.phone,
+            phoneNumber: created.phoneNumber,
           },
           qrCode,
         );
@@ -248,7 +250,11 @@ export const resendMemberQr = async (req: Request, res: Response) => {
       const qrBase64 = await generateQrWithLogo(member.uniqueId);
       await sendMemberEmail(
         member.email,
-        { name: member.name, uniqueId: member.uniqueId, phone: member.phone },
+        {
+          name: member.name,
+          uniqueId: member.uniqueId,
+          phoneNumber: member.phoneNumber,
+        },
         qrBase64,
       );
 
@@ -280,7 +286,7 @@ export const searchMembers = async (req: Request, res: Response) => {
         OR: [
           { name: { contains: q, mode: "insensitive" } },
           { uniqueId: { contains: q, mode: "insensitive" } },
-          { phone: { contains: q, mode: "insensitive" } },
+          { phoneNumber: { contains: q, mode: "insensitive" } },
         ],
       },
     });

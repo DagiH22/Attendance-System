@@ -3,7 +3,7 @@ import axios from "axios";
 interface MemberData {
   name: string;
   uniqueId: string;
-  phone?: string | null;
+  phoneNumber?: string | null;
 }
 
 /**
@@ -71,7 +71,7 @@ async function sendBrevoEmail(
 /**
  Sends a welcome email with the member's details and QR code 
  @param memberEmail - member's email address
- @param memberData - object containing name, uniqueId, and phone
+ @param memberData - object containing name, uniqueId, and phoneNumber
  @param qrBase64 - base64 string of the qr code image
  */
 export const sendMemberEmail = async (
@@ -88,7 +88,7 @@ export const sendMemberEmail = async (
       <p>Thank you for registering! Here are your membership details:</p>
       <ul style="list-style: none; padding: 0;">
         <li><strong>Unique ID:</strong> ${memberData.uniqueId}</li>
-        <li><strong>Phone:</strong> ${memberData.phone || "N/A"}</li>
+        <li><strong>Phone:</strong> ${memberData.phoneNumber || "N/A"}</li>
       </ul>
       <div style="text-align: center; margin: 20px 0;">
         <p><strong>Your Attendance QR Code:</strong></p>
