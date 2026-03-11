@@ -5,9 +5,11 @@ import {
   closeEvent,
   createEvent,
   deactivateEvent,
+  deleteEvent,
   getAllEvents,
   getEventById,
   getPresentMembersForEvent,
+  updateEvent,
 } from "../controllers/event.controller";
 
 const router = Router();
@@ -32,5 +34,11 @@ router.patch("/:id/deactivate", requireRole("SUPER_ADMIN"), deactivateEvent);
 
 // manually close an event without deactivating it
 router.patch("/:id/close", requireRole("SUPER_ADMIN"), closeEvent);
+
+// edit an event (super admin only)
+router.patch("/:id", requireRole("SUPER_ADMIN"), updateEvent);
+
+// delete an upcoming event (super admin only)
+router.delete("/:id", requireRole("SUPER_ADMIN"), deleteEvent);
 
 export default router;

@@ -305,6 +305,167 @@ export const closeEvent = async (req: Request, res: Response) => {
   }
 };
 
+// PATCH /api/events/:id
+// Only SUPER_ADMIN. Editing is blocked once the event has started.
+export const updateEvent = async (req: Request, res: Response) => {
+  try {
+    if (!req.admin?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { id } = req.params;
+    const idStr = Array.isArray(id) ? id[0] : id;
+    if (!idStr) {
+      return res.status(400).json({ error: "Event id is required" });
+    }
+
+    const existing = await prisma.event.findUnique({ where: { id: idStr } });
+    if (!existing) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const now = new Date();
+    if (existing.startTime <= now) {
+      return res
+        .status(403)
+        .json({ error: "Event has already started; editing is disabled" });
+    }
+
+    const { title, description, status, startTime, endTime, location } =
+      req.body ?? {};
+
+    const updateData: {
+      title?: string;
+      description?: string | null;
+      startTime?: Date;
+      endTime?: Date;
+      location?: string;
+      isActive?: boolean;
+      endedAt?: Date | null;
+    } = {};
+
+    if (title !== undefined) {
+      if (typeof title !== "string" || title.trim() === "") {
+        return res
+          .status(400)
+          .json({ error: "title must be a non-empty string" });
+      }
+      updateData.title = title.trim();
+    }
+
+    if (description !== undefined) {
+      if (description !== null && typeof description !== "string") {
+        return res.status(400).json({ error: "description must be a string" });
+      }
+      updateData.description = description?.trim() ? description.trim() : null;
+    }
+
+    if (location !== undefined) {
+      if (typeof location !== "string" || location.trim() === "") {
+        return res
+          .status(400)
+          .json({ error: "location must be a non-empty string" });
+      }
+      updateData.location = location.trim();
+    }
+
+    if (startTime !== undefined) {
+      const parsedStartTime = new Date(startTime);
+      if (Number.isNaN(parsedStartTime.getTime())) {
+        return res.status(400).json({ error: "Invalid startTime" });
+      }
+      if (parsedStartTime <= now) {
+        return res
+          .status(400)
+          .json({ error: "startTime must be in the future" });
+      }
+      updateData.startTime = parsedStartTime;
+    }
+
+    if (endTime !== undefined) {
+      const parsedEndTime = new Date(endTime);
+      if (Number.isNaN(parsedEndTime.getTime())) {
+        return res.status(400).json({ error: "Invalid endTime" });
+      }
+      updateData.endTime = parsedEndTime;
+    }
+
+    const nextStartTime = updateData.startTime ?? existing.startTime;
+    const nextEndTime = updateData.endTime ?? existing.endTime;
+    if (nextEndTime <= nextStartTime) {
+      return res.status(400).json({ error: "endTime must be after startTime" });
+    }
+
+    if (status !== undefined) {
+      if (
+        status !== "UPCOMING" &&
+        status !== "ACTIVE" &&
+        status !== "PAST" &&
+        status !== "DEACTIVATED"
+      ) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
+
+      if (status === "DEACTIVATED") {
+        updateData.isActive = false;
+      } else {
+        updateData.isActive = true;
+        if (status === "PAST") {
+          updateData.endedAt = existing.endedAt ?? new Date();
+        }
+        if (status === "UPCOMING" || status === "ACTIVE") {
+          updateData.endedAt = null;
+        }
+      }
+    }
+
+    const updated = await prisma.event.update({
+      where: { id: idStr },
+      data: updateData,
+      include: { _count: { select: { attendances: true } } },
+    });
+
+    return res.status(200).json({ event: serializeEventForResponse(updated) });
+  } catch (err: any) {
+    console.error("Error in updateEvent:", err?.message ?? err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+// DELETE /api/events/:id
+// Only SUPER_ADMIN. Event must still be upcoming.
+export const deleteEvent = async (req: Request, res: Response) => {
+  try {
+    if (!req.admin?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { id } = req.params;
+    const idStr = Array.isArray(id) ? id[0] : id;
+    if (!idStr) {
+      return res.status(400).json({ error: "Event id is required" });
+    }
+
+    const existing = await prisma.event.findUnique({ where: { id: idStr } });
+    if (!existing) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    if (existing.startTime <= new Date()) {
+      return res
+        .status(403)
+        .json({ error: "Cannot delete an event that has already started" });
+    }
+
+    await prisma.event.delete({ where: { id: idStr } });
+
+    return res.status(200).json({ deleted: true, id: idStr });
+  } catch (err: any) {
+    console.error("Error in deleteEvent:", err?.message ?? err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
 export default {
   createEvent,
   getAllEvents,
@@ -312,4 +473,6 @@ export default {
   getPresentMembersForEvent,
   deactivateEvent,
   closeEvent,
+  updateEvent,
+  deleteEvent,
 };

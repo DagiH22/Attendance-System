@@ -14,8 +14,25 @@ type SortOption =
   | "HIGHEST_ATTENDANCE"
   | "LOWEST_ATTENDANCE";
 
+type EditableStatusOption = "UPCOMING" | "DEACTIVATED";
+
+const EDITABLE_STATUS_OPTIONS: Array<{
+  value: EditableStatusOption;
+  label: string;
+}> = [
+  { value: "UPCOMING", label: "Upcoming" },
+  { value: "DEACTIVATED", label: "Deactivated" },
+];
+
 const UI_PAGE_SIZE = 10;
 const BATCH_SIZE = 30;
+
+const toDateTimeLocalValue = (value: string) => {
+  const date = new Date(value);
+  const offset = date.getTimezoneOffset();
+  const localDate = new Date(date.getTime() - offset * 60_000);
+  return localDate.toISOString().slice(0, 16);
+};
 
 // Preserve backend ordering for DEFAULT sort; client-side comparator not required.
 
@@ -99,15 +116,31 @@ const EventsPage: React.FC = () => {
   // Dropdown states for desktop
   const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
   const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
+  const [isEditStatusDropdownOpen, setIsEditStatusDropdownOpen] =
+    useState(false);
 
   // Click outside handlers ref
   const sortDropdownRef = React.useRef<HTMLDivElement>(null);
   const statusDropdownRef = React.useRef<HTMLDivElement>(null);
   const typeDropdownRef = React.useRef<HTMLDivElement>(null);
+  const editStatusDropdownRef = React.useRef<HTMLDivElement>(null);
 
   const navigate = useNavigate();
   const location = useLocation();
-  const { logout } = useAuth();
+  const { logout, admin } = useAuth();
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState<DashboardEvent | null>(
+    null,
+  );
+  const [editError, setEditError] = useState("");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editForm, setEditForm] = useState({
+    title: "",
+    description: "",
+    status: "UPCOMING" as DashboardEvent["status"],
+    startTime: "",
+    endTime: "",
+  });
 
   const STATUS_OPTIONS: StatusOption[] = [
     "UPCOMING",
@@ -153,6 +186,12 @@ const EventsPage: React.FC = () => {
       ) {
         setIsTypeDropdownOpen(false);
       }
+      if (
+        editStatusDropdownRef.current &&
+        !editStatusDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsEditStatusDropdownOpen(false);
+      }
     };
 
     document.addEventListener("mousedown", handleClickOutside);
@@ -160,6 +199,15 @@ const EventsPage: React.FC = () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
+
+  useEffect(() => {
+    if ((location.state as { refreshEvents?: boolean } | null)?.refreshEvents) {
+      loadedBatchOffsetsRef.current.clear();
+      pendingBatchOffsetsRef.current.clear();
+      void fetchEventsBatch(0, { replace: true, showLoader: false });
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.pathname, location.state, navigate]);
 
   useEffect(() => {
     if (!initialLoaded) {
@@ -336,6 +384,83 @@ const EventsPage: React.FC = () => {
         return "Lowest Attendance";
       default:
         return "";
+    }
+  };
+
+  const isSuperAdmin = admin?.role === "SUPER_ADMIN";
+
+  const openEditModal = (event: DashboardEvent) => {
+    setSelectedEvent(event);
+    setEditError("");
+    setEditForm({
+      title: event.title,
+      description: event.description || "",
+      status: event.status === "DEACTIVATED" ? "DEACTIVATED" : "UPCOMING",
+      startTime: toDateTimeLocalValue(event.startTime),
+      endTime: toDateTimeLocalValue(event.endTime),
+    });
+    setIsEditStatusDropdownOpen(false);
+    setIsEditModalOpen(true);
+  };
+
+  const handleEditSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+
+    if (!selectedEvent) {
+      return;
+    }
+
+    const parsedStartTime = new Date(editForm.startTime);
+    const parsedEndTime = new Date(editForm.endTime);
+
+    if (
+      Number.isNaN(parsedStartTime.getTime()) ||
+      Number.isNaN(parsedEndTime.getTime())
+    ) {
+      setEditError("Please enter valid start and end times.");
+      return;
+    }
+
+    if (parsedStartTime.getTime() <= Date.now()) {
+      setEditError("Only upcoming events can be edited.");
+      return;
+    }
+
+    if (parsedEndTime <= parsedStartTime) {
+      setEditError("End time must be after start time.");
+      return;
+    }
+
+    try {
+      setIsSavingEdit(true);
+      setEditError("");
+
+      const response = await api.patch(`/events/${selectedEvent.id}`, {
+        title: editForm.title.trim(),
+        description: editForm.description.trim(),
+        status: editForm.status === "DEACTIVATED" ? "DEACTIVATED" : "UPCOMING",
+        startTime: parsedStartTime.toISOString(),
+        endTime: parsedEndTime.toISOString(),
+      });
+
+      const updatedEvent = mapEventToDashboardEvent(
+        response.data?.event ?? response.data,
+      );
+
+      setEvents((prev) =>
+        prev.map((item) => (item.id === updatedEvent.id ? updatedEvent : item)),
+      );
+      setIsEditModalOpen(false);
+      setIsEditStatusDropdownOpen(false);
+      setSelectedEvent(null);
+    } catch (err: any) {
+      setEditError(
+        err.response?.data?.error ||
+          err.response?.data?.message ||
+          "Failed to update event.",
+      );
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
@@ -803,14 +928,37 @@ const EventsPage: React.FC = () => {
               className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
             >
               <div className="flex justify-between items-start mb-2 gap-3">
-                <h3 className="text-lg font-bold text-gray-900 leading-tight">
-                  {event.title}
-                </h3>
-                <span
-                  className={`px-2.5 py-1 text-xs font-bold rounded-full border whitespace-nowrap ${getStatusColor(event.status)}`}
-                >
-                  {event.status}
-                </span>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-lg font-bold text-gray-900 leading-tight">
+                    {event.title}
+                  </h3>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span
+                    className={`px-2.5 py-1 text-xs font-bold rounded-full border whitespace-nowrap ${getStatusColor(event.status)}`}
+                  >
+                    {event.status}
+                  </span>
+                  {isSuperAdmin && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openEditModal(event);
+                      }}
+                      disabled={
+                        new Date(event.startTime).getTime() <= Date.now()
+                      }
+                      className={`inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                        new Date(event.startTime).getTime() > Date.now()
+                          ? "bg-blue-50 text-blue-700 hover:bg-blue-100"
+                          : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                      }`}
+                    >
+                      ✏️ Edit
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -966,6 +1114,218 @@ const EventsPage: React.FC = () => {
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
+
+      {isEditModalOpen && selectedEvent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Edit Event</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Update the event details while it is still upcoming.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsEditModalOpen(false);
+                  setSelectedEvent(null);
+                  setEditError("");
+                  setIsEditStatusDropdownOpen(false);
+                }}
+                className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                aria-label="Close edit modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form className="mt-6 space-y-4" onSubmit={handleEditSubmit}>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Title
+                </label>
+                <input
+                  type="text"
+                  value={editForm.title}
+                  onChange={(e) =>
+                    setEditForm((prev) => ({ ...prev, title: e.target.value }))
+                  }
+                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Description
+                </label>
+                <textarea
+                  value={editForm.description}
+                  onChange={(e) =>
+                    setEditForm((prev) => ({
+                      ...prev,
+                      description: e.target.value,
+                    }))
+                  }
+                  rows={4}
+                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Status
+                </label>
+                <div className="relative" ref={editStatusDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditStatusDropdownOpen((prev) => !prev)}
+                    className="flex w-full items-center justify-between rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  >
+                    <span>
+                      {editForm.status === "DEACTIVATED"
+                        ? "Deactivated"
+                        : "Upcoming"}
+                    </span>
+                    <svg
+                      className={`h-4 w-4 text-gray-500 transition-transform ${
+                        isEditStatusDropdownOpen ? "rotate-180" : ""
+                      }`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M19 9l-7 7-7-7"
+                      />
+                    </svg>
+                  </button>
+
+                  {isEditStatusDropdownOpen && (
+                    <div className="absolute z-10 mt-2 w-full rounded-xl border border-gray-200 bg-white p-2 shadow-lg">
+                      {EDITABLE_STATUS_OPTIONS.map((option) => {
+                        const isSelected = editForm.status === option.value;
+
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => {
+                              setEditForm((prev) => ({
+                                ...prev,
+                                status: option.value,
+                              }));
+                              setIsEditStatusDropdownOpen(false);
+                            }}
+                            className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${
+                              isSelected
+                                ? "bg-blue-50 text-blue-700"
+                                : "text-gray-700 hover:bg-gray-50"
+                            }`}
+                          >
+                            <span>{option.label}</span>
+                            {isSelected && (
+                              <svg
+                                className="h-4 w-4"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth="2"
+                                  d="M5 13l4 4L19 7"
+                                />
+                              </svg>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  Upcoming events can only be changed to deactivated here.
+                </p>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Start time
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={editForm.startTime}
+                    onChange={(e) =>
+                      setEditForm((prev) => ({
+                        ...prev,
+                        startTime: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    End time
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={editForm.endTime}
+                    onChange={(e) =>
+                      setEditForm((prev) => ({
+                        ...prev,
+                        endTime: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    required
+                  />
+                </div>
+              </div>
+
+              {editError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {editError}
+                </div>
+              )}
+
+              <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditModalOpen(false);
+                    setSelectedEvent(null);
+                    setEditError("");
+                    setIsEditStatusDropdownOpen(false);
+                  }}
+                  className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingEdit}
+                  className={`rounded-xl px-4 py-2.5 text-sm font-semibold text-white ${
+                    isSavingEdit
+                      ? "bg-blue-300"
+                      : "bg-blue-600 hover:bg-blue-700"
+                  }`}
+                >
+                  {isSavingEdit ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

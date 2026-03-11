@@ -3,10 +3,21 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import api from "../lib/api";
 import formatDate, { formatDateTime } from "../lib/formatDate";
 import type { DashboardEvent } from "../types/events";
+import { useAuth } from "../contexts/AuthContext";
 
 type LocationState = {
   event?: DashboardEvent;
 };
+
+type EditableStatusOption = "UPCOMING" | "DEACTIVATED";
+
+const EDITABLE_STATUS_OPTIONS: Array<{
+  value: EditableStatusOption;
+  label: string;
+}> = [
+  { value: "UPCOMING", label: "Upcoming" },
+  { value: "DEACTIVATED", label: "Deactivated" },
+];
 
 const mapEventToDashboardEvent = (rawEvent: any): DashboardEvent => {
   const now = new Date();
@@ -56,17 +67,50 @@ const mapEventToDashboardEvent = (rawEvent: any): DashboardEvent => {
   };
 };
 
+const toDateTimeLocalValue = (value: string) => {
+  const date = new Date(value);
+  const offset = date.getTimezoneOffset();
+  const localDate = new Date(date.getTime() - offset * 60_000);
+  return localDate.toISOString().slice(0, 16);
+};
+
 const EventDetailsPage: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
   const state = location.state as LocationState | null;
+  const { admin } = useAuth();
 
   const [event, setEvent] = useState<DashboardEvent | null>(
     state?.event ?? null,
   );
   const [loading, setLoading] = useState<boolean>(!state?.event);
   const [error, setError] = useState<string>("");
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [actionError, setActionError] = useState("");
+  const [editForm, setEditForm] = useState({
+    title: "",
+    description: "",
+    status: "UPCOMING" as DashboardEvent["status"],
+    startTime: "",
+    endTime: "",
+  });
+
+  const syncEditForm = (nextEvent: DashboardEvent) => {
+    setEditForm({
+      title: nextEvent.title,
+      description: nextEvent.description || "",
+      status: nextEvent.status === "DEACTIVATED" ? "DEACTIVATED" : "UPCOMING",
+      startTime: toDateTimeLocalValue(nextEvent.startTime),
+      endTime: toDateTimeLocalValue(nextEvent.endTime),
+    });
+  };
+
+  const statusDropdownRef = React.useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!id) {
@@ -112,6 +156,30 @@ const EventDetailsPage: React.FC = () => {
       setEvent(state.event);
     }
   }, [state?.event]);
+
+  useEffect(() => {
+    if (event) {
+      syncEditForm(event);
+    }
+  }, [event]);
+
+  useEffect(() => {
+    if (!isEditModalOpen || !isStatusDropdownOpen) {
+      return;
+    }
+
+    const handleClickOutside = (mouseEvent: MouseEvent) => {
+      if (
+        statusDropdownRef.current &&
+        !statusDropdownRef.current.contains(mouseEvent.target as Node)
+      ) {
+        setIsStatusDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isEditModalOpen, isStatusDropdownOpen]);
 
   const attendanceStats = useMemo(() => {
     const totalMembers = event?.totalMembers ?? 0;
@@ -173,6 +241,97 @@ const EventDetailsPage: React.FC = () => {
     navigate(`/events/${event.id}/attendance`, {
       state: { event },
     });
+  };
+
+  const isSuperAdmin = admin?.role === "SUPER_ADMIN";
+  const hasStarted = event
+    ? new Date(event.startTime).getTime() <= Date.now()
+    : false;
+  const canEdit = Boolean(isSuperAdmin && event && !hasStarted);
+  const canDelete = Boolean(isSuperAdmin && event && !hasStarted);
+
+  const handleEditSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+
+    if (!event) {
+      return;
+    }
+
+    setActionError("");
+
+    const parsedStartTime = new Date(editForm.startTime);
+    const parsedEndTime = new Date(editForm.endTime);
+
+    if (
+      Number.isNaN(parsedStartTime.getTime()) ||
+      Number.isNaN(parsedEndTime.getTime())
+    ) {
+      setActionError("Please enter valid start and end times.");
+      return;
+    }
+
+    if (parsedStartTime.getTime() <= Date.now()) {
+      setActionError(
+        "Editing is only allowed for events that have not started yet.",
+      );
+      return;
+    }
+
+    if (parsedEndTime <= parsedStartTime) {
+      setActionError("End time must be after start time.");
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      const response = await api.patch(`/events/${event.id}`, {
+        title: editForm.title.trim(),
+        description: editForm.description.trim(),
+        status: editForm.status === "DEACTIVATED" ? "DEACTIVATED" : "UPCOMING",
+        startTime: parsedStartTime.toISOString(),
+        endTime: parsedEndTime.toISOString(),
+      });
+
+      const updatedEvent = mapEventToDashboardEvent(
+        response.data?.event ?? response.data,
+      );
+      setEvent(updatedEvent);
+      setIsEditModalOpen(false);
+      setIsStatusDropdownOpen(false);
+    } catch (err: any) {
+      setActionError(
+        err.response?.data?.error ||
+          err.response?.data?.message ||
+          "Failed to update event.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!event) {
+      return;
+    }
+
+    try {
+      setActionError("");
+      setIsDeleting(true);
+      await api.delete(`/events/${event.id}`);
+      setShowDeleteConfirmModal(false);
+      navigate("/events", {
+        replace: true,
+        state: { refreshEvents: true, deletedEventId: event.id },
+      });
+    } catch (err: any) {
+      setActionError(
+        err.response?.data?.error ||
+          err.response?.data?.message ||
+          "Failed to delete event.",
+      );
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   if (loading) {
@@ -247,6 +406,56 @@ const EventDetailsPage: React.FC = () => {
                 </span>
               </div>
             </div>
+
+            {isSuperAdmin && (
+              <div className="mt-5 flex flex-wrap gap-3 border-t border-gray-100 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActionError("");
+                    setIsEditModalOpen(true);
+                    setIsStatusDropdownOpen(false);
+                  }}
+                  disabled={!canEdit}
+                  className={`inline-flex items-center rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                    canEdit
+                      ? "bg-blue-600 text-white hover:bg-blue-700"
+                      : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                  }`}
+                >
+                  <span className="mr-2">✏️</span>
+                  Edit Event
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActionError("");
+                    setShowDeleteConfirmModal(true);
+                  }}
+                  disabled={!canDelete || isDeleting}
+                  className={`inline-flex items-center rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                    canDelete && !isDeleting
+                      ? "bg-red-600 text-white hover:bg-red-700"
+                      : "bg-red-50 text-red-300 cursor-not-allowed"
+                  }`}
+                >
+                  <span className="mr-2">🗑️</span>
+                  {isDeleting ? "Deleting..." : "Delete Event"}
+                </button>
+                {!canEdit && (
+                  <p className="w-full text-sm text-gray-500">
+                    Editing and deletion are only available before the event
+                    starts.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {actionError && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {actionError}
+              </div>
+            )}
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <InfoRow
@@ -390,6 +599,263 @@ const EventDetailsPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {isEditModalOpen && event && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Edit Event</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Update the event details. Changes are only allowed before the
+                  event starts.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsEditModalOpen(false);
+                  setActionError("");
+                  syncEditForm(event);
+                }}
+                className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                aria-label="Close edit modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form className="mt-6 space-y-4" onSubmit={handleEditSubmit}>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Title
+                </label>
+                <input
+                  type="text"
+                  value={editForm.title}
+                  onChange={(e) =>
+                    setEditForm((prev) => ({ ...prev, title: e.target.value }))
+                  }
+                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Description
+                </label>
+                <textarea
+                  value={editForm.description}
+                  onChange={(e) =>
+                    setEditForm((prev) => ({
+                      ...prev,
+                      description: e.target.value,
+                    }))
+                  }
+                  rows={4}
+                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Status
+                </label>
+                <div className="relative" ref={statusDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setIsStatusDropdownOpen((prev) => !prev)}
+                    className="flex w-full items-center justify-between rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  >
+                    <span>
+                      {editForm.status === "DEACTIVATED"
+                        ? "Deactivated"
+                        : "Upcoming"}
+                    </span>
+                    <svg
+                      className={`h-4 w-4 text-gray-500 transition-transform ${
+                        isStatusDropdownOpen ? "rotate-180" : ""
+                      }`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M19 9l-7 7-7-7"
+                      />
+                    </svg>
+                  </button>
+
+                  {isStatusDropdownOpen && (
+                    <div className="absolute z-10 mt-2 w-full rounded-xl border border-gray-200 bg-white p-2 shadow-lg">
+                      {EDITABLE_STATUS_OPTIONS.map((option) => {
+                        const isSelected = editForm.status === option.value;
+
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => {
+                              setEditForm((prev) => ({
+                                ...prev,
+                                status: option.value,
+                              }));
+                              setIsStatusDropdownOpen(false);
+                            }}
+                            className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${
+                              isSelected
+                                ? "bg-blue-50 text-blue-700"
+                                : "text-gray-700 hover:bg-gray-50"
+                            }`}
+                          >
+                            <span>{option.label}</span>
+                            {isSelected && (
+                              <svg
+                                className="h-4 w-4"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth="2"
+                                  d="M5 13l4 4L19 7"
+                                />
+                              </svg>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  Upcoming events can only be changed to deactivated here.
+                </p>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Start time
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={editForm.startTime}
+                    onChange={(e) =>
+                      setEditForm((prev) => ({
+                        ...prev,
+                        startTime: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    End time
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={editForm.endTime}
+                    onChange={(e) =>
+                      setEditForm((prev) => ({
+                        ...prev,
+                        endTime: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    required
+                  />
+                </div>
+              </div>
+
+              {actionError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {actionError}
+                </div>
+              )}
+
+              <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditModalOpen(false);
+                    setActionError("");
+                    setIsStatusDropdownOpen(false);
+                    syncEditForm(event);
+                  }}
+                  className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className={`rounded-xl px-4 py-2.5 text-sm font-semibold text-white ${
+                    isSaving ? "bg-blue-300" : "bg-blue-600 hover:bg-blue-700"
+                  }`}
+                >
+                  {isSaving ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showDeleteConfirmModal && event && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-100">
+              <svg
+                className="h-6 w-6 text-red-600"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                />
+              </svg>
+            </div>
+            <h3 className="mb-2 text-center text-lg font-medium text-gray-900">
+              Delete Event
+            </h3>
+            <p className="mb-6 text-center text-sm text-gray-500">
+              Are you sure you want to delete <strong>{event.title}</strong>?
+              This action cannot be undone.
+            </p>
+            <div className="flex space-x-3">
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirmModal(false)}
+                disabled={isDeleting}
+                className="flex-1 rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="flex-1 rounded-lg border border-transparent bg-red-600 px-4 py-2 font-medium text-white shadow-sm transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-red-300"
+              >
+                {isDeleting ? "Deleting..." : "Yes, Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
