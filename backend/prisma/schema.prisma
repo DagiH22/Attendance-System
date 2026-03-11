@@ -27,6 +27,33 @@ enum MarkMethod {
   MANUAL
 }
 
+enum Department {
+  BIO
+  CHEM
+  CS
+  GEO
+  STAT
+  MATH
+  PHY
+  IS
+  ENGINEERING
+  FRESHMAN
+}
+
+enum Batch {
+  FRESHMAN
+  YEAR_2
+  YEAR_3
+  YEAR_4
+  YEAR_5
+}
+
+enum Campus {
+  FOUR_KILO
+  FIVE_KILO
+  SIX_KILO
+}
+
 
 
 // MODELS
@@ -36,7 +63,10 @@ model Member {
   uniqueId     String       @unique // Unique string used for QR code generation
   name         String
   email        String       @unique
-  phone        String?
+  phoneNumber  String   @map("phone")
+  department   Department?
+  batch        Batch?
+  campus       Campus?
   isActive     Boolean      @default(true)
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
