@@ -1,18 +1,5 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import Dropdown from "./Dropdown";
-
-export type DepartmentOption =
-  | ""
-  | "BIO"
-  | "CHEM"
-  | "CS"
-  | "GEO"
-  | "STAT"
-  | "MATH"
-  | "PHY"
-  | "IS"
-  | "ENGINEERING"
-  | "FRESHMAN";
 
 export type BatchOption =
   | ""
@@ -20,15 +7,16 @@ export type BatchOption =
   | "YEAR_2"
   | "YEAR_3"
   | "YEAR_4"
-  | "YEAR_5";
+  | "YEAR_5"
+  | "POST_GRADUATE";
 
-export type CampusOption = "" | "FOUR_KILO" | "FIVE_KILO" | "SIX_KILO";
+export type CampusOption = "" | "FOUR_KILO" | "FIVE_KILO" | "SIX_KILO" | "ART";
 
 export type MemberFormValues = {
   name: string;
   email: string;
   phoneNumber: string;
-  department: DepartmentOption;
+  department: string;
   batch: BatchOption;
   campus: CampusOption;
   isActive: boolean;
@@ -48,7 +36,30 @@ type MemberFormProps = {
   fixedBottom?: boolean;
 };
 
-const departmentOptions: Exclude<DepartmentOption, "">[] = [
+const batchOptions: Exclude<BatchOption, "">[] = [
+  "FRESHMAN",
+  "YEAR_2",
+  "YEAR_3",
+  "YEAR_4",
+  "YEAR_5",
+  "POST_GRADUATE",
+];
+
+const campusOptions: Exclude<CampusOption, "">[] = [
+  "FOUR_KILO",
+  "FIVE_KILO",
+  "SIX_KILO",
+  "ART",
+];
+
+const campusLabels: Record<Exclude<CampusOption, "">, string> = {
+  FOUR_KILO: "4 Kilo",
+  FIVE_KILO: "5 Kilo",
+  SIX_KILO: "6 Kilo",
+  ART: "Art",
+};
+
+const fourKiloDepartmentOptions = [
   "BIO",
   "CHEM",
   "CS",
@@ -57,23 +68,15 @@ const departmentOptions: Exclude<DepartmentOption, "">[] = [
   "MATH",
   "PHY",
   "IS",
-  "ENGINEERING",
   "FRESHMAN",
-];
+] as const;
 
-const batchOptions: Exclude<BatchOption, "">[] = [
-  "FRESHMAN",
-  "YEAR_2",
-  "YEAR_3",
-  "YEAR_4",
-  "YEAR_5",
-];
-
-const campusOptions: Exclude<CampusOption, "">[] = [
-  "FOUR_KILO",
-  "FIVE_KILO",
-  "SIX_KILO",
-];
+const batchOptionsByCampus: Record<Exclude<CampusOption, "">, BatchOption[]> = {
+  FOUR_KILO: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4"],
+  FIVE_KILO: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4", "YEAR_5"],
+  SIX_KILO: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4"],
+  ART: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4"],
+};
 
 const formatEnumLabel = (value: string) =>
   value
@@ -104,10 +107,12 @@ export const validateMemberForm = (
 
   if (!values.phoneNumber.trim()) {
     nextErrors.phoneNumber = "Phone Number is required.";
-  }
-
-  if (values.department === "FRESHMAN" && values.batch !== "FRESHMAN") {
-    nextErrors.batch = "Freshman department members must have Freshman batch.";
+  } else if (!/^\+?[0-9]{10,13}$/.test(values.phoneNumber.trim())) {
+    nextErrors.phoneNumber =
+      "Use only digits or +, with 10 digits locally or 13 characters with +251.";
+  } else if (![10, 13].includes(values.phoneNumber.trim().length)) {
+    nextErrors.phoneNumber =
+      "Phone number must be 10 digits locally or 13 characters with +251.";
   }
 
   return nextErrors;
@@ -120,7 +125,7 @@ export const normalizeMemberFormValues = (
   name: values.name.trim(),
   email: values.email.trim(),
   phoneNumber: values.phoneNumber.trim(),
-  batch: values.department === "FRESHMAN" ? "FRESHMAN" : values.batch,
+  department: values.department.trim(),
 });
 
 const MemberForm: React.FC<MemberFormProps> = ({
@@ -135,46 +140,89 @@ const MemberForm: React.FC<MemberFormProps> = ({
   const [form, setForm] = useState<MemberFormValues>(initialValues);
   const [errors, setErrors] = useState<MemberFormErrors>({});
 
-  const isFreshmanDepartment = form.department === "FRESHMAN";
+  const isCampusSelected = Boolean(form.campus);
+  const usesDropdownDepartment = form.campus === "FOUR_KILO";
+  const departmentIsFreshman =
+    form.department.trim().toUpperCase() === "FRESHMAN";
+  const availableBatchOptions = form.campus
+    ? batchOptionsByCampus[form.campus]
+    : [];
 
-  const helperText = useMemo(() => {
-    if (isFreshmanDepartment) {
-      return "Batch is locked to Freshman when department is Freshman.";
-    }
+  useEffect(() => {
+    setForm(initialValues);
+  }, [initialValues]);
 
-    return "";
-  }, [isFreshmanDepartment]);
+  useEffect(() => {
+    setForm((prev) => {
+      if (!prev.campus) {
+        return prev.batch === "" && prev.department === ""
+          ? prev
+          : { ...prev, department: "", batch: "" };
+      }
+
+      const allowedBatches = batchOptionsByCampus[prev.campus];
+      const nextDepartment = usesDropdownDepartment
+        ? fourKiloDepartmentOptions.includes(
+            prev.department as (typeof fourKiloDepartmentOptions)[number],
+          )
+          ? prev.department
+          : ""
+        : prev.department;
+
+      let nextBatch = prev.batch;
+
+      if (nextDepartment.trim().toUpperCase() === "FRESHMAN") {
+        nextBatch = "FRESHMAN";
+      } else if (nextBatch && !allowedBatches.includes(nextBatch)) {
+        nextBatch = "";
+      }
+
+      if (nextDepartment === prev.department && nextBatch === prev.batch) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        department: nextDepartment,
+        batch: nextBatch,
+      };
+    });
+  }, [form.campus, usesDropdownDepartment]);
 
   const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value, type, checked } = event.target;
 
     setForm((prev) => ({
       ...prev,
-      [name]: type === "checkbox" ? checked : value,
+      [name]:
+        type === "checkbox" ? checked : name === "department" ? value : value,
     }));
 
     setErrors((prev) => ({ ...prev, [name]: undefined, form: undefined }));
   };
 
-  const handleSelectChange = (
-    field: "department" | "batch" | "campus",
-    value: string,
-  ) => {
+  const handleSelectChange = (field: "batch" | "campus", value: string) => {
     setForm((prev) => {
-      const nextForm = {
+      if (field === "campus") {
+        return {
+          ...prev,
+          campus: value as CampusOption,
+          department: "",
+          batch: "",
+        };
+      }
+
+      if (field === "batch") {
+        return {
+          ...prev,
+          batch: value as BatchOption,
+        };
+      }
+
+      return {
         ...prev,
         [field]: value,
       } as MemberFormValues;
-
-      if (field === "department") {
-        if (value === "FRESHMAN") {
-          nextForm.batch = "FRESHMAN";
-        } else if (prev.batch === "FRESHMAN") {
-          nextForm.batch = "";
-        }
-      }
-
-      return nextForm;
     });
 
     setErrors((prev) => ({ ...prev, [field]: undefined, form: undefined }));
@@ -196,17 +244,19 @@ const MemberForm: React.FC<MemberFormProps> = ({
   };
 
   const dropdownOptions = {
-    department: departmentOptions.map((option) => ({
+    department: fourKiloDepartmentOptions.map((option) => ({
       label: formatEnumLabel(option),
       value: option,
     })),
     batch: batchOptions.map((option) => ({
       label: formatEnumLabel(option),
       value: option,
-      disabled: isFreshmanDepartment && option !== "FRESHMAN",
+      disabled:
+        !availableBatchOptions.includes(option) ||
+        (departmentIsFreshman && option !== "FRESHMAN"),
     })),
     campus: campusOptions.map((option) => ({
-      label: formatEnumLabel(option),
+      label: campusLabels[option],
       value: option,
     })),
   };
@@ -287,43 +337,124 @@ const MemberForm: React.FC<MemberFormProps> = ({
             )}
           </div>
 
+          <div>
+            <Dropdown
+              id="campus"
+              label="Campus"
+              placeholder="Select campus"
+              value={form.campus}
+              options={dropdownOptions.campus}
+              onChange={(value) => handleSelectChange("campus", value)}
+              error={errors.campus}
+            />
+          </div>
+
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <Dropdown
-                id="department"
-                label="Department"
-                placeholder="Select department"
-                value={form.department}
-                options={dropdownOptions.department}
-                onChange={(value) => handleSelectChange("department", value)}
-                error={errors.department}
-              />
+              {usesDropdownDepartment ? (
+                <Dropdown
+                  id="department"
+                  label="Department"
+                  placeholder={
+                    isCampusSelected
+                      ? "Select department"
+                      : "Select campus first"
+                  }
+                  value={form.department}
+                  options={dropdownOptions.department}
+                  onChange={(value) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      department: value,
+                      batch: value === "FRESHMAN" ? "FRESHMAN" : "",
+                    }))
+                  }
+                  error={errors.department}
+                  disabled={!isCampusSelected}
+                  helperText={
+                    !isCampusSelected
+                      ? "Choose a campus to enable department."
+                      : undefined
+                  }
+                />
+              ) : (
+                <>
+                  <label
+                    htmlFor="department"
+                    className="mb-2 block text-sm font-medium text-gray-700"
+                  >
+                    Department
+                  </label>
+                  <input
+                    id="department"
+                    name="department"
+                    type="text"
+                    value={form.department}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setForm((prev) => ({
+                        ...prev,
+                        department: nextValue,
+                        batch:
+                          nextValue.trim().toUpperCase() === "FRESHMAN"
+                            ? "FRESHMAN"
+                            : prev.batch === "FRESHMAN"
+                              ? ""
+                              : prev.batch,
+                      }));
+                      setErrors((prev) => ({
+                        ...prev,
+                        department: undefined,
+                        form: undefined,
+                      }));
+                    }}
+                    placeholder={
+                      isCampusSelected
+                        ? "Enter department"
+                        : "Select campus first"
+                    }
+                    disabled={!isCampusSelected}
+                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-base text-gray-900 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+                  />
+                  {!isCampusSelected && (
+                    <p className="mt-1 text-sm text-gray-500">
+                      Choose a campus to enable department.
+                    </p>
+                  )}
+                  {errors.department && (
+                    <p className="mt-1 text-sm text-red-600">
+                      {errors.department}
+                    </p>
+                  )}
+                </>
+              )}
             </div>
 
             <div>
               <Dropdown
                 id="batch"
                 label="Batch"
-                placeholder="Select batch"
+                placeholder={
+                  isCampusSelected ? "Select batch" : "Select campus first"
+                }
                 value={form.batch}
-                options={dropdownOptions.batch}
+                options={dropdownOptions.batch.filter((option) =>
+                  availableBatchOptions.includes(option.value as BatchOption),
+                )}
                 onChange={(value) => handleSelectChange("batch", value)}
-                helperText={helperText}
                 error={errors.batch}
+                disabled={!isCampusSelected || departmentIsFreshman}
+                helperText={
+                  !isCampusSelected
+                    ? "Choose a campus to enable batch."
+                    : departmentIsFreshman
+                      ? "Batch is locked to Freshman when department is Freshman."
+                      : undefined
+                }
               />
             </div>
 
-            <div>
-              <Dropdown
-                id="campus"
-                label="Campus"
-                placeholder="Select campus"
-                value={form.campus}
-                options={dropdownOptions.campus}
-                onChange={(value) => handleSelectChange("campus", value)}
-                error={errors.campus}
-              />
-            </div>
+            <div className="hidden sm:block" />
           </div>
 
           {mode === "edit" && (

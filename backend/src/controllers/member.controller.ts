@@ -6,20 +6,89 @@ import { generateQrWithLogo } from "../utils/qrCodeGenerator";
 
 const prisma = new PrismaClient();
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ETHIOPIAN_PHONE_REGEX = /^\+?[0-9]{10,13}$/;
+
+const validateMemberPayload = (payload: {
+  name?: unknown;
+  email?: unknown;
+  phoneNumber?: unknown;
+  department?: unknown;
+  batch?: unknown;
+  campus?: unknown;
+}) => {
+  const name = String(payload.name ?? "").trim();
+  const email = String(payload.email ?? "").trim();
+  const phoneNumber = String(payload.phoneNumber ?? "").trim();
+  const department = String(payload.department ?? "").trim();
+  const batch = String(payload.batch ?? "").trim();
+  const campus = String(payload.campus ?? "").trim();
+
+  if (!name) {
+    return { error: "Name must not be empty." };
+  }
+
+  if (!email) {
+    return { error: "Email is required." };
+  }
+
+  if (!EMAIL_REGEX.test(email)) {
+    return { error: "Email must be a valid email address." };
+  }
+
+  if (!phoneNumber) {
+    return { error: "Phone number is required." };
+  }
+
+  if (!ETHIOPIAN_PHONE_REGEX.test(phoneNumber)) {
+    return {
+      error:
+        "Phone number must contain only digits or '+' and match 0912345678 or +251912345678.",
+    };
+  }
+
+  if (!(phoneNumber.length === 10 || phoneNumber.length === 13)) {
+    return {
+      error:
+        "Phone number must be 10 digits for local numbers or 13 characters with +251.",
+    };
+  }
+
+  return {
+    value: {
+      name,
+      email,
+      phoneNumber,
+      department: department || null,
+      batch: batch || null,
+      campus: campus || null,
+    },
+  };
+};
+
 export const createMember = async (req: Request, res: Response) => {
   try {
     const { name, email, phoneNumber, department, batch, campus, isActive } =
       req.body ?? {};
 
-    if (!name || !email || !phoneNumber) {
-      return res
-        .status(400)
-        .json({ error: "name, email, and phoneNumber are required" });
+    const validation = validateMemberPayload({
+      name,
+      email,
+      phoneNumber,
+      department,
+      batch,
+      campus,
+    });
+
+    if (validation.error) {
+      return res.status(400).json({ error: validation.error });
     }
+
+    const validated = validation.value!;
 
     // Optionally ensure email uniqueness
     const existingByEmail = await prisma.member.findUnique({
-      where: { email },
+      where: { email: validated.email },
     });
     if (existingByEmail) {
       return res
@@ -37,12 +106,12 @@ export const createMember = async (req: Request, res: Response) => {
     const created = await prisma.member.create({
       data: {
         uniqueId,
-        name,
-        email,
-        phoneNumber,
-        department: department || null,
-        batch: batch || null,
-        campus: campus || null,
+        name: validated.name,
+        email: validated.email,
+        phoneNumber: validated.phoneNumber,
+        department: validated.department as any,
+        batch: validated.batch as any,
+        campus: validated.campus as any,
         isActive: typeof isActive === "boolean" ? isActive : true,
       },
     });
@@ -172,11 +241,20 @@ export const updateMember = async (req: Request, res: Response) => {
     const { name, email, phoneNumber, department, batch, campus, isActive } =
       req.body ?? {};
 
-    if (!name || !email || !phoneNumber) {
-      return res
-        .status(400)
-        .json({ error: "name, email, and phoneNumber are required" });
+    const validation = validateMemberPayload({
+      name,
+      email,
+      phoneNumber,
+      department,
+      batch,
+      campus,
+    });
+
+    if (validation.error) {
+      return res.status(400).json({ error: validation.error });
     }
+
+    const validated = validation.value!;
 
     const existingMember = await prisma.member.findUnique({
       where: { id: idStr },
@@ -186,10 +264,9 @@ export const updateMember = async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Member not found" });
     }
 
-    const normalizedEmail = String(email).trim();
     const duplicateByEmail = await prisma.member.findFirst({
       where: {
-        email: normalizedEmail,
+        email: validated.email,
         NOT: { id: idStr },
       },
     });
@@ -200,19 +277,15 @@ export const updateMember = async (req: Request, res: Response) => {
         .json({ error: "Another member with that email already exists" });
     }
 
-    const normalizedDepartment = department || null;
-    const normalizedBatch =
-      normalizedDepartment === "FRESHMAN" ? "FRESHMAN" : batch || null;
-
     const updatedMember = await prisma.member.update({
       where: { id: idStr },
       data: {
-        name: String(name).trim(),
-        email: normalizedEmail,
-        phoneNumber: String(phoneNumber).trim(),
-        department: normalizedDepartment,
-        batch: normalizedBatch,
-        campus: campus || null,
+        name: validated.name,
+        email: validated.email,
+        phoneNumber: validated.phoneNumber,
+        department: validated.department as any,
+        batch: validated.batch as any,
+        campus: validated.campus as any,
         isActive:
           typeof isActive === "boolean" ? isActive : existingMember.isActive,
       },

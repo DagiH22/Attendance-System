@@ -197,12 +197,6 @@ const MembersPage: React.FC = () => {
           <h1 className="text-2xl font-bold text-gray-900">Members</h1>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => navigate("/members/register")}
-              className="text-sm font-medium text-white bg-blue-600 px-3 py-1.5 rounded-md shadow-sm hover:bg-blue-700 transition-colors"
-            >
-              Register
-            </button>
-            <button
               onClick={async () => {
                 await logout();
                 navigate("/login", { replace: true });
