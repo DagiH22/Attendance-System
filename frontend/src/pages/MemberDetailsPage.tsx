@@ -445,7 +445,10 @@ const MemberDetailsPage: React.FC = () => {
               Actions
             </h2>
             <div className="w-full grid grid-cols-1 gap-3">
-              <button className="w-full py-2.5 bg-gray-800 text-white hover:bg-gray-900 rounded-lg font-medium transition-colors">
+              <button
+                onClick={() => navigate(`/members/${member.id}/edit`)}
+                className="w-full py-2.5 bg-gray-800 text-white hover:bg-gray-900 rounded-lg font-medium transition-colors"
+              >
                 Edit Member
               </button>
               {isSuperAdmin && member.isActive && (

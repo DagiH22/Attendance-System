@@ -4,6 +4,7 @@ import {
   getAllMembers,
   getMemberById,
   searchMembers,
+  updateMember,
   deactivateMember,
   resendMemberQr,
   activateMember,
@@ -27,6 +28,9 @@ router.get("/search", searchMembers);
 
 // get by id
 router.get("/:id", getMemberById);
+
+// update member
+router.put("/:id", updateMember);
 
 // deactivate member (super admin only)
 router.patch("/:id/deactivate", requireRole("SUPER_ADMIN"), deactivateMember);

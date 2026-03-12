@@ -464,15 +464,28 @@ const MembersPage: React.FC = () => {
                     ID: {member.uniqueId}
                   </div>
                 </div>
-                <span
-                  className={`px-2.5 py-1 text-xs font-bold rounded-full border whitespace-nowrap ${
-                    member.isActive
-                      ? "bg-green-100 text-green-800 border-green-200"
-                      : "bg-red-100 text-red-800 border-red-200"
-                  }`}
-                >
-                  {member.isActive ? "Active" : "Inactive"}
-                </span>
+                <div className="flex items-start gap-2">
+                  <span
+                    className={`px-2.5 py-1 text-xs font-bold rounded-full border whitespace-nowrap ${
+                      member.isActive
+                        ? "bg-green-100 text-green-800 border-green-200"
+                        : "bg-red-100 text-red-800 border-red-200"
+                    }`}
+                  >
+                    {member.isActive ? "Active" : "Inactive"}
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      navigate(`/members/${member.id}/edit`);
+                    }}
+                    className="inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors bg-blue-50 text-blue-700 hover:bg-blue-100"
+                  >
+                    ✏️ Edit
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-1.5 text-sm text-gray-600 mt-3 pt-3 border-t border-gray-100">

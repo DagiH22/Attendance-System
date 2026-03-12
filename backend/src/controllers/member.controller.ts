@@ -161,6 +161,70 @@ export const getMemberById = async (req: Request, res: Response) => {
   }
 };
 
+export const updateMember = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const idStr = Array.isArray(id) ? id[0] : id;
+    if (!idStr) {
+      return res.status(400).json({ error: "Member id is required" });
+    }
+
+    const { name, email, phoneNumber, department, batch, campus, isActive } =
+      req.body ?? {};
+
+    if (!name || !email || !phoneNumber) {
+      return res
+        .status(400)
+        .json({ error: "name, email, and phoneNumber are required" });
+    }
+
+    const existingMember = await prisma.member.findUnique({
+      where: { id: idStr },
+    });
+
+    if (!existingMember) {
+      return res.status(404).json({ error: "Member not found" });
+    }
+
+    const normalizedEmail = String(email).trim();
+    const duplicateByEmail = await prisma.member.findFirst({
+      where: {
+        email: normalizedEmail,
+        NOT: { id: idStr },
+      },
+    });
+
+    if (duplicateByEmail) {
+      return res
+        .status(409)
+        .json({ error: "Another member with that email already exists" });
+    }
+
+    const normalizedDepartment = department || null;
+    const normalizedBatch =
+      normalizedDepartment === "FRESHMAN" ? "FRESHMAN" : batch || null;
+
+    const updatedMember = await prisma.member.update({
+      where: { id: idStr },
+      data: {
+        name: String(name).trim(),
+        email: normalizedEmail,
+        phoneNumber: String(phoneNumber).trim(),
+        department: normalizedDepartment,
+        batch: normalizedBatch,
+        campus: campus || null,
+        isActive:
+          typeof isActive === "boolean" ? isActive : existingMember.isActive,
+      },
+    });
+
+    return res.status(200).json({ member: updatedMember });
+  } catch (err: any) {
+    console.error("Error in updateMember:", err?.message ?? err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
 // PATCH /api/members/:id/deactivate
 // Sets isActive false for the member. Only SUPER_ADMIN can perform this action (enforced in route middleware).
 export const deactivateMember = async (req: Request, res: Response) => {
@@ -306,6 +370,7 @@ export default {
   createMember,
   getAllMembers,
   getMemberById,
+  updateMember,
   deactivateMember,
   activateMember,
   resendMemberQr,

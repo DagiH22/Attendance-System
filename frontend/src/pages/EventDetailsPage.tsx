@@ -408,40 +408,7 @@ const EventDetailsPage: React.FC = () => {
             </div>
 
             {isSuperAdmin && (
-              <div className="mt-5 flex flex-wrap gap-3 border-t border-gray-100 pt-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActionError("");
-                    setIsEditModalOpen(true);
-                    setIsStatusDropdownOpen(false);
-                  }}
-                  disabled={!canEdit}
-                  className={`inline-flex items-center rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                    canEdit
-                      ? "bg-blue-600 text-white hover:bg-blue-700"
-                      : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                  }`}
-                >
-                  <span className="mr-2">✏️</span>
-                  Edit Event
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActionError("");
-                    setShowDeleteConfirmModal(true);
-                  }}
-                  disabled={!canDelete || isDeleting}
-                  className={`inline-flex items-center rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                    canDelete && !isDeleting
-                      ? "bg-red-600 text-white hover:bg-red-700"
-                      : "bg-red-50 text-red-300 cursor-not-allowed"
-                  }`}
-                >
-                  <span className="mr-2">🗑️</span>
-                  {isDeleting ? "Deleting..." : "Delete Event"}
-                </button>
+              <div className="mt-5 border-t border-gray-100 pt-4">
                 {!canEdit && (
                   <p className="w-full text-sm text-gray-500">
                     Editing and deletion are only available before the event
@@ -579,6 +546,47 @@ const EventDetailsPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Non-fixed action row placed at the bottom of the page (not fixed) */}
+      <div className="mx-auto max-w-3xl px-4 py-4">
+        {isSuperAdmin && (
+          <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-start gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setActionError("");
+                setIsEditModalOpen(true);
+                setIsStatusDropdownOpen(false);
+              }}
+              disabled={!canEdit}
+              className={`rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${
+                canEdit
+                  ? "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200"
+                  : "bg-white text-gray-400 cursor-not-allowed border border-gray-200"
+              }`}
+            >
+              Edit Event
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActionError("");
+                setShowDeleteConfirmModal(true);
+              }}
+              disabled={!canDelete || isDeleting}
+              className={`rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${
+                canDelete && !isDeleting
+                  ? "bg-red-600 text-white hover:bg-red-700"
+                  : "bg-red-50 text-red-300 cursor-not-allowed border border-red-100"
+              }`}
+            >
+              {isDeleting ? "Deleting..." : "Delete Event"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Fixed attendance CTA remains fixed at the bottom */}
       <div className="fixed inset-x-0 bottom-0 border-t border-gray-200 bg-white/95 px-4 py-4 backdrop-blur sm:px-6">
         <div className="mx-auto max-w-3xl">
           <button
