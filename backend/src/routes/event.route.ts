@@ -7,6 +7,7 @@ import {
   deactivateEvent,
   deleteEvent,
   getAllEvents,
+  getEventAttendance,
   getEventById,
   getPresentMembersForEvent,
   updateEvent,
@@ -22,6 +23,9 @@ router.post("/", requireRole("SUPER_ADMIN"), createEvent);
 
 // get list of all events
 router.get("/", getAllEvents);
+
+// get paginated attendance list for a specific event
+router.get("/:eventId/attendance", getEventAttendance);
 
 // get specific evenet by id
 router.get("/:eventId/present-members", getPresentMembersForEvent);

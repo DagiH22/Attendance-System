@@ -4,7 +4,11 @@ import { isAxiosError } from "axios";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import api from "../lib/api";
 import formatDate from "../lib/formatDate";
-import type { DashboardEvent } from "../types/events";
+import type {
+  DashboardEvent,
+  EventAttendanceRecord,
+  EventAttendanceResponse,
+} from "../types/events";
 import type { AttendanceRecordResponse, Member } from "../types/members";
 
 type QrReaderScanResult = {
@@ -88,6 +92,9 @@ const ATTENDANCE_MESSAGES: Record<
   SUCCESS: { title: "Attendance recorded", tone: "success" },
 };
 
+const MANUAL_PAGE_SIZE = 20;
+const attendancePageCache = new Map<string, EventAttendanceResponse>();
+
 const TakeAttendancePage: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
@@ -115,6 +122,11 @@ const TakeAttendancePage: React.FC = () => {
   const [presentMembers, setPresentMembers] = useState<Set<string>>(
     () => new Set(),
   );
+  const [attendanceRecords, setAttendanceRecords] = useState<
+    EventAttendanceRecord[]
+  >([]);
+  const [manualPage, setManualPage] = useState(1);
+  const [prefetchingPage, setPrefetchingPage] = useState<number | null>(null);
 
   const lastScannedValueRef = useRef<string>("");
   const scanCooldownRef = useRef<number | null>(null);
@@ -157,6 +169,64 @@ const TakeAttendancePage: React.FC = () => {
     setPresentMembers(new Set(response.data?.presentMemberIds ?? []));
   }, [id]);
 
+  const getAttendanceCacheKey = React.useCallback(
+    (page: number) => `${id ?? "unknown"}:${page}`,
+    [id],
+  );
+
+  const loadAttendancePage = React.useCallback(
+    async (
+      page: number,
+      options?: { silent?: boolean; preferCache?: boolean },
+    ) => {
+      if (!id) {
+        return null;
+      }
+
+      const { silent = false, preferCache = true } = options ?? {};
+      const cacheKey = getAttendanceCacheKey(page);
+
+      if (preferCache && attendancePageCache.has(cacheKey)) {
+        const cached = attendancePageCache.get(cacheKey)!;
+        if (!silent) {
+          setAttendanceRecords(cached.data);
+        }
+        return cached;
+      }
+
+      if (silent) {
+        setPrefetchingPage(page);
+      }
+
+      try {
+        const response = await api.get<EventAttendanceResponse>(
+          `/events/${id}/attendance`,
+          {
+            params: {
+              page,
+              limit: 200,
+              sortBy: "time",
+              order: "desc",
+            },
+          },
+        );
+
+        attendancePageCache.set(cacheKey, response.data);
+
+        if (!silent) {
+          setAttendanceRecords(response.data.data);
+        }
+
+        return response.data;
+      } finally {
+        if (silent) {
+          setPrefetchingPage((current) => (current === page ? null : current));
+        }
+      }
+    },
+    [getAttendanceCacheKey, id],
+  );
+
   useEffect(() => {
     const load = async () => {
       try {
@@ -168,6 +238,7 @@ const TakeAttendancePage: React.FC = () => {
           refreshEvent(),
           refreshMembers(),
           refreshPresentMembers(),
+          loadAttendancePage(1, { preferCache: false }),
         ]);
       } catch (error: any) {
         console.error("Error loading attendance page:", error);
@@ -193,16 +264,74 @@ const TakeAttendancePage: React.FC = () => {
     };
   }, []);
 
+  const markedAtByMemberId = useMemo(() => {
+    return attendanceRecords.reduce<Record<string, string>>((acc, record) => {
+      acc[record.memberId] = record.markedAt;
+      return acc;
+    }, {});
+  }, [attendanceRecords]);
+
   const filteredMembers = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return members;
+    const orderedMembers = [...members].sort((a, b) => {
+      const aDeactivated = a.isActive === false;
+      const bDeactivated = b.isActive === false;
+      if (aDeactivated !== bDeactivated) {
+        return aDeactivated ? 1 : -1;
+      }
 
-    return members.filter((member) =>
+      const aPresent = presentMembers.has(a.id);
+      const bPresent = presentMembers.has(b.id);
+      if (aPresent !== bPresent) {
+        return aPresent ? 1 : -1;
+      }
+
+      if (aPresent && bPresent) {
+        const aMarkedAt = markedAtByMemberId[a.id]
+          ? new Date(markedAtByMemberId[a.id]).getTime()
+          : 0;
+        const bMarkedAt = markedAtByMemberId[b.id]
+          ? new Date(markedAtByMemberId[b.id]).getTime()
+          : 0;
+
+        if (aMarkedAt !== bMarkedAt) {
+          return bMarkedAt - aMarkedAt;
+        }
+      }
+
+      return a.name.localeCompare(b.name);
+    });
+
+    if (!query) return orderedMembers;
+
+    return orderedMembers.filter((member) =>
       [member.name, member.uniqueId, member.phoneNumber ?? ""].some((value) =>
         value.toLowerCase().includes(query),
       ),
     );
-  }, [members, searchQuery]);
+  }, [markedAtByMemberId, members, presentMembers, searchQuery]);
+
+  const totalManualPages = Math.max(
+    1,
+    Math.ceil(filteredMembers.length / MANUAL_PAGE_SIZE),
+  );
+
+  const paginatedMembers = filteredMembers.slice(
+    (manualPage - 1) * MANUAL_PAGE_SIZE,
+    manualPage * MANUAL_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setManualPage(1);
+  }, [attendanceRecords, members, presentMembers, searchQuery]);
+
+  useEffect(() => {
+    if (manualPage >= totalManualPages) {
+      return;
+    }
+
+    void loadAttendancePage(manualPage + 1, { silent: true });
+  }, [loadAttendancePage, manualPage, totalManualPages]);
 
   const getFeedbackFromError = (error: unknown): AttendanceFeedback => {
     if (isAxiosError(error)) {
@@ -304,6 +433,8 @@ const TakeAttendancePage: React.FC = () => {
       });
 
       await refreshEvent();
+      await refreshPresentMembers();
+      await loadAttendancePage(1, { preferCache: false });
     } catch (error) {
       setFeedback(getFeedbackFromError(error));
     } finally {
@@ -646,9 +777,10 @@ const TakeAttendancePage: React.FC = () => {
                   No members matched your search.
                 </div>
               ) : (
-                filteredMembers.map((member) => {
+                paginatedMembers.map((member) => {
                   const isPresent = presentMembers.has(member.id);
                   const isDeactivated = member.isActive === false;
+                  const markedAt = markedAtByMemberId[member.id];
 
                   return (
                     <div
@@ -667,6 +799,15 @@ const TakeAttendancePage: React.FC = () => {
                           {member.uniqueId}
                           {member.phoneNumber ? ` • ${member.phoneNumber}` : ""}
                         </p>
+                        {isPresent && markedAt && (
+                          <p className="mt-1 text-xs font-semibold text-green-700">
+                            Marked present at{" "}
+                            {new Date(markedAt).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </p>
+                        )}
                         {isDeactivated && (
                           <p className="mt-1 text-xs font-semibold text-rose-600">
                             Deactivated
@@ -704,6 +845,44 @@ const TakeAttendancePage: React.FC = () => {
                 })
               )}
             </div>
+
+            {filteredMembers.length > 0 && (
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-slate-500">
+                  Page {manualPage} of {totalManualPages}
+                </p>
+                <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setManualPage((prev) => Math.max(1, prev - 1))
+                    }
+                    disabled={manualPage <= 1}
+                    className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setManualPage((prev) =>
+                        Math.min(totalManualPages, prev + 1),
+                      )
+                    }
+                    disabled={manualPage >= totalManualPages}
+                    className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {prefetchingPage !== null && (
+              <p className="mt-3 text-xs text-slate-400">
+                Prefetching attendance updates for smoother paging…
+              </p>
+            )}
           </section>
         )}
 

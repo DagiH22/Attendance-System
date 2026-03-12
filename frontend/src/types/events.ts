@@ -21,3 +21,23 @@ export interface DashboardEvent {
   attendanceCount: number;
   totalMembers: number;
 }
+
+export type AttendanceSortBy = "time" | "name";
+export type AttendanceSortOrder = "asc" | "desc";
+
+export interface EventAttendanceRecord {
+  memberId: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  uniqueId: string;
+  markedAt: string;
+  isActive: boolean;
+}
+
+export interface EventAttendanceResponse {
+  data: EventAttendanceRecord[];
+  totalCount: number;
+  totalPages: number;
+  currentPage: number;
+}
