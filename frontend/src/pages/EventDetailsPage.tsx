@@ -92,9 +92,17 @@ const EventDetailsPage: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [editValidationErrors, setEditValidationErrors] = useState<{
+    title?: string;
+    description?: string;
+    location?: string;
+    startTime?: string;
+    endTime?: string;
+  }>({});
   const [editForm, setEditForm] = useState({
     title: "",
     description: "",
+    location: "",
     status: "UPCOMING" as DashboardEvent["status"],
     startTime: "",
     endTime: "",
@@ -104,6 +112,7 @@ const EventDetailsPage: React.FC = () => {
     setEditForm({
       title: nextEvent.title,
       description: nextEvent.description || "",
+      location: nextEvent.location || "",
       status: nextEvent.status === "DEACTIVATED" ? "DEACTIVATED" : "UPCOMING",
       startTime: toDateTimeLocalValue(nextEvent.startTime),
       endTime: toDateTimeLocalValue(nextEvent.endTime),
@@ -258,6 +267,40 @@ const EventDetailsPage: React.FC = () => {
     }
 
     setActionError("");
+    setEditValidationErrors({});
+
+    const nextErrors: {
+      title?: string;
+      description?: string;
+      location?: string;
+      startTime?: string;
+      endTime?: string;
+    } = {};
+
+    if (!editForm.title.trim()) {
+      nextErrors.title = "Event title is required";
+    }
+
+    if (!editForm.description.trim()) {
+      nextErrors.description = "Event description is required";
+    }
+
+    if (!editForm.location.trim()) {
+      nextErrors.location = "Event location is required";
+    }
+
+    if (!editForm.startTime) {
+      nextErrors.startTime = "Start time is required";
+    }
+
+    if (!editForm.endTime) {
+      nextErrors.endTime = "End time is required";
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setEditValidationErrors(nextErrors);
+      return;
+    }
 
     const parsedStartTime = new Date(editForm.startTime);
     const parsedEndTime = new Date(editForm.endTime);
@@ -287,6 +330,7 @@ const EventDetailsPage: React.FC = () => {
       const response = await api.patch(`/events/${event.id}`, {
         title: editForm.title.trim(),
         description: editForm.description.trim(),
+        location: editForm.location.trim(),
         status: editForm.status === "DEACTIVATED" ? "DEACTIVATED" : "UPCOMING",
         startTime: parsedStartTime.toISOString(),
         endTime: parsedEndTime.toISOString(),
@@ -636,34 +680,79 @@ const EventDetailsPage: React.FC = () => {
             <form className="mt-6 space-y-4" onSubmit={handleEditSubmit}>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Title
+                  Title <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   value={editForm.title}
-                  onChange={(e) =>
-                    setEditForm((prev) => ({ ...prev, title: e.target.value }))
-                  }
-                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  onChange={(e) => {
+                    setEditForm((prev) => ({ ...prev, title: e.target.value }));
+                    setEditValidationErrors((prev) => ({
+                      ...prev,
+                      title: undefined,
+                    }));
+                  }}
+                  className={`w-full rounded-xl border px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${editValidationErrors.title ? "border-red-300 bg-red-50" : "border-gray-200"}`}
                   required
                 />
+                {editValidationErrors.title && (
+                  <p className="mt-1 text-xs font-medium text-red-600">
+                    {editValidationErrors.title}
+                  </p>
+                )}
               </div>
 
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Description
+                  Description <span className="text-red-500">*</span>
                 </label>
                 <textarea
                   value={editForm.description}
-                  onChange={(e) =>
+                  onChange={(e) => {
                     setEditForm((prev) => ({
                       ...prev,
                       description: e.target.value,
-                    }))
-                  }
+                    }));
+                    setEditValidationErrors((prev) => ({
+                      ...prev,
+                      description: undefined,
+                    }));
+                  }}
                   rows={4}
-                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  className={`w-full rounded-xl border px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${editValidationErrors.description ? "border-red-300 bg-red-50" : "border-gray-200"}`}
                 />
+                {editValidationErrors.description && (
+                  <p className="mt-1 text-xs font-medium text-red-600">
+                    {editValidationErrors.description}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Location <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={editForm.location}
+                  onChange={(e) => {
+                    setEditForm((prev) => ({
+                      ...prev,
+                      location: e.target.value,
+                    }));
+                    setEditValidationErrors((prev) => ({
+                      ...prev,
+                      location: undefined,
+                    }));
+                  }}
+                  className={`w-full rounded-xl border px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${editValidationErrors.location ? "border-red-300 bg-red-50" : "border-gray-200"}`}
+                  required
+                />
+                {editValidationErrors.location && (
+                  <p className="mt-1 text-xs font-medium text-red-600">
+                    {editValidationErrors.location}
+                  </p>
+                )}
               </div>
 
               <div>
@@ -750,37 +839,55 @@ const EventDetailsPage: React.FC = () => {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Start time
+                    Start time <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="datetime-local"
                     value={editForm.startTime}
-                    onChange={(e) =>
+                    onChange={(e) => {
                       setEditForm((prev) => ({
                         ...prev,
                         startTime: e.target.value,
-                      }))
-                    }
-                    className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      }));
+                      setEditValidationErrors((prev) => ({
+                        ...prev,
+                        startTime: undefined,
+                      }));
+                    }}
+                    className={`w-full rounded-xl border px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${editValidationErrors.startTime ? "border-red-300 bg-red-50" : "border-gray-200"}`}
                     required
                   />
+                  {editValidationErrors.startTime && (
+                    <p className="mt-1 text-xs font-medium text-red-600">
+                      {editValidationErrors.startTime}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
-                    End time
+                    End time <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="datetime-local"
                     value={editForm.endTime}
-                    onChange={(e) =>
+                    onChange={(e) => {
                       setEditForm((prev) => ({
                         ...prev,
                         endTime: e.target.value,
-                      }))
-                    }
-                    className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      }));
+                      setEditValidationErrors((prev) => ({
+                        ...prev,
+                        endTime: undefined,
+                      }));
+                    }}
+                    className={`w-full rounded-xl border px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${editValidationErrors.endTime ? "border-red-300 bg-red-50" : "border-gray-200"}`}
                     required
                   />
+                  {editValidationErrors.endTime && (
+                    <p className="mt-1 text-xs font-medium text-red-600">
+                      {editValidationErrors.endTime}
+                    </p>
+                  )}
                 </div>
               </div>
 

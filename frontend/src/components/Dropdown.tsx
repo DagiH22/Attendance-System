@@ -9,6 +9,7 @@ export type DropdownOption = {
 type DropdownProps = {
   id?: string;
   label?: string;
+  required?: boolean;
   placeholder?: string;
   value: string;
   options: DropdownOption[];
@@ -21,6 +22,7 @@ type DropdownProps = {
 const Dropdown: React.FC<DropdownProps> = ({
   id,
   label,
+  required = false,
   placeholder = "Select an option",
   value,
   options,
@@ -82,6 +84,7 @@ const Dropdown: React.FC<DropdownProps> = ({
           className="mb-2 block text-sm font-medium text-gray-700"
         >
           {label}
+          {required && <span className="ml-1 text-red-500">*</span>}
         </label>
       )}
 

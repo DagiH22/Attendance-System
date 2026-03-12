@@ -81,9 +81,9 @@ const EditMemberPage: React.FC = () => {
         name: values.name,
         email: values.email,
         phoneNumber: values.phoneNumber,
-        department: values.department || undefined,
-        batch: values.batch || undefined,
-        campus: values.campus || undefined,
+        department: values.department,
+        batch: values.batch,
+        campus: values.campus,
         isActive: values.isActive,
       });
 

@@ -106,13 +106,25 @@ export const validateMemberForm = (
   }
 
   if (!values.phoneNumber.trim()) {
-    nextErrors.phoneNumber = "Phone Number is required.";
+    nextErrors.phoneNumber = "Phone number is required";
   } else if (!/^\+?[0-9]{10,13}$/.test(values.phoneNumber.trim())) {
     nextErrors.phoneNumber =
       "Use only digits or +, with 10 digits locally or 13 characters with +251.";
   } else if (![10, 13].includes(values.phoneNumber.trim().length)) {
     nextErrors.phoneNumber =
       "Phone number must be 10 digits locally or 13 characters with +251.";
+  }
+
+  if (!values.campus) {
+    nextErrors.campus = "Campus must be selected";
+  }
+
+  if (!values.department.trim()) {
+    nextErrors.department = "Department must be selected";
+  }
+
+  if (!values.batch) {
+    nextErrors.batch = "Batch must be selected";
   }
 
   return nextErrors;
@@ -279,7 +291,7 @@ const MemberForm: React.FC<MemberFormProps> = ({
               htmlFor="name"
               className="mb-2 block text-sm font-medium text-gray-700"
             >
-              Name
+              Name <span className="text-red-500">*</span>
             </label>
             <input
               id="name"
@@ -300,7 +312,7 @@ const MemberForm: React.FC<MemberFormProps> = ({
               htmlFor="email"
               className="mb-2 block text-sm font-medium text-gray-700"
             >
-              Email
+              Email <span className="text-red-500">*</span>
             </label>
             <input
               id="email"
@@ -321,7 +333,7 @@ const MemberForm: React.FC<MemberFormProps> = ({
               htmlFor="phoneNumber"
               className="mb-2 block text-sm font-medium text-gray-700"
             >
-              Phone Number
+              Phone Number <span className="text-red-500">*</span>
             </label>
             <input
               id="phoneNumber"
@@ -341,6 +353,7 @@ const MemberForm: React.FC<MemberFormProps> = ({
             <Dropdown
               id="campus"
               label="Campus"
+              required
               placeholder="Select campus"
               value={form.campus}
               options={dropdownOptions.campus}
@@ -355,6 +368,7 @@ const MemberForm: React.FC<MemberFormProps> = ({
                 <Dropdown
                   id="department"
                   label="Department"
+                  required
                   placeholder={
                     isCampusSelected
                       ? "Select department"
@@ -383,7 +397,7 @@ const MemberForm: React.FC<MemberFormProps> = ({
                     htmlFor="department"
                     className="mb-2 block text-sm font-medium text-gray-700"
                   >
-                    Department
+                    Department <span className="text-red-500">*</span>
                   </label>
                   <input
                     id="department"
@@ -434,6 +448,7 @@ const MemberForm: React.FC<MemberFormProps> = ({
               <Dropdown
                 id="batch"
                 label="Batch"
+                required
                 placeholder={
                   isCampusSelected ? "Select batch" : "Select campus first"
                 }

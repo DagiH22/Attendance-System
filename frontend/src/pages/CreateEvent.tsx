@@ -42,6 +42,8 @@ const CreateEvent: React.FC = () => {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  const [titleError, setTitleError] = useState("");
+  const [descriptionError, setDescriptionError] = useState("");
   const [dateError, setDateError] = useState("");
   const [timeError, setTimeError] = useState("");
   const [locationError, setLocationError] = useState("");
@@ -96,11 +98,26 @@ const CreateEvent: React.FC = () => {
   // Validation logic
   const validateForm = () => {
     let isValid = true;
+    setTitleError("");
+    setDescriptionError("");
     setDateError("");
     setTimeError("");
     setLocationError("");
 
-    if (!eventDate) return false;
+    if (!title.trim()) {
+      setTitleError("Event title is required");
+      isValid = false;
+    }
+
+    if (!description.trim()) {
+      setDescriptionError("Event description is required");
+      isValid = false;
+    }
+
+    if (!eventDate) {
+      setDateError("Event date is required");
+      return false;
+    }
 
     // Event Date Validation (no past dates)
     // We add timezone offset handling to compare dates directly or use the string comparison
@@ -109,11 +126,20 @@ const CreateEvent: React.FC = () => {
       isValid = false;
     }
 
-    if (!startTime || !endTime) return false;
+    if (!startTime || !endTime) {
+      setTimeError(
+        !startTime && !endTime
+          ? "Start time and end time are required"
+          : !startTime
+            ? "Start time is required"
+            : "End time is required",
+      );
+      return false;
+    }
 
     // Location must be provided
     if (!location || location.trim() === "") {
-      setLocationError("Location is required");
+      setLocationError("Event location is required");
       isValid = false;
     }
 
@@ -224,8 +250,13 @@ const CreateEvent: React.FC = () => {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. Sunday Service"
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+              className={`w-full px-4 py-2.5 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${titleError ? "border-red-300 bg-red-50" : "border-gray-300"}`}
             />
+            {titleError && (
+              <p className="mt-1 text-xs font-medium text-red-600">
+                {titleError}
+              </p>
+            )}
           </div>
 
           {/* Description */}
@@ -234,7 +265,7 @@ const CreateEvent: React.FC = () => {
               htmlFor="description"
               className="block text-sm font-medium text-gray-700 mb-1"
             >
-              Description
+              Description <span className="text-red-500">*</span>
             </label>
             <textarea
               id="description"
@@ -244,9 +275,14 @@ const CreateEvent: React.FC = () => {
               onChange={(e) => setDescription(e.target.value)}
               onInput={adjustDescriptionHeight}
               placeholder="Add some details about the event..."
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors resize-none"
+              className={`w-full px-4 py-2.5 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors resize-none ${descriptionError ? "border-red-300 bg-red-50" : "border-gray-300"}`}
               style={{ maxHeight: `${MAX_DESCRIPTION_HEIGHT}px` }}
             />
+            {descriptionError && (
+              <p className="mt-1 text-xs font-medium text-red-600">
+                {descriptionError}
+              </p>
+            )}
           </div>
 
           {/* Location */}
@@ -255,7 +291,7 @@ const CreateEvent: React.FC = () => {
               htmlFor="location"
               className="block text-sm font-medium text-gray-700 mb-1"
             >
-              Location
+              Location <span className="text-red-500">*</span>
             </label>
             <input
               type="text"

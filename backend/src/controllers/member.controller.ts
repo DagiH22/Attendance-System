@@ -40,6 +40,18 @@ const validateMemberPayload = (payload: {
     return { error: "Phone number is required." };
   }
 
+  if (!campus) {
+    return { error: "Campus must be selected." };
+  }
+
+  if (!department) {
+    return { error: "Department must be selected." };
+  }
+
+  if (!batch) {
+    return { error: "Batch must be selected." };
+  }
+
   if (!ETHIOPIAN_PHONE_REGEX.test(phoneNumber)) {
     return {
       error:
@@ -59,9 +71,9 @@ const validateMemberPayload = (payload: {
       name,
       email,
       phoneNumber,
-      department: department || null,
-      batch: batch || null,
-      campus: campus || null,
+      department,
+      batch,
+      campus,
     },
   };
 };

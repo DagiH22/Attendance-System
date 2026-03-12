@@ -28,9 +28,9 @@ const RegisterMemberPage: React.FC = () => {
         name: normalizedForm.name,
         email: normalizedForm.email,
         phoneNumber: normalizedForm.phoneNumber,
-        department: normalizedForm.department || undefined,
-        batch: normalizedForm.batch || undefined,
-        campus: normalizedForm.campus || undefined,
+        department: normalizedForm.department,
+        batch: normalizedForm.batch,
+        campus: normalizedForm.campus,
       });
 
       navigate("/members", {

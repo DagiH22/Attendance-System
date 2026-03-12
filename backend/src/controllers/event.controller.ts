@@ -8,6 +8,51 @@ import {
 
 const prisma = new PrismaClient();
 
+const validateEventPayload = (payload: {
+  title?: unknown;
+  description?: unknown;
+  eventDate?: unknown;
+  startTime?: unknown;
+  endTime?: unknown;
+  location?: unknown;
+}) => {
+  const title = String(payload.title ?? "").trim();
+  const description = String(payload.description ?? "").trim();
+  const location = String(payload.location ?? "").trim();
+
+  if (!title) {
+    return { error: "Event title is required" };
+  }
+
+  if (!description) {
+    return { error: "Event description is required" };
+  }
+
+  if (!payload.eventDate) {
+    return { error: "Event date is required" };
+  }
+
+  if (!payload.startTime) {
+    return { error: "Event start time is required" };
+  }
+
+  if (!payload.endTime) {
+    return { error: "Event end time is required" };
+  }
+
+  if (!location) {
+    return { error: "Event location is required" };
+  }
+
+  return {
+    value: {
+      title,
+      description,
+      location,
+    },
+  };
+};
+
 // Role checks are enforced with requireRole middleware at the route level
 
 /**
@@ -33,11 +78,20 @@ export const createEvent = async (req: Request, res: Response) => {
       location,
     } = req.body ?? {};
 
-    if (!title || !eventDate || !startTime || !endTime || !location) {
-      return res.status(400).json({
-        error: "title, eventDate, startTime, endTime and location are required",
-      });
+    const validation = validateEventPayload({
+      title,
+      description,
+      eventDate,
+      startTime,
+      endTime,
+      location,
+    });
+
+    if (validation.error) {
+      return res.status(400).json({ error: validation.error });
     }
+
+    const validated = validation.value!;
 
     const parsedEventDate = new Date(eventDate);
     const parsedStartTime = new Date(startTime);
@@ -65,13 +119,13 @@ export const createEvent = async (req: Request, res: Response) => {
 
     const created = await prisma.event.create({
       data: {
-        title,
-        description: description ?? null,
+        title: validated.title,
+        description: validated.description,
         eventDate: parsedEventDate,
         startTime: parsedStartTime,
         endTime: parsedEndTime,
         type: eventType,
-        location: location.trim(),
+        location: validated.location,
         createdById: req.admin.id,
       },
       include: { _count: { select: { attendances: true } } },
@@ -336,7 +390,7 @@ export const updateEvent = async (req: Request, res: Response) => {
 
     const updateData: {
       title?: string;
-      description?: string | null;
+      description?: string;
       startTime?: Date;
       endTime?: Date;
       location?: string;
@@ -354,10 +408,10 @@ export const updateEvent = async (req: Request, res: Response) => {
     }
 
     if (description !== undefined) {
-      if (description !== null && typeof description !== "string") {
-        return res.status(400).json({ error: "description must be a string" });
+      if (typeof description !== "string" || description.trim() === "") {
+        return res.status(400).json({ error: "Event description is required" });
       }
-      updateData.description = description?.trim() ? description.trim() : null;
+      updateData.description = description.trim();
     }
 
     if (location !== undefined) {
