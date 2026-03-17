@@ -30,7 +30,6 @@ async function sendBrevoEmail(
     return;
   }
 
-  // Parse sender from EMAIL_FROM (e.g., "Dagi <dagmawiheb@gmail.com>")
   const emailFromEnv = process.env.EMAIL_FROM || "no-reply@example.com";
   let senderName = "Attendance System";
   let senderEmail = "no-reply@example.com";

@@ -112,6 +112,10 @@ model Event {
   eventDate   DateTime     @db.Date
   startTime   DateTime
   endTime     DateTime
+  // Recurrence support (nullable for one-time events)
+  parentEventId String?     @db.Uuid
+  recurrenceIndex Int?
+  recurrenceLengthWeeks Int?
   type        EventType    @default(ONE_TIME)
   isActive    Boolean      @default(true)
   manuallyClosedAt DateTime?
@@ -125,8 +129,12 @@ model Event {
 
   // Relations
   createdBy   Admin        @relation("AdminToEvents", fields: [createdById], references: [id])
+  // Parent/children relation for recurring events
+  parentEvent Event?       @relation("RecurringEvents", fields: [parentEventId], references: [id])
+  childrenEvents Event[]   @relation("RecurringEvents")
   attendances Attendance[]
 
+  @@index([parentEventId])
   @@index([eventDate])
   @@index([createdById])
   @@map("events")

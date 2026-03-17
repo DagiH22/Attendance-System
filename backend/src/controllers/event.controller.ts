@@ -5,6 +5,7 @@ import {
   serializeEventForResponse,
   type EventStatus,
 } from "../services/event-lifecycle.service";
+import recurrenceService from "../services/recurrence.service";
 
 const prisma = new PrismaClient();
 
@@ -117,6 +118,31 @@ export const createEvent = async (req: Request, res: Response) => {
         .json({ error: "location must be a non-empty string" });
     }
 
+    if (eventType === EventType.WEEKLY) {
+      // create a parent recurring event and child occurrences
+      const recurrenceLengthWeeks =
+        Number(req.body.recurrenceLengthWeeks ?? 4) || 4;
+
+      const { parent, children } = await recurrenceService.createWeeklyEvents(
+        prisma,
+        {
+          adminId: req.admin.id,
+          title: validated.title,
+          description: validated.description,
+          startDate: parsedEventDate,
+          startTime: parsedStartTime,
+          endTime: parsedEndTime,
+          recurrenceLengthWeeks,
+          location: validated.location,
+        },
+      );
+
+      return res.status(201).json({
+        parent: serializeEventForResponse(parent),
+        occurrences: children.map((c: any) => serializeEventForResponse(c)),
+      });
+    }
+
     const created = await prisma.event.create({
       data: {
         title: validated.title,
@@ -161,6 +187,8 @@ export const getAllEvents = async (req: Request, res: Response) => {
       // upcoming: future startTime (or eventDate) and active
       prisma.event.findMany({
         where: {
+          // exclude parent recurring-event rows (type=WEEKLY with null recurrenceIndex)
+          NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] },
           isActive: true,
           AND: [{ startTime: { gt: now } }],
         },
@@ -170,6 +198,7 @@ export const getAllEvents = async (req: Request, res: Response) => {
       // active candidates: startTime <= now (or eventDate <= now) and active
       prisma.event.findMany({
         where: {
+          NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] },
           isActive: true,
           startTime: { lte: now },
         },
@@ -178,20 +207,21 @@ export const getAllEvents = async (req: Request, res: Response) => {
       }),
       // deactivated: explicit isActive === false
       prisma.event.findMany({
-        where: { isActive: false },
+        where: { NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] }, isActive: false },
         orderBy: [{ eventDate: "asc" }, { startTime: "asc" }],
         include: { _count: { select: { attendances: true } } },
       }),
       // past candidates: endTime < now or (no endTime && eventDate < now)
       prisma.event.findMany({
         where: {
+          NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] },
           isActive: true,
           endTime: { lt: now },
         },
         orderBy: [{ endTime: "desc" }, { eventDate: "desc" }],
         include: { _count: { select: { attendances: true } } },
       }),
-      prisma.event.count(),
+      prisma.event.count({ where: { NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] } } }),
     ]);
 
     // Build ordered list following desired sequence using the candidate buckets:

@@ -1,0 +1,263 @@
+import { PrismaClient, EventType } from "@prisma/client";
+
+export const setTimeOnDate = (date: Date, timeSource: Date) => {
+  const d = new Date(date);
+  d.setHours(
+    timeSource.getHours(),
+    timeSource.getMinutes(),
+    timeSource.getSeconds(),
+    timeSource.getMilliseconds(),
+  );
+  return d;
+};
+
+export const addDays = (date: Date, days: number) => {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+};
+
+export const normalizeToDateOnly = (date: Date) => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+export const createWeeklyEvents = async (
+  prisma: PrismaClient,
+  input: {
+    adminId: string;
+    title: string;
+    description: string;
+    startDate: Date; // date-only for first occurrence
+    startTime: Date; // time (hours/minutes) will be applied to each occurrence
+    endTime: Date;
+    recurrenceLengthWeeks?: number;
+    location: string;
+  },
+) => {
+  const length =
+    input.recurrenceLengthWeeks && input.recurrenceLengthWeeks >= 1
+      ? Math.floor(input.recurrenceLengthWeeks)
+      : 4;
+
+  const today = normalizeToDateOnly(new Date());
+  const startDateOnly = normalizeToDateOnly(input.startDate);
+  if (startDateOnly.getTime() < today.getTime()) {
+    throw new Error("startDate cannot be in the past");
+  }
+
+  // create parent recurring event
+  const parent = await prisma.event.create({
+    data: {
+      title: input.title,
+      description: input.description,
+      eventDate: startDateOnly,
+      startTime: setTimeOnDate(startDateOnly, input.startTime),
+      endTime: setTimeOnDate(startDateOnly, input.endTime),
+      type: EventType.WEEKLY,
+      location: input.location,
+      recurrenceLengthWeeks: length,
+      createdById: input.adminId,
+    },
+  });
+
+  const childrenCreates = [] as any[];
+  for (let i = 0; i < length; i++) {
+    const occurrenceDate = addDays(startDateOnly, i * 7);
+    const occurrenceStart = setTimeOnDate(occurrenceDate, input.startTime);
+    const occurrenceEnd = setTimeOnDate(occurrenceDate, input.endTime);
+
+    childrenCreates.push(
+      prisma.event.create({
+        data: {
+          title: `${input.title} - Week ${i + 1}`,
+          description: input.description,
+          eventDate: occurrenceDate,
+          startTime: occurrenceStart,
+          endTime: occurrenceEnd,
+          type: EventType.WEEKLY,
+          location: input.location,
+          parentEventId: parent.id,
+          recurrenceIndex: i + 1,
+          recurrenceLengthWeeks: length,
+          createdById: input.adminId,
+        },
+      }),
+    );
+  }
+
+  const children = await prisma.$transaction(childrenCreates);
+
+  return { parent, children };
+};
+
+export const updateWeeklyEvents = async (
+  prisma: PrismaClient,
+  parentEventId: string,
+  input: {
+    newRecurrenceLength?: number;
+    newStartDate?: Date;
+  },
+) => {
+  const parent = await prisma.event.findUnique({
+    where: { id: parentEventId },
+    include: { childrenEvents: true },
+  });
+
+  if (!parent) throw new Error("parent event not found");
+  if (parent.type !== EventType.WEEKLY) {
+    throw new Error("event is not a weekly recurring event");
+  }
+
+  const today = normalizeToDateOnly(new Date());
+  const children = (parent.childrenEvents ?? []).slice().sort((a, b) => {
+    const ai = a.recurrenceIndex ?? 0;
+    const bi = b.recurrenceIndex ?? 0;
+    return ai - bi;
+  });
+
+  const currentLength = parent.recurrenceLengthWeeks ?? children.length;
+  const targetLength =
+    input.newRecurrenceLength && input.newRecurrenceLength >= 1
+      ? Math.floor(input.newRecurrenceLength)
+      : currentLength;
+
+  // If start date is changing, ensure first occurrence hasn't already happened
+  if (input.newStartDate) {
+    const firstOccurrence = children[0];
+    if (firstOccurrence) {
+      const firstDate = normalizeToDateOnly(firstOccurrence.eventDate);
+      if (firstDate.getTime() < today.getTime()) {
+        throw new Error(
+          "Cannot change start date after the first occurrence has happened",
+        );
+      }
+    }
+  }
+
+  // Begin transaction to update parent and children
+  const updates: Array<Promise<any>> = [];
+
+  // handle start date change
+  if (input.newStartDate) {
+    const newStart = normalizeToDateOnly(input.newStartDate);
+    // update parent eventDate / startTime / endTime
+    updates.push(
+      prisma.event.update({
+        where: { id: parentEventId },
+        data: {
+          eventDate: newStart,
+          startTime: setTimeOnDate(newStart, parent.startTime),
+          endTime: setTimeOnDate(newStart, parent.endTime),
+          recurrenceLengthWeeks: targetLength,
+        },
+      }),
+    );
+
+    // update all children dates (none should have happened because we checked)
+    for (let i = 0; i < targetLength; i++) {
+      const occurrenceDate = addDays(newStart, i * 7);
+      const start = setTimeOnDate(occurrenceDate, parent.startTime);
+      const end = setTimeOnDate(occurrenceDate, parent.endTime);
+
+      updates.push(
+        prisma.event.upsert({
+          where: {
+            // use a compound of parentEventId and recurrenceIndex is not unique in schema,
+            // so fallback to finding by parentEventId + recurrenceIndex using raw filter via updateMany
+            id: children[i]?.id ?? "__MISSING__",
+          },
+          create: {
+            title: `${parent.title} - Week ${i + 1}`,
+            description: parent.description,
+            eventDate: occurrenceDate,
+            startTime: start,
+            endTime: end,
+            type: EventType.WEEKLY,
+            location: parent.location,
+            parentEventId: parentEventId,
+            recurrenceIndex: i + 1,
+            recurrenceLengthWeeks: targetLength,
+            createdById: parent.createdById,
+          },
+          update: {
+            eventDate: occurrenceDate,
+            startTime: start,
+            endTime: end,
+            recurrenceLengthWeeks: targetLength,
+          },
+        }),
+      );
+    }
+  } else {
+    // no start date change, but recurrence length may change
+    updates.push(
+      prisma.event.update({
+        where: { id: parentEventId },
+        data: { recurrenceLengthWeeks: targetLength },
+      }),
+    );
+
+    if (targetLength > currentLength) {
+      // create additional occurrences after the last existing recurrenceIndex
+      const lastIndex = children.length > 0 ? (children[children.length - 1].recurrenceIndex ?? 0) : 0;
+      for (let i = lastIndex; i < targetLength; i++) {
+        const occurrenceDate = addDays(parent.eventDate, i * 7);
+        const start = setTimeOnDate(occurrenceDate, parent.startTime);
+        const end = setTimeOnDate(occurrenceDate, parent.endTime);
+
+        updates.push(
+          prisma.event.create({
+            data: {
+              title: `${parent.title} - Week ${i + 1}`,
+              description: parent.description,
+              eventDate: occurrenceDate,
+              startTime: start,
+              endTime: end,
+              type: EventType.WEEKLY,
+              location: parent.location,
+              parentEventId: parentEventId,
+              recurrenceIndex: i + 1,
+              recurrenceLengthWeeks: targetLength,
+              createdById: parent.createdById,
+            },
+          }),
+        );
+      }
+    }
+
+    if (targetLength < currentLength) {
+      // delete occurrences with recurrenceIndex > targetLength but do not delete past occurrences
+      const toDelete = children.filter((c) => (c.recurrenceIndex ?? 0) > targetLength);
+      const pastDeletes = toDelete.filter((c) => normalizeToDateOnly(c.eventDate).getTime() < today.getTime());
+      if (pastDeletes.length > 0) {
+        throw new Error("Cannot remove past occurrences");
+      }
+
+      updates.push(
+        prisma.event.deleteMany({
+          where: {
+            parentEventId: parentEventId,
+            recurrenceIndex: { gt: targetLength },
+          },
+        }),
+      );
+    }
+  }
+
+  await prisma.$transaction(updates as any);
+
+  // return updated parent and children
+  const refreshed = await prisma.event.findUnique({
+    where: { id: parentEventId },
+    include: { childrenEvents: true },
+  });
+
+  return refreshed;
+};
+
+export default {
+  createWeeklyEvents,
+  updateWeeklyEvents,
+};
