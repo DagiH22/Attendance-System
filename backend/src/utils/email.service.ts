@@ -59,7 +59,7 @@ async function sendBrevoEmail(
   }
 
   try {
-    const response = await axios.post(
+    const response = await axios.post<{ messageId?: string }>(
       "https://api.brevo.com/v3/smtp/email",
       payload,
       {
@@ -72,7 +72,7 @@ async function sendBrevoEmail(
     );
 
     console.log(
-      `Email sent successfully to ${to}. Message ID: ${response.data.messageId}`,
+      `Email sent successfully to ${to}. Message ID: ${response.data?.messageId ?? "(unknown)"}`,
     );
   } catch (error: any) {
     console.error(
