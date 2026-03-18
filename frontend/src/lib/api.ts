@@ -6,7 +6,7 @@ import axios, {
 } from "axios";
 
 const ACCESS_TOKEN_KEY = "accessToken";
-const apiBaseUrl = "http://localhost:4000";
+const apiBaseUrl = (import.meta.env.VITE_API_URL as string) || "http://localhost:4000";
 
 let isRefreshing = false;
 let refreshPromise: Promise<string | null> | null = null;
