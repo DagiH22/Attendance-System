@@ -1,5 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { QrReader } from "react-qr-reader";
+import React, { useEffect, useMemo, useState } from "react";
 import { isAxiosError } from "axios";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import api from "../lib/api";
@@ -10,14 +9,6 @@ import type {
   EventAttendanceResponse,
 } from "../types/events";
 import type { AttendanceRecordResponse, Member } from "../types/members";
-
-type QrReaderScanResult = {
-  getText: () => string;
-};
-
-type QrReaderScanError = {
-  name?: string;
-};
 
 type PageTab = "QR" | "MANUAL";
 
@@ -108,11 +99,7 @@ const TakeAttendancePage: React.FC = () => {
   const [loadingEvent, setLoadingEvent] = useState<boolean>(!state?.event);
   const [loadingMembers, setLoadingMembers] = useState<boolean>(true);
   const [pageError, setPageError] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<PageTab>("QR");
-  const [cameraPermission, setCameraPermission] = useState<
-    "idle" | "pending" | "granted" | "denied"
-  >("idle");
-  const [cameraError, setCameraError] = useState<string>("");
+  const [activeTab, setActiveTab] = useState<PageTab>("MANUAL");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [feedback, setFeedback] = useState<AttendanceFeedback | null>(null);
@@ -127,9 +114,6 @@ const TakeAttendancePage: React.FC = () => {
   >([]);
   const [manualPage, setManualPage] = useState(1);
   const [prefetchingPage, setPrefetchingPage] = useState<number | null>(null);
-
-  const lastScannedValueRef = useRef<string>("");
-  const scanCooldownRef = useRef<number | null>(null);
 
   const attendanceDisabled =
     !event?.attendanceOpen || event?.status !== "ACTIVE";
@@ -255,14 +239,6 @@ const TakeAttendancePage: React.FC = () => {
 
     void load();
   }, [refreshEvent, refreshMembers, refreshPresentMembers]);
-
-  useEffect(() => {
-    return () => {
-      if (scanCooldownRef.current) {
-        window.clearTimeout(scanCooldownRef.current);
-      }
-    };
-  }, []);
 
   const markedAtByMemberId = useMemo(() => {
     return attendanceRecords.reduce<Record<string, string>>((acc, record) => {
@@ -442,76 +418,6 @@ const TakeAttendancePage: React.FC = () => {
     }
   };
 
-  const requestCameraPermission = async () => {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setCameraPermission("denied");
-      setCameraError("Camera access is not supported on this device/browser.");
-      return;
-    }
-
-    try {
-      setCameraPermission("pending");
-      setCameraError("");
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
-      });
-      stream.getTracks().forEach((track) => track.stop());
-      setCameraPermission("granted");
-    } catch (error) {
-      console.error("Camera permission denied:", error);
-      setCameraPermission("denied");
-      setCameraError(
-        "Camera permission was denied. Please enable it to scan QR codes.",
-      );
-    }
-  };
-
-  const handleScanResult = async (value: string | null) => {
-    if (!value || isSubmitting || attendanceDisabled) {
-      return;
-    }
-
-    const trimmedValue = value.trim();
-    if (!trimmedValue || trimmedValue === lastScannedValueRef.current) {
-      return;
-    }
-
-    lastScannedValueRef.current = trimmedValue;
-    if (scanCooldownRef.current) {
-      window.clearTimeout(scanCooldownRef.current);
-    }
-
-    let memberIdentifier = trimmedValue;
-    try {
-      const parsed = JSON.parse(trimmedValue);
-      memberIdentifier =
-        parsed?.memberId ??
-        parsed?.memberUniqueId ??
-        parsed?.uniqueId ??
-        trimmedValue;
-    } catch {
-      const memberIdMatch = trimmedValue.match(/memberId[:=]([\w-]+)/i);
-      const uniqueIdMatch = trimmedValue.match(
-        /(?:memberUniqueId|uniqueId)[:=]([\w-]+)/i,
-      );
-      memberIdentifier =
-        memberIdMatch?.[1] || uniqueIdMatch?.[1] || trimmedValue;
-    }
-
-    const localMember =
-      members.find(
-        (member) =>
-          member.id === memberIdentifier ||
-          member.uniqueId === memberIdentifier,
-      ) ?? null;
-
-    await markAttendance(memberIdentifier, "QR", localMember);
-
-    scanCooldownRef.current = window.setTimeout(() => {
-      lastScannedValueRef.current = "";
-    }, 2500);
-  };
-
   const statusBadgeClass = attendanceDisabled
     ? "bg-amber-50 text-amber-800 border-amber-200"
     : "bg-green-50 text-green-700 border-green-200";
@@ -649,96 +555,32 @@ const TakeAttendancePage: React.FC = () => {
 
         <section className="rounded-3xl border border-slate-100 bg-white p-2 shadow-sm">
           <div className="grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1">
-            {(["QR", "MANUAL"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setActiveTab(tab)}
-                className={`rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
-                  activeTab === tab
-                    ? "bg-white text-blue-700 shadow-sm"
-                    : "text-slate-500"
-                }`}
-              >
-                {tab === "QR" ? "QR Scan" : "Manual"}
-              </button>
-            ))}
+            {(["QR", "MANUAL"] as const).map((tab) => {
+              const isDisabled = tab === "QR";
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => !isDisabled && setActiveTab(tab)}
+                  disabled={isDisabled}
+                  className={`rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
+                    activeTab === tab
+                      ? "bg-white text-blue-700 shadow-sm"
+                      : isDisabled
+                        ? "text-slate-400 opacity-50 cursor-not-allowed"
+                        : "text-slate-500"
+                  }`}
+                >
+                  {tab === "QR" ? "QR Scan" : "Manual"}
+                </button>
+              );
+            })}
           </div>
         </section>
 
         {activeTab === "QR" ? (
-          <section className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">
-                  Scan member QR
-                </h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  Point the camera at a member QR code to check them in
-                  instantly.
-                </p>
-              </div>
-            </div>
-
-            {cameraPermission !== "granted" ? (
-              <div className="mt-4 rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-blue-100 text-2xl">
-                  📷
-                </div>
-                <p className="mt-4 text-sm text-slate-600">
-                  Allow camera access to scan QR codes.
-                </p>
-                {cameraError && (
-                  <p className="mt-2 text-sm font-medium text-red-600">
-                    {cameraError}
-                  </p>
-                )}
-                <button
-                  type="button"
-                  onClick={requestCameraPermission}
-                  disabled={
-                    attendanceDisabled || cameraPermission === "pending"
-                  }
-                  className="mt-4 inline-flex w-full items-center justify-center rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
-                >
-                  {cameraPermission === "pending"
-                    ? "Requesting permission..."
-                    : "Enable camera"}
-                </button>
-              </div>
-            ) : (
-              <div className="mt-4 overflow-hidden rounded-3xl border border-slate-100 bg-slate-950 shadow-inner">
-                <QrReader
-                  constraints={{ facingMode: "environment" }}
-                  scanDelay={800}
-                  onResult={(
-                    result: QrReaderScanResult | null | undefined,
-                    error: QrReaderScanError | null | undefined,
-                  ) => {
-                    if (result) {
-                      void handleScanResult(result.getText());
-                    }
-
-                    if (error && error.name !== "NotFoundException") {
-                      setCameraError(
-                        "Unable to read QR code. Please try again.",
-                      );
-                    }
-                  }}
-                  containerStyle={{ width: "100%" }}
-                  videoContainerStyle={{
-                    width: "100%",
-                    paddingTop: "100%",
-                    position: "relative",
-                  }}
-                  videoStyle={{ objectFit: "cover" }}
-                />
-                <div className="border-t border-white/10 px-4 py-3 text-sm text-slate-200">
-                  Align the QR code inside the frame. Scans will pause briefly
-                  after each result.
-                </div>
-              </div>
-            )}
+          <section className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm text-center text-slate-500 min-h-[300px] flex items-center justify-center">
+            QR scanning is currently disabled. Please use manual check-in.
           </section>
         ) : (
           <section className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm">
