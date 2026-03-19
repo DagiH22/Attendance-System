@@ -13,7 +13,8 @@ dotenv.config();
 
 const app = express();
 const prisma = new PrismaClient();
-const port = process.env.PORT ?? 4000;
+const port = Number(process.env.PORT ?? 4000);
+const host = process.env.HOST ?? "0.0.0.0";
 const clientOrigin = process.env.CLIENT_URL ?? "http://localhost:5173";
 
 app.use(
@@ -34,8 +35,8 @@ app.get("/", (_req, res) => res.json({ status: "ok" }));
 
 startEventLifecycleScheduler(prisma);
 
-app.listen(port, () => {
-  console.log(`Server listening on http://localhost:${port}`);
+app.listen(port, host, () => {
+  console.log(`Server listening on http://${host}:${port}`);
 });
 
 export default app;
