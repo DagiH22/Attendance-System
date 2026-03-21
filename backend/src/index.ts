@@ -33,6 +33,14 @@ app.use("/attendance", attendanceRouter);
 
 app.get("/", (_req, res) => res.json({ status: "ok" }));
 
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error);
+});
+
 startEventLifecycleScheduler(prisma);
 
 app.listen(port, host, () => {
