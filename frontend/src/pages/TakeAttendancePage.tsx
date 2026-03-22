@@ -4,6 +4,8 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import api, { setSessionExpiredHandler } from "../lib/api";
 import formatDate from "../lib/formatDate";
 import QrAttendanceScanner from "../components/QrAttendanceScanner";
+import { usePersistentState } from "../hooks/usePersistentState";
+import { useScrollDirection } from "../hooks/useScrollDirection";
 import type {
   DashboardEvent,
   EventAttendanceRecord,
@@ -113,6 +115,19 @@ const TakeAttendancePage: React.FC = () => {
   const [manualPage, setManualPage] = useState(1);
   const [prefetchingPage, setPrefetchingPage] = useState<number | null>(null);
 
+  type StatusFilter = "ALL" | "ACTIVE" | "INACTIVE";
+  type SortOption = "DEFAULT" | "ALPHA_ASC" | "ALPHA_DESC" | "RECENTLY_REGISTERED";
+
+  const [statusFilter, setStatusFilter] = usePersistentState<StatusFilter>("take-attendance-status-filter", "ALL");
+  const [sortBy, setSortBy] = usePersistentState<SortOption>("take-attendance-sort-by", "DEFAULT");
+  const [isSortModalOpen, setIsSortModalOpen] = useState(false);
+  const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
+
+  const sortDropdownRef = React.useRef<HTMLDivElement>(null);
+  const filterDropdownRef = React.useRef<HTMLDivElement>(null);
+
+  const scrollDirection = useScrollDirection();
+
   const attendanceDisabled =
     !event?.attendanceOpen || event?.status !== "ACTIVE";
 
@@ -128,6 +143,19 @@ const TakeAttendancePage: React.FC = () => {
       setSessionExpiredHandler(null);
     };
   }, [location, navigate]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (sortDropdownRef.current && !sortDropdownRef.current.contains(event.target as Node)) {
+        setIsSortModalOpen(false);
+      }
+      if (filterDropdownRef.current && !filterDropdownRef.current.contains(event.target as Node)) {
+        setIsFilterDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const handleQrSuccess = async (result: {
     memberId: string;
@@ -290,45 +318,64 @@ const TakeAttendancePage: React.FC = () => {
     }, {});
   }, [attendanceRecords]);
 
-  const filteredMembers = useMemo(() => {
+  // Filter members by status and search
+  const baseFilteredMembers = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    const orderedMembers = [...members].sort((a, b) => {
-      const aDeactivated = a.isActive === false;
-      const bDeactivated = b.isActive === false;
-      if (aDeactivated !== bDeactivated) {
-        return aDeactivated ? 1 : -1;
-      }
+    return members.filter((member) => {
+      const matchStatus =
+        statusFilter === "ALL" ||
+        (statusFilter === "ACTIVE" && member.isActive !== false) ||
+        (statusFilter === "INACTIVE" && member.isActive === false);
 
-      const aPresent = presentMembers.has(a.id);
-      const bPresent = presentMembers.has(b.id);
-      if (aPresent !== bPresent) {
-        return aPresent ? 1 : -1;
-      }
+      const matchSearch = !query || [member.name, member.uniqueId, member.phoneNumber ?? ""].some((value) =>
+        value.toLowerCase().includes(query),
+      );
 
-      if (aPresent && bPresent) {
-        const aMarkedAt = markedAtByMemberId[a.id]
-          ? new Date(markedAtByMemberId[a.id]).getTime()
-          : 0;
-        const bMarkedAt = markedAtByMemberId[b.id]
-          ? new Date(markedAtByMemberId[b.id]).getTime()
-          : 0;
+      return matchStatus && matchSearch;
+    });
+  }, [members, statusFilter, searchQuery]);
 
-        if (aMarkedAt !== bMarkedAt) {
-          return bMarkedAt - aMarkedAt;
+  const filteredMembers = useMemo(() => {
+    const orderedMembers = [...baseFilteredMembers].sort((a, b) => {
+      if (sortBy === "DEFAULT") {
+        const aDeactivated = a.isActive === false;
+        const bDeactivated = b.isActive === false;
+        if (aDeactivated !== bDeactivated) {
+          return aDeactivated ? 1 : -1;
         }
-      }
 
-      return a.name.localeCompare(b.name);
+        const aPresent = presentMembers.has(a.id);
+        const bPresent = presentMembers.has(b.id);
+        if (aPresent !== bPresent) {
+          return aPresent ? 1 : -1;
+        }
+
+        if (aPresent && bPresent) {
+          const aMarkedAt = markedAtByMemberId[a.id]
+            ? new Date(markedAtByMemberId[a.id]).getTime()
+            : 0;
+          const bMarkedAt = markedAtByMemberId[b.id]
+            ? new Date(markedAtByMemberId[b.id]).getTime()
+            : 0;
+
+          if (aMarkedAt !== bMarkedAt) {
+            return bMarkedAt - aMarkedAt;
+          }
+        }
+
+        return a.name.localeCompare(b.name);
+      } else if (sortBy === "ALPHA_ASC") {
+        return a.name.localeCompare(b.name);
+      } else if (sortBy === "ALPHA_DESC") {
+        return b.name.localeCompare(a.name);
+      } else if (sortBy === "RECENTLY_REGISTERED") {
+        return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+      }
+      return 0;
     });
 
-    if (!query) return orderedMembers;
-
-    return orderedMembers.filter((member) =>
-      [member.name, member.uniqueId, member.phoneNumber ?? ""].some((value) =>
-        value.toLowerCase().includes(query),
-      ),
-    );
-  }, [markedAtByMemberId, members, presentMembers, searchQuery]);
+    return orderedMembers;
+  }, [baseFilteredMembers, markedAtByMemberId, presentMembers, sortBy]);
 
   const totalManualPages = Math.max(
     1,
@@ -504,10 +551,27 @@ const TakeAttendancePage: React.FC = () => {
     );
   }
 
+  const getSortLabel = (sortValue: SortOption) => {
+    switch (sortValue) {
+      case "DEFAULT":
+        return "Default";
+      case "ALPHA_ASC":
+        return "Alphabetical (A → Z)";
+      case "ALPHA_DESC":
+        return "Alphabetical (Z → A)";
+      case "RECENTLY_REGISTERED":
+        return "Recently Registered";
+      default:
+        return "";
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 pb-8">
       <div className="mx-auto flex w-full max-w-md flex-col gap-4 px-4 py-4 sm:max-w-2xl sm:px-6 sm:py-6">
-        <div className="sticky top-0 z-10 -mx-4 border-b border-slate-100 bg-slate-50/95 px-4 pb-4 pt-1 backdrop-blur sm:static sm:mx-0 sm:border-none sm:bg-transparent sm:px-0 sm:pb-0">
+        <div className={`sticky top-0 z-10 -mx-4 border-b border-slate-100 bg-slate-50/95 px-4 pb-4 pt-1 backdrop-blur sm:static sm:mx-0 sm:border-none sm:bg-transparent sm:px-0 sm:pb-0 transition-transform duration-300 ${
+          scrollDirection === "down" ? "-translate-y-full" : "translate-y-0"
+        }`}>
           <button
             type="button"
             onClick={() =>
@@ -530,34 +594,32 @@ const TakeAttendancePage: React.FC = () => {
                 </h1>
               </div>
               <span
-                className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${statusBadgeClass}`}
+                className={`flex-shrink-0 inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${statusBadgeClass}`}
               >
                 {event.status}
               </span>
             </div>
 
-            <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-blue-50 sm:grid-cols-2">
-              <div className="rounded-2xl bg-white/10 px-3 py-2">
-                <p className="text-xs uppercase tracking-wide text-blue-100">
-                  Date
-                </p>
-                <p className="mt-1 font-semibold text-white">
-                  {formatDate(event.startTime)}
-                </p>
+            <div className="mt-4 flex flex-col gap-2 rounded-2xl bg-white/10 px-4 py-3">
+              <div className="flex items-center gap-2 text-white">
+                <svg className="h-4 w-4 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-sm font-medium">
+                  {formatDate(event.startTime)} • {formatTimeRange(event.startTime, event.endTime)}
+                </span>
               </div>
-              <div className="rounded-2xl bg-white/10 px-3 py-2">
-                <p className="text-xs uppercase tracking-wide text-blue-100">
-                  Time
-                </p>
-                <p className="mt-1 font-semibold text-white">
-                  {formatTimeRange(event.startTime, event.endTime)}
-                </p>
-              </div>
+              
+              {event.location && (
+                <div className="flex items-center gap-2 text-white">
+                  <svg className="h-4 w-4 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <span className="text-sm font-medium">{event.location}</span>
+                </div>
+              )}
             </div>
-
-            {event.location && (
-              <p className="mt-3 text-sm text-blue-50">📍 {event.location}</p>
-            )}
           </header>
 
           <div className="mt-4">
@@ -640,6 +702,10 @@ const TakeAttendancePage: React.FC = () => {
                     {event.attendanceCount} of {members.length} members present
                   </p>
                 </div>
+              </div>
+
+              {/* Filters & Sort & Search */}
+              <div className="mt-4 flex flex-col gap-3">
                 <div className="relative">
                   <input
                     type="text"
@@ -662,6 +728,161 @@ const TakeAttendancePage: React.FC = () => {
                         d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
                       />
                     </svg>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  {/* Mobile Filter view: horizontally scrolling pills */}
+                  <div className="flex overflow-x-auto no-scrollbar gap-2 pb-1 flex-1 sm:hidden">
+                    {(["ALL", "ACTIVE", "INACTIVE"] as StatusFilter[]).map(
+                      (filter) => (
+                        <button
+                          key={filter}
+                          onClick={() => setStatusFilter(filter)}
+                          className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors border ${
+                            statusFilter === filter
+                              ? filter === "ACTIVE"
+                                ? "bg-green-600 text-white border-green-600"
+                                : filter === "INACTIVE"
+                                  ? "bg-red-600 text-white border-red-600"
+                                  : "bg-blue-600 text-white border-blue-600"
+                              : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"
+                          }`}
+                        >
+                          {filter === "ALL"
+                            ? "All"
+                            : filter.charAt(0) + filter.slice(1).toLowerCase()}
+                        </button>
+                      ),
+                    )}
+                  </div>
+
+                  {/* Desktop Filter View: Dropdown */}
+                  <div className="hidden sm:block relative flex-shrink-0" ref={filterDropdownRef}>
+                    <button
+                      onClick={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors mb-1"
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+                        ></path>
+                      </svg>
+                      <span>
+                        Filter: {statusFilter === "ALL" ? "All" : statusFilter.charAt(0) + statusFilter.slice(1).toLowerCase()}
+                      </span>
+                    </button>
+
+                    {isFilterDropdownOpen && (
+                      <div className="absolute left-0 mt-2 w-48 bg-white border border-slate-100 rounded-xl shadow-lg z-50 py-2">
+                        <div className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                          Status Filter
+                        </div>
+                        {(["ALL", "ACTIVE", "INACTIVE"] as StatusFilter[]).map((filter) => (
+                          <button
+                            key={filter}
+                            onClick={() => {
+                              setStatusFilter(filter);
+                              setIsFilterDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-4 py-2 text-sm flex items-center justify-between hover:bg-slate-50 transition-colors ${
+                              statusFilter === filter
+                                ? "font-semibold text-blue-600"
+                                : "text-slate-700"
+                            }`}
+                          >
+                            {filter === "ALL" ? "All" : filter.charAt(0) + filter.slice(1).toLowerCase()}
+                            {statusFilter === filter && (
+                              <svg
+                                className="w-4 h-4"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
+                              </svg>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Sort Button */}
+                  <div className="relative flex-shrink-0" ref={sortDropdownRef}>
+                    <button
+                      onClick={() => setIsSortModalOpen(!isSortModalOpen)}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors mb-1"
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"
+                        ></path>
+                      </svg>
+                      <span className="hidden sm:inline">Sort</span>
+                    </button>
+
+                    {isSortModalOpen && (
+                      <div className="absolute right-0 mt-2 w-56 bg-white border border-slate-100 rounded-xl shadow-lg z-50 py-2">
+                        <div className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                          Sort By
+                        </div>
+                        {(
+                          [
+                            "DEFAULT",
+                            "ALPHA_ASC",
+                            "ALPHA_DESC",
+                            "RECENTLY_REGISTERED",
+                          ] as SortOption[]
+                        ).map((option) => (
+                          <button
+                            key={option}
+                            onClick={() => {
+                              setSortBy(option);
+                              setIsSortModalOpen(false);
+                            }}
+                            className={`w-full text-left px-4 py-2 text-sm flex items-center justify-between hover:bg-slate-50 transition-colors ${
+                              sortBy === option
+                                ? "font-semibold text-blue-600"
+                                : "text-slate-700"
+                            }`}
+                          >
+                            {getSortLabel(option)}
+                            {sortBy === option && (
+                              <svg
+                                className="w-4 h-4"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth="2"
+                                  d="M5 13l4 4L19 7"
+                                ></path>
+                              </svg>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

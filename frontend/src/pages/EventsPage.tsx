@@ -4,6 +4,8 @@ import api from "../lib/api";
 import formatDate from "../lib/formatDate";
 import type { DashboardEvent } from "../types/events";
 import { useAuth } from "../contexts/AuthContext";
+import { usePersistentState } from "../hooks/usePersistentState";
+import { useScrollDirection } from "../hooks/useScrollDirection";
 
 type StatusOption = "UPCOMING" | "ACTIVE" | "PAST" | "DEACTIVATED";
 type TypeFilter = "ALL" | "WEEKLY" | "MONTHLY" | "ONE_TIME";
@@ -95,14 +97,16 @@ const EventsPage: React.FC = () => {
 
   // Filters and Sorting State
   // statusFilterSelected: empty array means no filter (ALL)
-  const [statusFilter, setStatusFilter] = useState<StatusOption[]>([]);
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>("ALL");
-  const [sortBy, setSortBy] = useState<SortOption>("NEXT_EVENT");
+  const [statusFilter, setStatusFilter] = usePersistentState<StatusOption[]>("events-status-filter", []);
+  const [typeFilter, setTypeFilter] = usePersistentState<TypeFilter>("events-type-filter", "ALL");
+  const [sortBy, setSortBy] = usePersistentState<SortOption>("events-sort-by", "NEXT_EVENT");
   const [isSortModalOpen, setIsSortModalOpen] = useState(false);
+  
+  const scrollDirection = useScrollDirection();
 
   // Search State
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = usePersistentState<string>("events-search-query", "");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(searchQuery);
 
   // Debounce effect
   useEffect(() => {
@@ -520,7 +524,11 @@ const EventsPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50 pb-24 relative">
       {/* Header */}
-      <header className="bg-white px-4 pt-6 pb-4 border-b border-gray-200 sticky top-0 z-20">
+      <header
+        className={`bg-white px-4 pt-6 pb-4 border-b border-gray-200 sticky top-0 z-20 transition-transform duration-300 ${
+          scrollDirection === "down" ? "-translate-y-full" : "translate-y-0"
+        }`}
+      >
         <div className="flex justify-between items-center mb-4 max-w-4xl mx-auto w-full">
           <h1 className="text-2xl font-bold text-gray-900">Events</h1>
           <button
@@ -712,6 +720,21 @@ const EventsPage: React.FC = () => {
                         {formatStatusLabel(s)}
                       </button>
                     ))}
+
+                    <div className="border-t">
+                      <button
+                        onClick={() => {
+                          setStatusFilter([]);
+                          setTypeFilter("ALL");
+                          setSearchQuery("");
+                          setCurrentPage(1);
+                          setSortBy("NEXT_EVENT");
+                        }}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        Clear All Filters
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -828,6 +851,7 @@ const EventsPage: React.FC = () => {
                   </div>
                   <ul>
                     {[
+
                       { value: "NEXT_EVENT", label: "Next Event" },
                       { value: "RECENTLY_CREATED", label: "Recently Created" },
                       {
