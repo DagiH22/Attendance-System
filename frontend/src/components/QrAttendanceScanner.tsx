@@ -28,6 +28,7 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
   const isProcessingRef = useRef(false);
   const [scannerState, setScannerState] = useState<ScannerState>("IDLE");
   const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [apiErrorMsg, setApiErrorMsg] = useState<string | null>(null);
   const [lastScannedCode, setLastScannedCode] = useState<string | null>(null);
 
   useEffect(() => {
@@ -36,8 +37,8 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
       if (scannerRef.current) {
         scannerRef.current
           .stop()
-          .catch((err: unknown) => {
-            console.warn("Failed to stop QR scanner on unmount:", err);
+          .catch(() => {
+            // Ignore unmount stop errors
           })
           .finally(() => {
             scannerRef.current = null;
@@ -49,6 +50,7 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
   const handleStart = async () => {
     setScannerState("REQUESTING_PERMISSION");
     setPermissionError(null);
+    setApiErrorMsg(null);
     isProcessingRef.current = false;
 
     // Use a unique ID for the scanner region to avoid conflicts if multiple instances exist
@@ -108,13 +110,12 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
           if (errorMessage.includes("No MultiFormat Readers")) {
             return;
           }
-          console.warn(`QR Scan Warning: ${errorMessage}`);
+          // Intentionally omitting console log here to respect user requirement
         },
       );
 
       setScannerState("SCANNING");
     } catch (err: any) {
-      console.error("Camera start error:", err);
       setPermissionError(
         "Camera permission was denied or camera is unavailable. Please check your browser settings.",
       );
@@ -127,7 +128,7 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
       try {
         await scannerRef.current.stop();
       } catch (err: unknown) {
-        console.warn("Failed to stop scanner:", err);
+        // Ignore stop errors
       } finally {
         scannerRef.current.clear(); // Clear the canvas
       }
@@ -147,12 +148,14 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
         await scannerRef.current.stop();
         scannerRef.current.clear();
       } catch (e) {
-        console.warn("Error stopping scanner after success:", e);
+        // Ignore stop errors
       }
     }
 
     try {
-      const parentResolvedId = resolveMemberId ? resolveMemberId(qrCodeValue) : qrCodeValue;
+      const parentResolvedId = resolveMemberId
+        ? resolveMemberId(qrCodeValue)
+        : qrCodeValue;
 
       const response = await api.post("/attendance", {
         memberId: parentResolvedId,
@@ -165,10 +168,13 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
         memberId: parentResolvedId,
         memberName: response.data?.member?.name,
       });
-    } catch (error) {
-      // If error occurs, we stay in ERROR state or go back to IDLE?
-      // Usually better to show error and let user try again.
+    } catch (error: any) {
       setScannerState("ERROR");
+      const message =
+        error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        "Failed to mark attendance.";
+      setApiErrorMsg(message);
       onApiError(error);
       isProcessingRef.current = false; // Allow retrying if they restart
     }
@@ -267,17 +273,12 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
                 />
               </svg>
             </div>
-            <p className="text-sm text-red-800 font-medium mb-1">
-              {permissionError || "Unable to scan"}
+            <p className="text-sm text-red-800 font-medium mb-3">
+              {permissionError || apiErrorMsg || "Unable to scan"}
             </p>
-            {!permissionError && (
-              <p className="text-xs text-red-600 mb-3 block">
-                Check console for details or try again.
-              </p>
-            )}
             <button
               onClick={handleStart}
-              className="rounded-md bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50"
+              className="rounded-md bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50 transition-colors"
             >
               Try Again
             </button>

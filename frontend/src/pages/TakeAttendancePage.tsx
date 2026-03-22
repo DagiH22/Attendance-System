@@ -612,7 +612,9 @@ const TakeAttendancePage: React.FC = () => {
                     onApiError={handleQrError}
                     resolveMemberId={(code) => {
                       // Attempt to resolve custom uniqueId to UUID so we don't crash Postgres natively.
-                      const match = members.find(m => m.uniqueId === code || m.id === code);
+                      const match = members.find(
+                        (m) => m.uniqueId === code || m.id === code,
+                      );
                       return match ? match.id : code;
                     }}
                   />

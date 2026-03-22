@@ -39,7 +39,8 @@ export const markAttendance = async (req: Request, res: Response) => {
     }
 
     // Is the identifier a valid UUID?
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const isUuid = uuidRegex.test(normalizedMemberIdentifier);
 
     // 1. Find member by UUID id or public uniqueId
@@ -53,7 +54,7 @@ export const markAttendance = async (req: Request, res: Response) => {
           }
         : { uniqueId: normalizedMemberIdentifier },
     });
-    
+
     if (!member) {
       return res.status(404).json({ error: "Member not found" });
     }
