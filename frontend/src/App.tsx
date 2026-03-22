@@ -7,6 +7,7 @@ import {
 import Login from "./pages/Login";
 import EventsPage from "./pages/EventsPage";
 import MembersPage from "./pages/MembersPage";
+import DashboardPage from "./pages/Dashboard";
 import MemberDetailsPage from "./pages/MemberDetailsPage";
 import RegisterMemberPage from "./pages/RegisterMemberPage";
 import EditMemberPage from "./pages/EditMemberPage";
@@ -31,6 +32,7 @@ function App() {
           <Route path="/members/:memberId" element={<MemberDetailsPage />} />
           <Route path="/events/create" element={<CreateEvent />} />
           <Route path="/events/:id" element={<EventDetailsPage />} />
+          <Route path="/dashboard" element={<DashboardPage />} />
           <Route
             path="/events/:id/attendance"
             element={<TakeAttendancePage />}

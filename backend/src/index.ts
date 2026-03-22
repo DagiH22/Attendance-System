@@ -6,6 +6,7 @@ import authRouter from "./routes/auth.route";
 import memberRouter from "./routes/member.route";
 import eventRouter from "./routes/event.route";
 import attendanceRouter from "./routes/attendance.route";
+import dashboardRouter from "./routes/dashboard.route";
 import { PrismaClient } from "@prisma/client";
 import { startEventLifecycleScheduler } from "./services/event-lifecycle.service";
 
@@ -30,6 +31,7 @@ app.use("/auth", authRouter);
 app.use("/members", memberRouter);
 app.use("/events", eventRouter);
 app.use("/attendance", attendanceRouter);
+app.use("/dashboard", dashboardRouter);
 
 app.get("/", (_req, res) => res.json({ status: "ok" }));
 
