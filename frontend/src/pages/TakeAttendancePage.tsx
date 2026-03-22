@@ -144,16 +144,16 @@ const TakeAttendancePage: React.FC = () => {
         ...ATTENDANCE_MESSAGES.SUCCESS,
       });
     }
-    
+
     // Refresh lists
     try {
-        await Promise.all([
-          refreshPresentMembers(),
-          loadAttendancePage(1, { preferCache: false }),
-          refreshEvent(),
-        ]);
+      await Promise.all([
+        refreshPresentMembers(),
+        loadAttendancePage(1, { preferCache: false }),
+        refreshEvent(),
+      ]);
     } catch (e) {
-        console.error("Background refresh failed", e);
+      console.error("Background refresh failed", e);
     }
   };
 
@@ -610,6 +610,11 @@ const TakeAttendancePage: React.FC = () => {
                     eventId={event.id}
                     onScanSuccess={handleQrSuccess}
                     onApiError={handleQrError}
+                    resolveMemberId={(code) => {
+                      // Attempt to resolve custom uniqueId to UUID so we don't crash Postgres natively.
+                      const match = members.find(m => m.uniqueId === code || m.id === code);
+                      return match ? match.id : code;
+                    }}
                   />
                 </div>
                 <p className="mt-4 text-center text-sm text-slate-500">

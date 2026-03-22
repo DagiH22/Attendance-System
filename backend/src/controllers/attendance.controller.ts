@@ -38,15 +38,22 @@ export const markAttendance = async (req: Request, res: Response) => {
         .json({ error: "markedMethod or method must be 'QR' or 'MANUAL'" });
     }
 
+    // Is the identifier a valid UUID?
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const isUuid = uuidRegex.test(normalizedMemberIdentifier);
+
     // 1. Find member by UUID id or public uniqueId
     const member = await prisma.member.findFirst({
-      where: {
-        OR: [
-          { id: normalizedMemberIdentifier },
-          { uniqueId: normalizedMemberIdentifier },
-        ],
-      },
+      where: isUuid
+        ? {
+            OR: [
+              { id: normalizedMemberIdentifier },
+              { uniqueId: normalizedMemberIdentifier },
+            ],
+          }
+        : { uniqueId: normalizedMemberIdentifier },
     });
+    
     if (!member) {
       return res.status(404).json({ error: "Member not found" });
     }
