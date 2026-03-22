@@ -142,13 +142,15 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
     setScannerState("PROCESSING");
     setLastScannedCode(qrCodeValue);
 
-    // Stop scanning immediately upon detection
+    // Pause scanning instead of stopping it completely
     if (scannerRef.current) {
       try {
-        await scannerRef.current.stop();
-        scannerRef.current.clear();
+        // Try to pause if supported
+        if (typeof (scannerRef.current as any).pause === "function") {
+          (scannerRef.current as any).pause(true);
+        }
       } catch (e) {
-        // Ignore stop errors
+        console.warn("Could not pause scanner", e);
       }
     }
 
@@ -168,6 +170,11 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
         memberId: parentResolvedId,
         memberName: response.data?.member?.name,
       });
+
+      // Auto-resume scanner after brief delay
+      setTimeout(() => {
+        resumeScanner();
+      }, 2000);
     } catch (error: any) {
       setScannerState("ERROR");
       const message =
@@ -176,8 +183,29 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
         "Failed to mark attendance.";
       setApiErrorMsg(message);
       onApiError(error);
-      isProcessingRef.current = false; // Allow retrying if they restart
+
+      // Allow user to see error for a moment, then reset
+      setTimeout(() => {
+        resumeScanner();
+      }, 3000);
     }
+  };
+
+  const resumeScanner = () => {
+    if (scannerRef.current) {
+      try {
+        if (typeof (scannerRef.current as any).resume === "function") {
+          (scannerRef.current as any).resume();
+        }
+      } catch (e) {
+        console.warn("Could not resume scanner", e);
+      }
+    }
+    setScannerState("SCANNING");
+    // Delay setting isProcessingRef to false just slightly to prevent immediate double-read
+    setTimeout(() => {
+      isProcessingRef.current = false;
+    }, 500);
   };
 
   // Helper for TS issue in handleScan above
@@ -205,82 +233,87 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
           </div>
         );
       case "SCANNING":
-        return (
-          <div className="mt-4">
-            <button
-              onClick={handleStop}
-              className="w-full rounded-lg bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-100 border border-red-200"
-            >
-              Stop Scanning
-            </button>
-            <p className="mt-2 text-xs text-center text-slate-400">
-              Scanning... Point camera at a QR code
-            </p>
-          </div>
-        );
       case "PROCESSING":
-        return (
-          <div className="flex flex-col items-center justify-center py-4">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600 mb-2" />
-            <p className="text-sm font-medium text-slate-700">Verifying...</p>
-            <p className="text-xs text-slate-500 font-mono mt-1">
-              {lastScannedCode}
-            </p>
-          </div>
-        );
       case "SUCCESS":
-        return (
-          <div className="text-center py-4">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-green-100 mb-3">
-              <svg
-                className="h-6 w-6 text-green-600"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
-            </div>
-            <p className="text-green-600 font-medium">Scan Successful!</p>
-            <button
-              onClick={handleStart}
-              className="mt-4 text-sm font-semibold text-blue-600 hover:text-blue-700 underline"
-            >
-              Scan Another
-            </button>
-          </div>
-        );
       case "ERROR":
         return (
-          <div className="text-center py-4 rounded-lg bg-red-50 p-4 border border-red-100">
-            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-red-100 mb-2">
-              <svg
-                className="h-5 w-5 text-red-600"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                />
-              </svg>
+          <div className="mt-4 space-y-4">
+            {/* Feedback Content */}
+            <div className="min-h-[80px] flex items-center justify-center transition-all">
+              {scannerState === "SCANNING" && (
+                <div className="text-center">
+                  <p className="text-sm font-medium text-slate-700">
+                    Ready to Scan
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Point camera at a QR code
+                  </p>
+                </div>
+              )}
+              {scannerState === "PROCESSING" && (
+                <div className="flex flex-col items-center">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600 mb-2" />
+                  <p className="text-sm font-medium text-slate-700">
+                    Verifying...
+                  </p>
+                  <p className="text-xs text-slate-500 font-mono mt-1 w-full max-w-[200px] truncate text-center">
+                    {lastScannedCode}
+                  </p>
+                </div>
+              )}
+              {scannerState === "SUCCESS" && (
+                <div className="text-center">
+                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-green-100 mb-2">
+                    <svg
+                      className="h-5 w-5 text-green-600"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                  </div>
+                  <p className="text-sm font-bold text-green-600">
+                    Scan Successful!
+                  </p>
+                </div>
+              )}
+              {scannerState === "ERROR" && (
+                <div className="text-center w-full px-2">
+                  <div className="mx-auto flex h-8 w-8 items-center justify-center rounded-full bg-red-100 mb-2">
+                    <svg
+                      className="h-4 w-4 text-red-600"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M6 18L18 6M6 6l12 12"
+                      />
+                    </svg>
+                  </div>
+                  <p className="text-xs font-semibold text-red-600 mb-1 max-w-[250px] mx-auto line-clamp-2">
+                    {apiErrorMsg ||
+                      permissionError ||
+                      "Invalid or already scanned QR code"}
+                  </p>
+                </div>
+              )}
             </div>
-            <p className="text-sm text-red-800 font-medium mb-3">
-              {permissionError || apiErrorMsg || "Unable to scan"}
-            </p>
+
             <button
-              onClick={handleStart}
-              className="rounded-md bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50 transition-colors"
+              onClick={handleStop}
+              className="w-full rounded-lg bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-100 border border-red-200 transition-colors"
             >
-              Try Again
+              Stop Scanning
             </button>
           </div>
         );
@@ -290,11 +323,15 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
   };
 
   return (
-    <div className="w-full max-w-sm mx-auto overflow-hidden rounded-2xl bg-white">
+    <div className="w-full max-w-sm mx-auto overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-100 p-2">
       {/* Scanner Region */}
       <div
         id="qr-scanner-region"
-        className={`w-full bg-black ${scannerState === "SCANNING" ? "min-h-[250px]" : "h-0"}`}
+        className={`w-full bg-black rounded-xl overflow-hidden transition-all duration-300 ${
+          ["SCANNING", "PROCESSING", "SUCCESS", "ERROR"].includes(scannerState)
+            ? "min-h-[250px]"
+            : "h-0"
+        }`}
       />
 
       {/* Controls & Feedback Area */}

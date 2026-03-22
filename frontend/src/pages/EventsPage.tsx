@@ -5,7 +5,6 @@ import formatDate from "../lib/formatDate";
 import type { DashboardEvent } from "../types/events";
 import { useAuth } from "../contexts/AuthContext";
 import { usePersistentState } from "../hooks/usePersistentState";
-import { useScrollDirection } from "../hooks/useScrollDirection";
 
 type StatusOption = "UPCOMING" | "ACTIVE" | "PAST" | "DEACTIVATED";
 type TypeFilter = "ALL" | "WEEKLY" | "MONTHLY" | "ONE_TIME";
@@ -97,16 +96,30 @@ const EventsPage: React.FC = () => {
 
   // Filters and Sorting State
   // statusFilterSelected: empty array means no filter (ALL)
-  const [statusFilter, setStatusFilter] = usePersistentState<StatusOption[]>("events-status-filter", []);
-  const [typeFilter, setTypeFilter] = usePersistentState<TypeFilter>("events-type-filter", "ALL");
-  const [sortBy, setSortBy] = usePersistentState<SortOption>("events-sort-by", "NEXT_EVENT");
+  const [statusFilter, setStatusFilter] = usePersistentState<StatusOption[]>(
+    "events-status-filter",
+    [],
+  );
+  const [typeFilter, setTypeFilter] = usePersistentState<TypeFilter>(
+    "events-type-filter",
+    "ALL",
+  );
+  const [sortBy, setSortBy] = usePersistentState<SortOption>(
+    "events-sort-by",
+    "NEXT_EVENT",
+  );
   const [isSortModalOpen, setIsSortModalOpen] = useState(false);
-  
-  const scrollDirection = useScrollDirection();
 
   // Search State
-  const [searchQuery, setSearchQuery] = usePersistentState<string>("events-search-query", "");
+  const [searchQuery, setSearchQuery] = usePersistentState<string>(
+    "events-search-query",
+    "",
+  );
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(searchQuery);
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+
+  // ref for controlling focus of header search input when expanded
+  const searchInputRef = React.useRef<HTMLInputElement | null>(null);
 
   // Debounce effect
   useEffect(() => {
@@ -524,27 +537,78 @@ const EventsPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50 pb-24 relative">
       {/* Header */}
-      <header
-        className={`bg-white px-4 pt-6 pb-4 border-b border-gray-200 sticky top-0 z-20 transition-transform duration-300 ${
-          scrollDirection === "down" ? "-translate-y-full" : "translate-y-0"
-        }`}
-      >
-        <div className="flex justify-between items-center mb-4 max-w-4xl mx-auto w-full">
-          <h1 className="text-2xl font-bold text-gray-900">Events</h1>
-          <button
-            onClick={async () => {
-              await logout();
-              navigate("/login", { replace: true });
-            }}
-            className="text-sm font-medium text-red-600 bg-red-50 px-3 py-1.5 rounded-md"
-          >
-            Logout
-          </button>
-        </div>
+      <header className="bg-white border-b border-gray-200 fixed top-0 w-full z-30">
+        <div className="px-4 pt-6 max-w-4xl mx-auto w-full">
+          <div className="flex justify-between items-center mb-4">
+            <h1 className="text-2xl font-bold text-gray-900">Events</h1>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center">
+                <div className="relative flex items-center">
+                  <div
+                    className={`flex items-center transition-all duration-300 ease-in-out overflow-hidden rounded-md ${
+                      isSearchExpanded || searchQuery ? "w-40 sm:w-48" : "w-10"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!isSearchExpanded) {
+                          setIsSearchExpanded(true);
+                          setTimeout(() => searchInputRef.current?.focus(), 80);
+                        } else {
+                          searchInputRef.current?.focus();
+                        }
+                      }}
+                      className="flex-shrink-0 p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md bg-white/0"
+                      aria-label="Open search"
+                    >
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                        ></path>
+                      </svg>
+                    </button>
 
-        {/* Tab Navigation */}
-        <div className="max-w-4xl mx-auto w-full mb-4">
-          <nav className="flex space-x-4 border-b border-gray-200">
+                    <input
+                      ref={searchInputRef}
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onBlur={() => {
+                        if (!searchQuery) setIsSearchExpanded(false);
+                      }}
+                      placeholder="Search..."
+                      className={`ml-2 w-full border border-transparent text-sm bg-transparent focus:outline-none focus:ring-0 transition-opacity duration-200 ${
+                        isSearchExpanded || searchQuery
+                          ? "opacity-100 px-2 py-1.5"
+                          : "opacity-0 pointer-events-none p-0"
+                      }`}
+                    />
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={async () => {
+                  await logout();
+                  navigate("/login", { replace: true });
+                }}
+                className="text-sm font-medium text-red-600 bg-red-50 px-3 py-1.5 rounded-md flex-shrink-0"
+              >
+                Logout
+              </button>
+            </div>
+          </div>
+
+          {/* Tab Navigation */}
+          <nav className="flex space-x-4">
             <button
               onClick={() => navigate("/events")}
               className={`pb-2 px-1 text-sm font-medium border-b-2 transition-colors ${
@@ -573,55 +637,12 @@ const EventsPage: React.FC = () => {
             </button>
           </nav>
         </div>
+      </header>
 
-        <div className="max-w-4xl mx-auto w-full">
-          {/* Search Bar */}
-          <div className="relative mb-4">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <svg
-                className="w-5 h-5 text-gray-400"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                ></path>
-              </svg>
-            </div>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by title, description, or type..."
-              className="w-full pl-10 pr-10 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors placeholder-gray-400 text-gray-900"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
-                aria-label="Clear search"
-              >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M6 18L18 6M6 6l12 12"
-                  ></path>
-                </svg>
-              </button>
-            )}
-          </div>
-
+      {/* Main Content */}
+      <div className="max-w-4xl mx-auto w-full px-4 pt-32 sm:pt-40 pb-6 space-y-4">
+        {/* Filters Wrapper */}
+        <div className="flex flex-col relative w-full mb-4">
           {/* Mobile view filters (visible only on small screens) */}
           <div className="md:hidden">
             <div className="flex overflow-x-auto no-scrollbar gap-2 mb-3 pb-1">
@@ -851,7 +872,6 @@ const EventsPage: React.FC = () => {
                   </div>
                   <ul>
                     {[
-
                       { value: "NEXT_EVENT", label: "Next Event" },
                       { value: "RECENTLY_CREATED", label: "Recently Created" },
                       {
@@ -900,10 +920,8 @@ const EventsPage: React.FC = () => {
             </div>
           </div>
         </div>
-      </header>
 
-      {/* Main Content */}
-      <div className="p-4 space-y-4 max-w-4xl mx-auto">
+        {/* List of Events */}
         {loading ? (
           <div className="flex flex-col items-center py-12">
             <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>

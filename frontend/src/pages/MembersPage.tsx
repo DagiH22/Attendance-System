@@ -4,7 +4,6 @@ import api from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
 import type { Member } from "../types/members";
 import { usePersistentState } from "../hooks/usePersistentState";
-import { useScrollDirection } from "../hooks/useScrollDirection";
 
 type StatusFilter = "ALL" | "ACTIVE" | "INACTIVE";
 type SortOption =
@@ -30,14 +29,26 @@ const MembersPage: React.FC = () => {
 
   // Filters and Sorting State
   // Default to ALL
-  const [statusFilter, setStatusFilter] = usePersistentState<StatusFilter>("members-status-filter", "ALL");
-  const [sortBy, setSortBy] = usePersistentState<SortOption>("members-sort-by", "ALPHA_ASC");
+  const [statusFilter, setStatusFilter] = usePersistentState<StatusFilter>(
+    "members-status-filter",
+    "ALL",
+  );
+  const [sortBy, setSortBy] = usePersistentState<SortOption>(
+    "members-sort-by",
+    "ALPHA_ASC",
+  );
   const [isSortModalOpen, setIsSortModalOpen] = useState(false);
-  const scrollDirection = useScrollDirection();
-  
+
   // Search State
-  const [searchQuery, setSearchQuery] = usePersistentState<string>("members-search-query", "");
+  const [searchQuery, setSearchQuery] = usePersistentState<string>(
+    "members-search-query",
+    "",
+  );
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(searchQuery);
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+
+  // Ref to control focus when search expands
+  const searchInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const sortDropdownRef = React.useRef<HTMLDivElement>(null);
   const filterDropdownRef = React.useRef<HTMLDivElement>(null);
@@ -169,7 +180,10 @@ const MembersPage: React.FC = () => {
         case "LEAST_ATTENDANCE":
           return a.m.attendanceCount - b.m.attendanceCount;
         case "RECENTLY_REGISTERED":
-          return new Date(b.m.createdAt || 0).getTime() - new Date(a.m.createdAt || 0).getTime();
+          return (
+            new Date(b.m.createdAt || 0).getTime() -
+            new Date(a.m.createdAt || 0).getTime()
+          );
         default:
           return 0;
       }
@@ -208,29 +222,81 @@ const MembersPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50 pb-24 relative">
       {/* Header */}
-      <header
-        className={`bg-white px-4 pt-6 pb-4 border-b border-gray-200 sticky top-0 z-20 transition-transform duration-300 ${
-          scrollDirection === "down" ? "-translate-y-full" : "translate-y-0"
-        }`}
-      >
-        <div className="flex justify-between items-center mb-4 max-w-4xl mx-auto w-full">
-          <h1 className="text-2xl font-bold text-gray-900">Members</h1>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={async () => {
-                await logout();
-                navigate("/login", { replace: true });
-              }}
-              className="text-sm font-medium text-red-600 bg-red-50 px-3 py-1.5 rounded-md"
-            >
-              Logout
-            </button>
-          </div>
-        </div>
+      <header className="bg-white border-b border-gray-200 fixed top-0 w-full z-30">
+        <div className="px-4 pt-6 max-w-4xl mx-auto w-full">
+          <div className="flex justify-between items-center mb-4">
+            <h1 className="text-2xl font-bold text-gray-900">Members</h1>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center">
+                <div className="relative flex items-center">
+                  <div
+                    className={`flex items-center transition-all duration-300 ease-in-out overflow-hidden rounded-md ${
+                      isSearchExpanded || searchQuery ? "w-40 sm:w-48" : "w-10"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!isSearchExpanded) {
+                          setIsSearchExpanded(true);
+                          // Wait a tick then focus
+                          setTimeout(() => searchInputRef.current?.focus(), 80);
+                        } else {
+                          // already expanded — focus input
+                          searchInputRef.current?.focus();
+                        }
+                      }}
+                      className="flex-shrink-0 p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md bg-white/0"
+                      aria-label="Open search"
+                    >
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                        ></path>
+                      </svg>
+                    </button>
 
-        {/* Tab Navigation */}
-        <div className="max-w-4xl mx-auto w-full mb-4">
-          <nav className="flex space-x-4 border-b border-gray-200">
+                    <input
+                      ref={searchInputRef}
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onBlur={() => {
+                        // collapse when losing focus and empty
+                        if (!searchQuery) setIsSearchExpanded(false);
+                      }}
+                      placeholder="Search..."
+                      className={`ml-2 w-full border border-transparent text-sm bg-transparent focus:outline-none focus:ring-0 transition-opacity duration-200 ${
+                        isSearchExpanded || searchQuery
+                          ? "opacity-100 px-2 py-1.5"
+                          : "opacity-0 pointer-events-none p-0"
+                      }`}
+                    />
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={async () => {
+                  await logout();
+                  navigate("/login", { replace: true });
+                }}
+                className="text-sm font-medium text-red-600 bg-red-50 px-3 py-1.5 rounded-md flex-shrink-0"
+              >
+                Logout
+              </button>
+            </div>
+          </div>
+
+          {/* Tab Navigation */}
+          <nav className="flex space-x-4">
             <button
               onClick={() => navigate("/events")}
               className={`pb-2 px-1 text-sm font-medium border-b-2 transition-colors ${
@@ -259,45 +325,55 @@ const MembersPage: React.FC = () => {
             </button>
           </nav>
         </div>
+      </header>
 
-        <div className="max-w-4xl mx-auto w-full">
-          {successMessage && (
-            <div className="mb-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
-              {successMessage}
-            </div>
-          )}
+      {/* Main Content */}
+      <div className="max-w-4xl mx-auto w-full px-4 pt-32 pb-6 space-y-4">
+        {successMessage && (
+          <div className="mb-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
+            {successMessage}
+          </div>
+        )}
 
-          {/* Search Bar */}
-          <div className="relative mb-4">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <svg
-                className="w-5 h-5 text-gray-400"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                ></path>
-              </svg>
+        {/* Filters & Sort */}
+        <div className="flex flex-col mb-2 relative">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            {/* Mobile Filter view: horizontally scrolling pills */}
+            <div className="flex overflow-x-auto no-scrollbar gap-2 pb-1 flex-1 sm:hidden">
+              {(["ALL", "ACTIVE", "INACTIVE"] as StatusFilter[]).map(
+                (filter) => (
+                  <button
+                    key={filter}
+                    onClick={() => setStatusFilter(filter)}
+                    className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors border ${
+                      statusFilter === filter
+                        ? filter === "ACTIVE"
+                          ? "bg-green-600 text-white border-green-600"
+                          : filter === "INACTIVE"
+                            ? "bg-red-600 text-white border-red-600"
+                            : "bg-blue-600 text-white border-blue-600"
+                        : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+                    }`}
+                  >
+                    {filter === "ALL"
+                      ? "All"
+                      : filter.charAt(0) + filter.slice(1).toLowerCase()}
+                  </button>
+                ),
+              )}
             </div>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by name, ID, phone, or email..."
-              className="w-full pl-10 pr-10 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors placeholder-gray-400 text-gray-900"
-            />
-            {searchQuery && (
+
+            {/* Desktop Filter View: Dropdown */}
+            <div
+              className="hidden sm:block relative flex-shrink-0"
+              ref={filterDropdownRef}
+            >
               <button
-                onClick={() => setSearchQuery("")}
-                className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                onClick={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
+                className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors mb-1"
               >
                 <svg
-                  className="w-5 h-5"
+                  className="w-4 h-4"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -306,71 +382,25 @@ const MembersPage: React.FC = () => {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth="2"
-                    d="M6 18L18 6M6 6l12 12"
-                  />
+                    d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+                  ></path>
                 </svg>
+                <span>
+                  Filter:{" "}
+                  {statusFilter === "ALL"
+                    ? "All"
+                    : statusFilter.charAt(0) +
+                      statusFilter.slice(1).toLowerCase()}
+                </span>
               </button>
-            )}
-          </div>
 
-          {/* Filters & Sort */}
-          <div className="flex flex-col mb-2 relative">
-            <div className="flex items-center justify-between gap-3 mb-3">
-              {/* Mobile Filter view: horizontally scrolling pills */}
-              <div className="flex overflow-x-auto no-scrollbar gap-2 pb-1 flex-1 sm:hidden">
-                {(["ALL", "ACTIVE", "INACTIVE"] as StatusFilter[]).map(
-                  (filter) => (
-                    <button
-                      key={filter}
-                      onClick={() => setStatusFilter(filter)}
-                      className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors border ${
-                        statusFilter === filter
-                          ? filter === "ACTIVE"
-                            ? "bg-green-600 text-white border-green-600"
-                            : filter === "INACTIVE"
-                              ? "bg-red-600 text-white border-red-600"
-                              : "bg-blue-600 text-white border-blue-600"
-                          : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
-                      }`}
-                    >
-                      {filter === "ALL"
-                        ? "All"
-                        : filter.charAt(0) + filter.slice(1).toLowerCase()}
-                    </button>
-                  ),
-                )}
-              </div>
-
-              {/* Desktop Filter View: Dropdown */}
-              <div className="hidden sm:block relative flex-shrink-0" ref={filterDropdownRef}>
-                <button
-                  onClick={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors mb-1"
-                >
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
-                    ></path>
-                  </svg>
-                  <span>
-                    Filter: {statusFilter === "ALL" ? "All" : statusFilter.charAt(0) + statusFilter.slice(1).toLowerCase()}
-                  </span>
-                </button>
-
-                {isFilterDropdownOpen && (
-                  <div className="absolute left-0 mt-2 w-48 bg-white border border-gray-100 rounded-xl shadow-lg z-50 py-2">
-                    <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                      Status Filter
-                    </div>
-                    {(["ALL", "ACTIVE", "INACTIVE"] as StatusFilter[]).map((filter) => (
+              {isFilterDropdownOpen && (
+                <div className="absolute left-0 mt-2 w-48 bg-white border border-gray-100 rounded-xl shadow-lg z-50 py-2">
+                  <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Status Filter
+                  </div>
+                  {(["ALL", "ACTIVE", "INACTIVE"] as StatusFilter[]).map(
+                    (filter) => (
                       <button
                         key={filter}
                         onClick={() => {
@@ -383,73 +413,10 @@ const MembersPage: React.FC = () => {
                             : "text-gray-700"
                         }`}
                       >
-                        {filter === "ALL" ? "All" : filter.charAt(0) + filter.slice(1).toLowerCase()}
+                        {filter === "ALL"
+                          ? "All"
+                          : filter.charAt(0) + filter.slice(1).toLowerCase()}
                         {statusFilter === filter && (
-                          <svg
-                            className="w-4 h-4"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
-                          </svg>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Sort Button */}
-              <div className="relative flex-shrink-0" ref={sortDropdownRef}>
-                <button
-                  onClick={() => setIsSortModalOpen(!isSortModalOpen)}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors mb-1"
-                >
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"
-                    ></path>
-                  </svg>
-                  <span className="hidden sm:inline">Sort</span>
-                </button>
-
-                {isSortModalOpen && (
-                  <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-100 rounded-xl shadow-lg z-50 py-2">
-                    <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                      Sort By
-                    </div>
-                    {(
-                      [
-                        "ALPHA_ASC",
-                        "ALPHA_DESC",
-                        "MOST_ATTENDANCE",
-                        "LEAST_ATTENDANCE",
-                        "RECENTLY_REGISTERED",
-                      ] as SortOption[]
-                    ).map((option) => (
-                      <button
-                        key={option}
-                        onClick={() => {
-                          setSortBy(option);
-                          setIsSortModalOpen(false);
-                        }}
-                        className={`w-full text-left px-4 py-2 text-sm flex items-center justify-between hover:bg-gray-50 transition-colors ${
-                          sortBy === option
-                            ? "font-semibold text-blue-600"
-                            : "text-gray-700"
-                        }`}
-                      >
-                        {getSortLabel(option)}
-                        {sortBy === option && (
                           <svg
                             className="w-4 h-4"
                             fill="none"
@@ -465,17 +432,84 @@ const MembersPage: React.FC = () => {
                           </svg>
                         )}
                       </button>
-                    ))}
+                    ),
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Sort Button */}
+            <div className="relative flex-shrink-0" ref={sortDropdownRef}>
+              <button
+                onClick={() => setIsSortModalOpen(!isSortModalOpen)}
+                className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors mb-1"
+              >
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"
+                  ></path>
+                </svg>
+                <span className="hidden sm:inline">Sort</span>
+              </button>
+
+              {isSortModalOpen && (
+                <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-100 rounded-xl shadow-lg z-50 py-2">
+                  <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Sort By
                   </div>
-                )}
-              </div>
+                  {(
+                    [
+                      "ALPHA_ASC",
+                      "ALPHA_DESC",
+                      "MOST_ATTENDANCE",
+                      "LEAST_ATTENDANCE",
+                      "RECENTLY_REGISTERED",
+                    ] as SortOption[]
+                  ).map((option) => (
+                    <button
+                      key={option}
+                      onClick={() => {
+                        setSortBy(option);
+                        setIsSortModalOpen(false);
+                      }}
+                      className={`w-full text-left px-4 py-2 text-sm flex items-center justify-between hover:bg-gray-50 transition-colors ${
+                        sortBy === option
+                          ? "font-semibold text-blue-600"
+                          : "text-gray-700"
+                      }`}
+                    >
+                      {getSortLabel(option)}
+                      {sortBy === option && (
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth="2"
+                            d="M5 13l4 4L19 7"
+                          ></path>
+                        </svg>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
-      </header>
 
-      {/* Main Content */}
-      <div className="max-w-4xl mx-auto w-full px-4 py-6 space-y-4">
         {error && (
           <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm border border-red-100">
             {error}
