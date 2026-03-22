@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { isAxiosError } from "axios";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import api from "../lib/api";
+import api, { setSessionExpiredHandler } from "../lib/api";
 import formatDate from "../lib/formatDate";
-import QrScanner from "../components/QrScanner";
+import QrAttendanceScanner from "../components/QrAttendanceScanner";
 import type {
   DashboardEvent,
   EventAttendanceRecord,
@@ -116,16 +116,49 @@ const TakeAttendancePage: React.FC = () => {
   const attendanceDisabled =
     !event?.attendanceOpen || event?.status !== "ACTIVE";
 
-  const handleScanSuccess = (decodedText: string) => {
-    if (isSubmitting) return;
-    void markAttendance(decodedText, "QR");
+  useEffect(() => {
+    setSessionExpiredHandler(() => {
+      navigate("/login", {
+        state: { from: location },
+        replace: true,
+      });
+    });
+
+    return () => {
+      setSessionExpiredHandler(null);
+    };
+  }, [location, navigate]);
+
+  const handleQrSuccess = async (result: {
+    memberId: string;
+    memberName?: string;
+  }) => {
+    // Update local state for immediate feedback
+    if (result.memberName) {
+      setFeedback({
+        ...ATTENDANCE_MESSAGES.SUCCESS,
+        description: `${result.memberName} has been checked in.`,
+      });
+    } else {
+      setFeedback({
+        ...ATTENDANCE_MESSAGES.SUCCESS,
+      });
+    }
+    
+    // Refresh lists
+    try {
+        await Promise.all([
+          refreshPresentMembers(),
+          loadAttendancePage(1, { preferCache: false }),
+          refreshEvent(),
+        ]);
+    } catch (e) {
+        console.error("Background refresh failed", e);
+    }
   };
 
-  const handleScanFailure = (error: string) => {
-    if (error.includes("No QR code found")) {
-      return;
-    }
-    console.warn(`QR scan error: ${error}`);
+  const handleQrError = (error: any) => {
+    setFeedback(getFeedbackFromError(error));
   };
 
   // show date as dd/mm/yyyy (formatDate is imported)
@@ -573,9 +606,10 @@ const TakeAttendancePage: React.FC = () => {
             ) : (
               <>
                 <div className="relative mx-auto max-w-sm">
-                  <QrScanner
-                    onScanSuccess={handleScanSuccess}
-                    onScanFailure={handleScanFailure}
+                  <QrAttendanceScanner
+                    eventId={event.id}
+                    onScanSuccess={handleQrSuccess}
+                    onApiError={handleQrError}
                   />
                 </div>
                 <p className="mt-4 text-center text-sm text-slate-500">
