@@ -3,6 +3,7 @@ import { isAxiosError } from "axios";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import api from "../lib/api";
 import formatDate from "../lib/formatDate";
+import QrScanner from "../components/QrScanner";
 import type {
   DashboardEvent,
   EventAttendanceRecord,
@@ -99,13 +100,10 @@ const TakeAttendancePage: React.FC = () => {
   const [loadingEvent, setLoadingEvent] = useState<boolean>(!state?.event);
   const [loadingMembers, setLoadingMembers] = useState<boolean>(true);
   const [pageError, setPageError] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<PageTab>("MANUAL");
+  const [activeTab, setActiveTab] = useState<PageTab>("QR");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [feedback, setFeedback] = useState<AttendanceFeedback | null>(null);
-  const [lastScannedMember, setLastScannedMember] = useState<Member | null>(
-    null,
-  );
   const [presentMembers, setPresentMembers] = useState<Set<string>>(
     () => new Set(),
   );
@@ -117,6 +115,18 @@ const TakeAttendancePage: React.FC = () => {
 
   const attendanceDisabled =
     !event?.attendanceOpen || event?.status !== "ACTIVE";
+
+  const handleScanSuccess = (decodedText: string) => {
+    if (isSubmitting) return;
+    void markAttendance(decodedText, "QR");
+  };
+
+  const handleScanFailure = (error: string) => {
+    if (error.includes("No QR code found")) {
+      return;
+    }
+    console.warn(`QR scan error: ${error}`);
+  };
 
   // show date as dd/mm/yyyy (formatDate is imported)
 
@@ -238,7 +248,7 @@ const TakeAttendancePage: React.FC = () => {
     };
 
     void load();
-  }, [refreshEvent, refreshMembers, refreshPresentMembers]);
+  }, [refreshEvent, refreshMembers, refreshPresentMembers, loadAttendancePage]);
 
   const markedAtByMemberId = useMemo(() => {
     return attendanceRecords.reduce<Record<string, string>>((acc, record) => {
@@ -393,7 +403,6 @@ const TakeAttendancePage: React.FC = () => {
         null;
 
       if (matchedMember) {
-        setLastScannedMember(matchedMember);
         setPresentMembers((previous) => {
           const updated = new Set(previous);
           updated.add(matchedMember.id);
@@ -517,254 +526,206 @@ const TakeAttendancePage: React.FC = () => {
               <p className="mt-3 text-sm text-blue-50">📍 {event.location}</p>
             )}
           </header>
-        </div>
 
-        {feedback && <FeedbackBanner feedback={feedback} />}
-
-        {lastScannedMember && feedback?.tone === "success" && (
-          <section className="rounded-3xl border border-green-100 bg-white p-4 shadow-sm">
-            <p className="text-xs font-semibold uppercase tracking-wide text-green-600">
-              Last checked in
-            </p>
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <div>
-                <p className="text-base font-semibold text-slate-900">
-                  {lastScannedMember.name}
-                </p>
-                <p className="text-sm text-slate-500">
-                  {lastScannedMember.uniqueId}
-                  {lastScannedMember.phoneNumber
-                    ? ` • ${lastScannedMember.phoneNumber}`
-                    : ""}
-                </p>
-              </div>
-              <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700">
-                Present
-              </span>
-            </div>
-          </section>
-        )}
-
-        {attendanceDisabled && (
-          <section className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 shadow-sm">
-            Attendance is disabled because this event is currently{" "}
-            <strong>{event.status}</strong>. Attendance can only be marked while
-            the event is ACTIVE.
-          </section>
-        )}
-
-        <section className="rounded-3xl border border-slate-100 bg-white p-2 shadow-sm">
-          <div className="grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1">
-            {(["QR", "MANUAL"] as const).map((tab) => {
-              const isDisabled = tab === "QR";
-              return (
+          <div className="mt-4">
+            <div className="flex rounded-full bg-slate-200 p-1">
+              {(["QR", "MANUAL"] as PageTab[]).map((tab) => (
                 <button
                   key={tab}
                   type="button"
-                  onClick={() => !isDisabled && setActiveTab(tab)}
-                  disabled={isDisabled}
-                  className={`rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
+                  onClick={() => setActiveTab(tab)}
+                  className={`w-full rounded-full py-2 text-sm font-semibold transition-colors ${
                     activeTab === tab
-                      ? "bg-white text-blue-700 shadow-sm"
-                      : isDisabled
-                        ? "text-slate-400 opacity-50 cursor-not-allowed"
-                        : "text-slate-500"
+                      ? "bg-white text-slate-900 shadow-sm"
+                      : "bg-transparent text-slate-600 hover:bg-white/50"
                   }`}
                 >
-                  {tab === "QR" ? "QR Scan" : "Manual"}
+                  {tab}
                 </button>
-              );
-            })}
+              ))}
+            </div>
           </div>
-        </section>
 
-        {activeTab === "QR" ? (
-          <section className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm text-center text-slate-500 min-h-[300px] flex items-center justify-center">
-            QR scanning is currently disabled. Please use manual check-in.
-          </section>
-        ) : (
-          <section className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">
-                  Manual check-in
-                </h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  Search members by name, ID, or phone number, then mark them
-                  present.
-                </p>
+          {feedback && (
+            <div
+              className={`mt-4 rounded-xl p-4 text-sm ${
+                feedback.tone === "success"
+                  ? "bg-green-50 text-green-900"
+                  : feedback.tone === "error"
+                    ? "bg-red-50 text-red-900"
+                    : "bg-blue-50 text-blue-900"
+              }`}
+            >
+              <p className="font-semibold">{feedback.title}</p>
+              {feedback.description && (
+                <p className="mt-1">{feedback.description}</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {activeTab === "QR" && (
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            {attendanceDisabled ? (
+              <div className="text-center text-slate-500">
+                <p>QR scanning is not available for this event.</p>
               </div>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-                {filteredMembers.length} members
-              </span>
-            </div>
-
-            <div className="mt-4">
-              <label htmlFor="member-search" className="sr-only">
-                Search members
-              </label>
-              <input
-                id="member-search"
-                type="search"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search by name, ID, or phone number"
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-50"
-              />
-            </div>
-
-            <div className="mt-4 space-y-3">
-              {filteredMembers.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                  No members matched your search.
+            ) : (
+              <>
+                <div className="relative mx-auto max-w-sm">
+                  <QrScanner
+                    onScanSuccess={handleScanSuccess}
+                    onScanFailure={handleScanFailure}
+                  />
                 </div>
-              ) : (
-                paginatedMembers.map((member) => {
+                <p className="mt-4 text-center text-sm text-slate-500">
+                  Point the camera at a member's QR code to mark their
+                  attendance.
+                </p>
+              </>
+            )}
+          </div>
+        )}
+
+        {activeTab === "MANUAL" && (
+          <div className="flex flex-col gap-4">
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    Manual Check-in
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {event.attendanceCount} of {members.length} members present
+                  </p>
+                </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Search members..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full rounded-full border border-slate-200 bg-slate-50 py-2 pl-10 pr-4 text-sm text-slate-800 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  />
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                    <svg
+                      className="h-5 w-5 text-slate-400"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                      />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+
+              {prefetchingPage && (
+                <div className="mt-2 text-center text-xs text-slate-400">
+                  Loading more records...
+                </div>
+              )}
+
+              <ul className="mt-4 divide-y divide-slate-100">
+                {paginatedMembers.map((member) => {
                   const isPresent = presentMembers.has(member.id);
                   const isDeactivated = member.isActive === false;
-                  const markedAt = markedAtByMemberId[member.id];
+                  const canMark = !isDeactivated && !isPresent;
 
                   return (
-                    <div
+                    <li
                       key={member.id}
-                      className={`flex items-center justify-between gap-3 rounded-2xl border p-4 ${
-                        isPresent
-                          ? "border-green-100 bg-green-50/60"
-                          : "border-slate-100"
-                      }`}
+                      className="flex items-center justify-between py-3"
                     >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold text-slate-900">
-                          {member.name}
-                        </p>
-                        <p className="mt-1 truncate text-sm text-slate-500">
-                          {member.uniqueId}
-                          {member.phoneNumber ? ` • ${member.phoneNumber}` : ""}
-                        </p>
-                        {isPresent && markedAt && (
-                          <p className="mt-1 text-xs font-semibold text-green-700">
-                            Marked present at{" "}
-                            {new Date(markedAt).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`h-10 w-10 rounded-full ${
+                            isPresent
+                              ? "bg-green-100 text-green-600"
+                              : isDeactivated
+                                ? "bg-slate-100 text-slate-400"
+                                : "bg-slate-100 text-slate-500"
+                          } flex items-center justify-center text-lg font-semibold`}
+                        >
+                          {member.name.charAt(0)}
+                        </div>
+                        <div>
+                          <p
+                            className={`font-medium ${
+                              isDeactivated
+                                ? "text-slate-400"
+                                : "text-slate-800"
+                            }`}
+                          >
+                            {member.name}
                           </p>
-                        )}
-                        {isDeactivated && (
-                          <p className="mt-1 text-xs font-semibold text-rose-600">
-                            Deactivated
+                          <p
+                            className={`text-sm ${
+                              isDeactivated
+                                ? "text-slate-400"
+                                : "text-slate-500"
+                            }`}
+                          >
+                            {member.uniqueId}
                           </p>
-                        )}
+                        </div>
                       </div>
-
                       <button
                         type="button"
                         onClick={() =>
-                          void markAttendance(member.id, "MANUAL", member)
+                          markAttendance(member.id, "MANUAL", member)
                         }
                         disabled={
-                          attendanceDisabled ||
-                          isSubmitting ||
-                          isPresent ||
-                          isDeactivated
+                          !canMark || isSubmitting || attendanceDisabled
                         }
-                        className={`shrink-0 rounded-2xl px-4 py-2.5 text-sm font-semibold transition ${
+                        className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
                           isPresent
                             ? "bg-green-100 text-green-700"
                             : isDeactivated
-                              ? "bg-slate-200 text-slate-500 cursor-not-allowed"
-                              : "bg-slate-900 text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+                              ? "cursor-not-allowed bg-slate-100 text-slate-400"
+                              : "bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                         }`}
                       >
-                        {isPresent
-                          ? "Present ✓"
-                          : isDeactivated
-                            ? "Deactivated"
-                            : "Mark Present"}
+                        {isPresent ? "Present" : "Mark"}
                       </button>
-                    </div>
+                    </li>
                   );
-                })
-              )}
-            </div>
+                })}
+              </ul>
 
-            {filteredMembers.length > 0 && (
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm text-slate-500">
-                  Page {manualPage} of {totalManualPages}
-                </p>
-                <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center">
+              {totalManualPages > 1 && (
+                <div className="mt-4 flex items-center justify-between">
                   <button
-                    type="button"
-                    onClick={() =>
-                      setManualPage((prev) => Math.max(1, prev - 1))
-                    }
-                    disabled={manualPage <= 1}
-                    className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => setManualPage((p) => Math.max(1, p - 1))}
+                    disabled={manualPage === 1}
+                    className="rounded-md bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Previous
                   </button>
+                  <span className="text-sm text-slate-600">
+                    Page {manualPage} of {totalManualPages}
+                  </span>
                   <button
-                    type="button"
                     onClick={() =>
-                      setManualPage((prev) =>
-                        Math.min(totalManualPages, prev + 1),
-                      )
+                      setManualPage((p) => Math.min(totalManualPages, p + 1))
                     }
-                    disabled={manualPage >= totalManualPages}
-                    className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    disabled={manualPage === totalManualPages}
+                    className="rounded-md bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Next
                   </button>
                 </div>
-              </div>
-            )}
-
-            {prefetchingPage !== null && (
-              <p className="mt-3 text-xs text-slate-400">
-                Prefetching attendance updates for smoother paging…
-              </p>
-            )}
-          </section>
-        )}
-
-        <section className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-slate-900">
-                Attendance count
-              </p>
-            </div>
-            <div className="rounded-2xl bg-blue-50 px-4 py-2 text-right text-blue-700">
-              <p className="text-xs font-semibold uppercase tracking-wide">
-                Present
-              </p>
-              <p className="text-xl font-bold">{event.attendanceCount}</p>
+              )}
             </div>
           </div>
-        </section>
+        )}
       </div>
     </div>
-  );
-};
-
-const FeedbackBanner: React.FC<{ feedback: AttendanceFeedback }> = ({
-  feedback,
-}) => {
-  const theme =
-    feedback.tone === "success"
-      ? "border-green-100 bg-green-50 text-green-800"
-      : feedback.tone === "info"
-        ? "border-blue-100 bg-blue-50 text-blue-800"
-        : "border-red-100 bg-red-50 text-red-800";
-
-  return (
-    <section className={`rounded-3xl border p-4 shadow-sm ${theme}`}>
-      <p className="text-sm font-semibold">{feedback.title}</p>
-      {feedback.description && (
-        <p className="mt-1 text-sm opacity-90">{feedback.description}</p>
-      )}
-    </section>
   );
 };
 
