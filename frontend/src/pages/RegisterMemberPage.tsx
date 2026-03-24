@@ -11,6 +11,7 @@ const initialFormState: MemberFormValues = {
   department: "",
   batch: "",
   campus: "",
+  gender: "",
   isActive: true,
 };
 
@@ -24,14 +25,17 @@ const RegisterMemberPage: React.FC = () => {
     setSubmitError("");
 
     try {
-      await api.post("/members", {
+      const payload: Record<string, unknown> = {
         name: normalizedForm.name,
         email: normalizedForm.email,
         phoneNumber: normalizedForm.phoneNumber,
         department: normalizedForm.department,
         batch: normalizedForm.batch,
         campus: normalizedForm.campus,
-      });
+        gender: normalizedForm.gender,
+      };
+
+      await api.post("/members", payload);
 
       navigate("/members", {
         replace: true,

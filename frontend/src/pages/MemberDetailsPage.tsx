@@ -191,6 +191,7 @@ const MemberDetailsPage: React.FC = () => {
   const departmentDisplay = formatEnumLabel(member.department);
   const batchDisplay = formatEnumLabel(member.batch);
   const campusDisplay = formatEnumLabel(member.campus);
+  const genderDisplay = formatEnumLabel(member.gender);
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
@@ -256,6 +257,10 @@ const MemberDetailsPage: React.FC = () => {
                 ) : (
                   <p className="font-medium text-gray-900">{emailDisplay}</p>
                 )}
+              </div>
+              <div>
+                <p className="text-sm text-gray-500 mb-1">Gender</p>
+                <p className="font-medium text-gray-900">{genderDisplay}</p>
               </div>
               <div>
                 <p className="text-sm text-gray-500 mb-1">Department</p>

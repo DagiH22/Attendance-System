@@ -6,6 +6,7 @@ import type { Member } from "../types/members";
 import { usePersistentState } from "../hooks/usePersistentState";
 
 type StatusFilter = "ALL" | "ACTIVE" | "INACTIVE";
+type GenderFilter = "ALL" | "MALE" | "FEMALE" | "UNSPECIFIED";
 type SortOption =
   | "ALPHA_ASC"
   | "ALPHA_DESC"
@@ -31,6 +32,10 @@ const MembersPage: React.FC = () => {
   // Default to ALL
   const [statusFilter, setStatusFilter] = usePersistentState<StatusFilter>(
     "members-status-filter",
+    "ALL",
+  );
+  const [genderFilter, setGenderFilter] = usePersistentState<GenderFilter>(
+    "members-gender-filter",
     "ALL",
   );
   const [sortBy, setSortBy] = usePersistentState<SortOption>(
@@ -109,7 +114,7 @@ const MembersPage: React.FC = () => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearchQuery, statusFilter, sortBy]);
+  }, [debouncedSearchQuery, statusFilter, genderFilter, sortBy]);
 
   const fetchMembers = async () => {
     setLoading(true);
@@ -137,6 +142,11 @@ const MembersPage: React.FC = () => {
       (statusFilter === "ACTIVE" && m.isActive) ||
       (statusFilter === "INACTIVE" && !m.isActive);
 
+    const matchGender =
+      genderFilter === "ALL" ||
+      (genderFilter === "UNSPECIFIED" && !m.gender) ||
+      (genderFilter !== "UNSPECIFIED" && m.gender === genderFilter);
+
     const q = debouncedSearchQuery.toLowerCase().trim();
     const matchSearch =
       q === "" ||
@@ -145,7 +155,7 @@ const MembersPage: React.FC = () => {
       (m.phoneNumber && m.phoneNumber.toLowerCase().includes(q)) ||
       (m.email && m.email.toLowerCase().includes(q));
 
-    return matchStatus && matchSearch;
+    return matchStatus && matchGender && matchSearch;
   });
 
   // When searching, prioritize name matches first, then email, then ID, then phone.
@@ -217,6 +227,12 @@ const MembersPage: React.FC = () => {
       default:
         return "";
     }
+  };
+
+  const getGenderLabel = (value: GenderFilter) => {
+    if (value === "ALL") return "All";
+    if (value === "UNSPECIFIED") return "Not specified";
+    return value.charAt(0) + value.slice(1).toLowerCase();
   };
 
   return (
@@ -367,6 +383,24 @@ const MembersPage: React.FC = () => {
               )}
             </div>
 
+            <div className="flex overflow-x-auto no-scrollbar gap-2 pb-1 flex-1 sm:hidden">
+              {(["ALL", "MALE", "FEMALE", "UNSPECIFIED"] as GenderFilter[]).map(
+                (filter) => (
+                  <button
+                    key={filter}
+                    onClick={() => setGenderFilter(filter)}
+                    className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors border ${
+                      genderFilter === filter
+                        ? "bg-indigo-600 text-white border-indigo-600"
+                        : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+                    }`}
+                  >
+                    {getGenderLabel(filter)}
+                  </button>
+                ),
+              )}
+            </div>
+
             {/* Desktop Filter View: Dropdown */}
             <div
               className="hidden sm:block relative flex-shrink-0"
@@ -395,6 +429,8 @@ const MembersPage: React.FC = () => {
                     ? "All"
                     : statusFilter.charAt(0) +
                       statusFilter.slice(1).toLowerCase()}
+                  {genderFilter !== "ALL" &&
+                    ` • ${getGenderLabel(genderFilter)}`}
                 </span>
               </button>
 
@@ -438,6 +474,42 @@ const MembersPage: React.FC = () => {
                       </button>
                     ),
                   )}
+                  <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Gender Filter
+                  </div>
+                  {(
+                    ["ALL", "MALE", "FEMALE", "UNSPECIFIED"] as GenderFilter[]
+                  ).map((filter) => (
+                    <button
+                      key={filter}
+                      onClick={() => {
+                        setGenderFilter(filter);
+                        setIsFilterDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-4 py-2 text-sm flex items-center justify-between hover:bg-gray-50 transition-colors ${
+                        genderFilter === filter
+                          ? "font-semibold text-blue-600"
+                          : "text-gray-700"
+                      }`}
+                    >
+                      {getGenderLabel(filter)}
+                      {genderFilter === filter && (
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth="2"
+                            d="M5 13l4 4L19 7"
+                          ></path>
+                        </svg>
+                      )}
+                    </button>
+                  ))}
                 </div>
               )}
             </div>

@@ -1,4 +1,3 @@
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -43,7 +42,10 @@ enum Campus {
   ART
 }
 
-
+enum Gender {
+  MALE
+  FEMALE
+}
 
 // MODELS
 
@@ -56,6 +58,7 @@ model Member {
   department   String
   batch        Batch
   campus       Campus
+  gender       Gender
   isActive     Boolean      @default(true)
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt

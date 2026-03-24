@@ -7,6 +7,7 @@ export interface Member {
   department?: string | null;
   batch?: string | null;
   campus?: string | null;
+  gender: "MALE" | "FEMALE";
   isActive: boolean;
   createdAt?: string;
   updatedAt?: string;

@@ -16,6 +16,7 @@ const validateMemberPayload = (payload: {
   department?: unknown;
   batch?: unknown;
   campus?: unknown;
+  gender?: unknown;
 }) => {
   const name = String(payload.name ?? "").trim();
   const email = String(payload.email ?? "").trim();
@@ -23,6 +24,7 @@ const validateMemberPayload = (payload: {
   const department = String(payload.department ?? "").trim();
   const batch = String(payload.batch ?? "").trim();
   const campus = String(payload.campus ?? "").trim();
+  const gender = String(payload.gender ?? "").trim();
 
   if (!name) {
     return { error: "Name must not be empty." };
@@ -66,6 +68,14 @@ const validateMemberPayload = (payload: {
     };
   }
 
+  if (!gender) {
+    return { error: "Gender is required." };
+  }
+
+  if (gender !== "MALE" && gender !== "FEMALE") {
+    return { error: "Gender must be either MALE or FEMALE." };
+  }
+
   return {
     value: {
       name,
@@ -74,14 +84,23 @@ const validateMemberPayload = (payload: {
       department,
       batch,
       campus,
+      gender: gender as "MALE" | "FEMALE",
     },
   };
 };
 
 export const createMember = async (req: Request, res: Response) => {
   try {
-    const { name, email, phoneNumber, department, batch, campus, isActive } =
-      req.body ?? {};
+    const {
+      name,
+      email,
+      phoneNumber,
+      department,
+      batch,
+      campus,
+      isActive,
+      gender,
+    } = req.body ?? {};
 
     const validation = validateMemberPayload({
       name,
@@ -90,6 +109,7 @@ export const createMember = async (req: Request, res: Response) => {
       department,
       batch,
       campus,
+      gender,
     });
 
     if (validation.error) {
@@ -124,6 +144,7 @@ export const createMember = async (req: Request, res: Response) => {
         department: validated.department as any,
         batch: validated.batch as any,
         campus: validated.campus as any,
+        gender: validated.gender as any,
         isActive: typeof isActive === "boolean" ? isActive : true,
       },
     });
@@ -250,8 +271,16 @@ export const updateMember = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Member id is required" });
     }
 
-    const { name, email, phoneNumber, department, batch, campus, isActive } =
-      req.body ?? {};
+    const {
+      name,
+      email,
+      phoneNumber,
+      department,
+      batch,
+      campus,
+      isActive,
+      gender,
+    } = req.body ?? {};
 
     const validation = validateMemberPayload({
       name,
@@ -260,6 +289,7 @@ export const updateMember = async (req: Request, res: Response) => {
       department,
       batch,
       campus,
+      gender,
     });
 
     if (validation.error) {
@@ -298,6 +328,7 @@ export const updateMember = async (req: Request, res: Response) => {
         department: validated.department as any,
         batch: validated.batch as any,
         campus: validated.campus as any,
+        gender: validated.gender as any,
         isActive:
           typeof isActive === "boolean" ? isActive : existingMember.isActive,
       },

@@ -11,6 +11,7 @@ const emptyValues: MemberFormValues = {
   department: "",
   batch: "",
   campus: "",
+  gender: "",
   isActive: true,
 };
 
@@ -42,6 +43,7 @@ const EditMemberPage: React.FC = () => {
           department: member.department ?? "",
           batch: member.batch ?? "",
           campus: member.campus ?? "",
+          gender: member.gender ?? "",
           isActive:
             typeof member.isActive === "boolean" ? member.isActive : true,
         });
@@ -77,7 +79,7 @@ const EditMemberPage: React.FC = () => {
     setSubmitError("");
 
     try {
-      await api.put(`/members/${memberId}`, {
+      const payload: Record<string, unknown> = {
         name: values.name,
         email: values.email,
         phoneNumber: values.phoneNumber,
@@ -85,7 +87,10 @@ const EditMemberPage: React.FC = () => {
         batch: values.batch,
         campus: values.campus,
         isActive: values.isActive,
-      });
+        gender: values.gender,
+      };
+
+      await api.put(`/members/${memberId}`, payload);
 
       navigate(`/members/${memberId}`, {
         replace: true,

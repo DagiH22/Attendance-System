@@ -105,7 +105,7 @@ export const sendMemberEmail = async (
       <p>Dear <strong>${memberData.name}</strong>,</p>
       <p>Thank you for registering! Here are your membership details:</p>
       <ul style="list-style: none; padding: 0;">
-        <li><strong>Unique ID:</strong> ${memberData.uniqueId}</li>
+        <li><strong>ID:</strong> ${memberData.uniqueId}</li>
         <li><strong>Phone:</strong> ${memberData.phoneNumber || "N/A"}</li>
       </ul>
       <div style="text-align: center; margin: 20px 0;">

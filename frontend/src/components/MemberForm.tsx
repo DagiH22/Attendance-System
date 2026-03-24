@@ -11,6 +11,7 @@ export type BatchOption =
   | "POST_GRADUATE";
 
 export type CampusOption = "" | "FOUR_KILO" | "FIVE_KILO" | "SIX_KILO" | "ART";
+export type GenderOption = "" | "MALE" | "FEMALE";
 
 export type MemberFormValues = {
   name: string;
@@ -19,6 +20,7 @@ export type MemberFormValues = {
   department: string;
   batch: BatchOption;
   campus: CampusOption;
+  gender: GenderOption;
   isActive: boolean;
 };
 
@@ -51,6 +53,8 @@ const campusOptions: Exclude<CampusOption, "">[] = [
   "SIX_KILO",
   "ART",
 ];
+
+const genderOptions: Exclude<GenderOption, "">[] = ["MALE", "FEMALE"];
 
 const campusLabels: Record<Exclude<CampusOption, "">, string> = {
   FOUR_KILO: "4 Kilo",
@@ -125,6 +129,10 @@ export const validateMemberForm = (
 
   if (!values.batch) {
     nextErrors.batch = "Batch must be selected";
+  }
+
+  if (!values.gender) {
+    nextErrors.gender = "Gender is required";
   }
 
   return nextErrors;
@@ -213,7 +221,10 @@ const MemberForm: React.FC<MemberFormProps> = ({
     setErrors((prev) => ({ ...prev, [name]: undefined, form: undefined }));
   };
 
-  const handleSelectChange = (field: "batch" | "campus", value: string) => {
+  const handleSelectChange = (
+    field: "batch" | "campus" | "gender",
+    value: string,
+  ) => {
     setForm((prev) => {
       if (field === "campus") {
         return {
@@ -269,6 +280,10 @@ const MemberForm: React.FC<MemberFormProps> = ({
     })),
     campus: campusOptions.map((option) => ({
       label: campusLabels[option],
+      value: option,
+    })),
+    gender: genderOptions.map((option) => ({
+      label: formatEnumLabel(option),
       value: option,
     })),
   };
@@ -347,6 +362,19 @@ const MemberForm: React.FC<MemberFormProps> = ({
             {errors.phoneNumber && (
               <p className="mt-1 text-sm text-red-600">{errors.phoneNumber}</p>
             )}
+          </div>
+
+          <div>
+            <Dropdown
+              id="gender"
+              label="Gender"
+              required
+              placeholder="Select gender"
+              value={form.gender}
+              options={dropdownOptions.gender}
+              onChange={(value) => handleSelectChange("gender", value)}
+              error={errors.gender}
+            />
           </div>
 
           <div>
