@@ -7,8 +7,117 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Member {
+  id          String       @id @default(uuid()) @db.Uuid
+  uniqueId    String       @unique
+  name        String
+  email       String       @unique
+  phoneNumber String       @map("phone")
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  batch       Batch
+  campus      Campus
+  department  String
+  gender      Gender
+  attendances Attendance[]
+  resendLogs  ResendLog[]
 
-// ENUMS
+  @@index([uniqueId])
+  @@index([email])
+  @@map("members")
+}
+
+model Admin {
+  id                String           @id @default(uuid()) @db.Uuid
+  name              String
+  email             String           @unique
+  password          String
+  role              AdminRole        @default(ADMIN)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  attendancesMarked Attendance[]     @relation("AdminToAttendances")
+  eventsCreated     Event[]          @relation("AdminToEvents")
+  refreshSessions   RefreshSession[]
+
+  @@index([email])
+  @@map("admins")
+}
+
+model RefreshSession {
+  id        String    @id @default(uuid()) @db.Uuid
+  adminId   String    @db.Uuid
+  tokenHash String
+  userAgent String?
+  ipAddress String?
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+  revokedAt DateTime?
+  admin     Admin     @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([expiresAt])
+  @@index([revokedAt])
+  @@map("refresh_sessions")
+}
+
+model Event {
+  id                    String       @id @default(uuid()) @db.Uuid
+  title                 String
+  description           String
+  eventDate             DateTime     @db.Date
+  startTime             DateTime
+  endTime               DateTime
+  type                  EventType    @default(ONE_TIME)
+  isActive              Boolean      @default(true)
+  endedAt               DateTime?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  createdById           String       @db.Uuid
+  manuallyClosedAt      DateTime?
+  location              String
+  parentEventId         String?      @db.Uuid
+  recurrenceIndex       Int?
+  recurrenceLengthWeeks Int?
+  attendances           Attendance[]
+  createdBy             Admin        @relation("AdminToEvents", fields: [createdById], references: [id])
+  parentEvent           Event?       @relation("RecurringEvents", fields: [parentEventId], references: [id])
+  childrenEvents        Event[]      @relation("RecurringEvents")
+
+  @@index([parentEventId])
+  @@index([eventDate])
+  @@index([createdById])
+  @@map("events")
+}
+
+model Attendance {
+  id           String     @id @default(uuid()) @db.Uuid
+  memberId     String     @db.Uuid
+  eventId      String     @db.Uuid
+  markedById   String     @db.Uuid
+  markedMethod MarkMethod
+  markedAt     DateTime   @default(now())
+  event        Event      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  markedBy     Admin      @relation("AdminToAttendances", fields: [markedById], references: [id])
+  member       Member     @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, eventId], name: "memberId_eventId_unique")
+  @@index([eventId])
+  @@index([memberId])
+  @@map("attendances")
+}
+
+model ResendLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  memberId  String   @db.Uuid
+  type      String
+  createdAt DateTime @default(now())
+  member    Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+  @@index([createdAt])
+  @@map("resend_logs")
+}
 
 enum AdminRole {
   ADMIN
@@ -45,137 +154,4 @@ enum Campus {
 enum Gender {
   MALE
   FEMALE
-}
-
-// MODELS
-
-model Member {
-  id           String       @id @default(uuid()) @db.Uuid
-  uniqueId     String       @unique // Unique string used for QR code generation
-  name         String
-  email        String       @unique
-  phoneNumber  String       @map("phone")
-  department   String
-  batch        Batch
-  campus       Campus
-  gender       Gender
-  isActive     Boolean      @default(true)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-
-  // Relations
-  attendances  Attendance[]
-  resendLogs   ResendLog[]
-
-  @@index([uniqueId])
-  @@index([email])
-  @@map("members")
-}
-
-model Admin {
-  id                String       @id @default(uuid()) @db.Uuid
-  name              String
-  email             String       @unique
-  password          String       // Hashed string
-  role              AdminRole    @default(ADMIN)
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
-
-  // Relations
-  eventsCreated     Event[]      @relation("AdminToEvents")
-  attendancesMarked Attendance[] @relation("AdminToAttendances")
-  refreshSessions   RefreshSession[]
-
-  @@index([email])
-  @@map("admins")
-}
-
-model RefreshSession {
-  id         String   @id @default(uuid()) @db.Uuid
-  adminId    String   @db.Uuid
-  tokenHash  String
-  userAgent  String?
-  ipAddress  String?
-  createdAt  DateTime @default(now())
-  expiresAt  DateTime
-  revokedAt  DateTime?
-
-  admin      Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
-
-  @@index([adminId])
-  @@index([expiresAt])
-  @@index([revokedAt])
-  @@map("refresh_sessions")
-}
-
-model Event {
-  id          String       @id @default(uuid()) @db.Uuid
-  title       String
-  description String
-  eventDate   DateTime     @db.Date
-  startTime   DateTime
-  endTime     DateTime
-  // Recurrence support (nullable for one-time events)
-  parentEventId String?     @db.Uuid
-  recurrenceIndex Int?
-  recurrenceLengthWeeks Int?
-  type        EventType    @default(ONE_TIME)
-  isActive    Boolean      @default(true)
-  manuallyClosedAt DateTime?
-  location    String
-  endedAt     DateTime?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-
-  // Foreign Keys
-  createdById String       @db.Uuid
-
-  // Relations
-  createdBy   Admin        @relation("AdminToEvents", fields: [createdById], references: [id])
-  // Parent/children relation for recurring events
-  parentEvent Event?       @relation("RecurringEvents", fields: [parentEventId], references: [id])
-  childrenEvents Event[]   @relation("RecurringEvents")
-  attendances Attendance[]
-
-  @@index([parentEventId])
-  @@index([eventDate])
-  @@index([createdById])
-  @@map("events")
-}
-
-model Attendance {
-  id           String     @id @default(uuid()) @db.Uuid
-  
-  // Foreign Keys
-  memberId     String     @db.Uuid
-  eventId      String     @db.Uuid
-  markedById   String     @db.Uuid
-
-  markedMethod MarkMethod // QR or MANUAL
-  markedAt     DateTime   @default(now())
-
-  // Relations
-  member       Member     @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  event        Event      @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  markedBy     Admin      @relation("AdminToAttendances", fields: [markedById], references: [id])
-
-  // Constraints
-  @@unique([memberId, eventId], name: "memberId_eventId_unique")
-  @@index([eventId])
-  @@index([memberId])
-  @@map("attendances")
-}
-
-// Logs for tracking resend attempts (email/qr/etc.) so we can enforce rate limits
-model ResendLog {
-  id        String   @id @default(uuid()) @db.Uuid
-  memberId  String   @db.Uuid
-  type      String
-  createdAt DateTime @default(now())
-
-  member    Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
-
-  @@index([memberId])
-  @@index([createdAt])
-  @@map("resend_logs")
 }

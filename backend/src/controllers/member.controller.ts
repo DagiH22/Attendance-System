@@ -159,6 +159,11 @@ export const createMember = async (req: Request, res: Response) => {
             name: created.name,
             uniqueId: created.uniqueId,
             phoneNumber: created.phoneNumber,
+            email: created.email,
+            gender: created.gender,
+            department: created.department,
+            batch: created.batch,
+            campus: created.campus,
           },
           qrCode,
         );
@@ -438,6 +443,11 @@ export const resendMemberQr = async (req: Request, res: Response) => {
           name: member.name,
           uniqueId: member.uniqueId,
           phoneNumber: member.phoneNumber,
+          email: member.email,
+          gender: member.gender,
+          department: member.department,
+          batch: member.batch,
+          campus: member.campus,
         },
         qrBase64,
       );

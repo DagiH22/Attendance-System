@@ -16,6 +16,96 @@ type InlineAttachment = {
   name: string;
 };
 
+type InlineImage = InlineAttachment & { contentId?: string };
+
+// --- Formatting helpers for display only in emails ---
+const capitalize = (s: string) =>
+  s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+
+const formatEnum = (value: string): string => {
+  // Normalizes values like "COMPUTER SCIENCE" or "COMPUTER_SCIENCE" -> "Computer Science"
+  if (!value) return "";
+  return value
+    .toLowerCase()
+    .split(/[_\s]+/)
+    .map((w) => capitalize(w))
+    .join(" ");
+};
+
+const formatBatch = (value: string): string => {
+  if (!value) return "";
+  switch (value) {
+    case "FRESHMAN":
+      return "Freshman";
+    case "POST_GRADUATE":
+      return "Post Graduate";
+    default:
+      // YEAR_2 -> Year 2
+      if (value.startsWith("YEAR_")) {
+        const num = value.split("_")[1];
+        return `Year ${num}`;
+      }
+      return formatEnum(value);
+  }
+};
+
+const formatCampus = (value: string): string => {
+  if (!value) return "";
+  switch (value) {
+    case "FOUR_KILO":
+      return "4 Kilo";
+    case "FIVE_KILO":
+      return "5 Kilo";
+    case "SIX_KILO":
+      return "6 Kilo";
+    case "ART":
+      return "Art";
+    default:
+      return formatEnum(value);
+  }
+};
+
+const formatGender = (value: string): string => {
+  if (!value) return "";
+  switch (value) {
+    case "MALE":
+      return "Male";
+    case "FEMALE":
+      return "Female";
+    default:
+      return capitalize(value);
+  }
+};
+
+const formatDepartment = (value: string): string => {
+  if (!value) return "";
+  const v = value.trim().toUpperCase();
+  switch (v) {
+    case "BIO":
+    case "BIOLOGY":
+      return "Biology";
+    case "CHEM":
+    case "CHEMISTRY":
+      return "Chemistry";
+    case "CS":
+      return "Computer Science";
+    case "IS":
+      return "Information Systems";
+    case "GEO":
+      return "Geology";
+    case "STAT":
+      return "Statistics";
+    case "MATH":
+      return "Mathematics";
+    case "PHY":
+      return "Physics";
+    case "FRESHMAN":
+      return "Freshman";
+    default:
+      return formatEnum(value);
+  }
+};
+
 /**
  * Core function to send emails via Brevo REST API using axios.
  *
@@ -28,6 +118,7 @@ async function sendBrevoEmail(
   subject: string,
   htmlContent: string,
   attachment?: InlineAttachment,
+  inlineImage?: InlineImage,
 ) {
   const apiKey = process.env.BREVO_API_KEY;
   if (!apiKey) {
@@ -59,6 +150,17 @@ async function sendBrevoEmail(
       {
         content: attachment.content,
         name: attachment.name,
+      },
+    ];
+  }
+
+  if (inlineImage) {
+    // Brevo expects inlineImage array with content, name and contentId
+    payload.inlineImage = [
+      {
+        content: inlineImage.content,
+        name: inlineImage.name,
+        contentId: inlineImage.contentId ?? "qr_code",
       },
     ];
   }
@@ -109,11 +211,19 @@ export const sendMemberEmail = async (
 
   const emailValue = memberData.email || memberEmail || "-";
   const nameValue = memberData.name || "-";
-  const genderValue = memberData.gender || "-";
+  const genderValue = memberData.gender
+    ? formatGender(String(memberData.gender))
+    : "-";
   const phoneValue = memberData.phoneNumber || "-";
-  const departmentValue = memberData.department || "-";
-  const batchValue = memberData.batch || "-";
-  const campusValue = memberData.campus || "-";
+  const departmentValue = memberData.department
+    ? formatDepartment(String(memberData.department))
+    : "-";
+  const batchValue = memberData.batch
+    ? formatBatch(String(memberData.batch))
+    : "-";
+  const campusValue = memberData.campus
+    ? formatCampus(String(memberData.campus))
+    : "-";
   const uniqueIdValue = memberData.uniqueId || "-";
 
   const htmlContent = `
@@ -127,7 +237,6 @@ export const sendMemberEmail = async (
 
         <p style="margin: 0 0 14px 0; font-size: 15px; line-height: 1.9; color: #333333;">
           እንኳን ወደ መዝሙር ክፍል በደህና መጡ!<br />
-          በዚህ ክፍል መካከል ከእኛ ጋር በመሆን እግዚአብሔርን በመዝሙር ማገልገል እንደምትችሉ ተስፋ እናደርጋለን 🙏
         </p>
 
         <div style="background: #f9f9f2; border: 1px solid #cdcc80; border-radius: 10px; padding: 14px 16px; margin: 16px 0;">
@@ -145,7 +254,7 @@ export const sendMemberEmail = async (
 
         <div style="text-align: center; margin: 20px 0 10px 0; padding: 16px; border: 1px solid #939139; border-radius: 12px; background: #ffffff;">
           <p style="margin: 0 0 10px 0; font-size: 15px; color: #03291f;"><strong>🆔 የእርስዎ መለያ (QR Code ID): ${uniqueIdValue}</strong></p>
-          <img src="data:image/png;base64,${qrBase64Content}" alt="QR Code" width="220" height="220" style="display: block; margin: 0 auto; max-width: 220px; width: 100%; height: auto; border: 6px solid #cdcc80; border-radius: 10px; background: #ffffff; padding: 10px;" />
+          <img src="cid:qr_code" alt="QR Code" width="220" height="220" style="display: block; margin: 0 auto; max-width: 220px; width: 100%; height: auto; border: 6px solid #cdcc80; border-radius: 10px; background: #ffffff; padding: 10px;" />
         </div>
 
         <p style="margin: 12px 0 0 0; font-size: 12px; line-height: 1.7; text-align: center; color: #333333;">
@@ -164,9 +273,24 @@ export const sendMemberEmail = async (
     </div>
   `;
 
-  // Call the core Brevo REST function
-  await sendBrevoEmail(memberEmail, subject, htmlContent, {
+  // Call the core Brevo REST function with both inline image (CID) and attachment
+  const attachment = {
     content: qrBase64Content,
     name: `${uniqueIdValue}-qr.png`,
-  });
+  };
+  const inlineImage = {
+    content: qrBase64Content,
+    name: `${uniqueIdValue}-qr.png`,
+    contentId: "qr_code",
+  };
+
+  // Call Brevo with attachment and inlineImage so clients like Gmail can display the image inline via CID,
+  // and other clients can download the attached file.
+  await sendBrevoEmail(
+    memberEmail,
+    subject,
+    htmlContent,
+    attachment,
+    inlineImage,
+  );
 };
