@@ -32,15 +32,33 @@ export const createWeeklyEvents = async (
     startDate: Date; // date-only for first occurrence
     startTime: Date; // time (hours/minutes) will be applied to each occurrence
     endTime: Date;
+    endDate?: Date; // optional endDate (date-only) to generate occurrences through
     recurrenceLengthWeeks?: number;
     location: string;
   },
 ) => {
-  const length =
+  const startDateOnly = normalizeToDateOnly(input.startDate);
+
+  const endDateOnly = input.endDate
+    ? normalizeToDateOnly(input.endDate)
+    : undefined;
+
+  const fallbackLength =
     input.recurrenceLengthWeeks && input.recurrenceLengthWeeks >= 1
       ? Math.floor(input.recurrenceLengthWeeks)
       : 4;
-  const startDateOnly = normalizeToDateOnly(input.startDate);
+
+  const length = (() => {
+    if (!endDateOnly) return fallbackLength;
+    if (endDateOnly.getTime() < startDateOnly.getTime()) {
+      throw new Error("endDate cannot be before startDate");
+    }
+    const diffDays = Math.floor(
+      (endDateOnly.getTime() - startDateOnly.getTime()) / (1000 * 60 * 60 * 24),
+    );
+    // inclusive weeks count: start date is week 1
+    return Math.floor(diffDays / 7) + 1;
+  })();
 
   // create parent recurring event
   const parent = await prisma.event.create({

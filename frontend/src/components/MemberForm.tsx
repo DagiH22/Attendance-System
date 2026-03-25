@@ -8,7 +8,7 @@ export type BatchOption =
   | "YEAR_3"
   | "YEAR_4"
   | "YEAR_5"
-  | "POST_GRADUATE";
+  | "GRADUATE";
 
 export type CampusOption = "" | "FOUR_KILO" | "FIVE_KILO" | "SIX_KILO" | "ART";
 export type GenderOption = "" | "MALE" | "FEMALE";
@@ -44,7 +44,7 @@ const batchOptions: Exclude<BatchOption, "">[] = [
   "YEAR_3",
   "YEAR_4",
   "YEAR_5",
-  "POST_GRADUATE",
+  "GRADUATE",
 ];
 
 const campusOptions: Exclude<CampusOption, "">[] = [
@@ -76,17 +76,17 @@ const fourKiloDepartmentOptions = [
 ] as const;
 
 const batchOptionsByCampus: Record<Exclude<CampusOption, "">, BatchOption[]> = {
-  FOUR_KILO: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4", "POST_GRADUATE"],
+  FOUR_KILO: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4", "GRADUATE"],
   FIVE_KILO: [
     "FRESHMAN",
     "YEAR_2",
     "YEAR_3",
     "YEAR_4",
     "YEAR_5",
-    "POST_GRADUATE",
+    "GRADUATE",
   ],
-  SIX_KILO: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4", "POST_GRADUATE"],
-  ART: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4", "POST_GRADUATE"],
+  SIX_KILO: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4", "GRADUATE"],
+  ART: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4", "GRADUATE"],
 };
 
 const formatEnumLabel = (value: string) =>

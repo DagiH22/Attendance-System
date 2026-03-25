@@ -275,6 +275,14 @@ export const createEvent = async (req: Request, res: Response) => {
       const recurrenceLengthWeeks =
         Number(req.body.recurrenceLengthWeeks ?? 4) || 4;
 
+      const weeklyEndDateRaw = req.body.endDate;
+      const parsedWeeklyEndDate = weeklyEndDateRaw
+        ? new Date(weeklyEndDateRaw)
+        : undefined;
+      if (parsedWeeklyEndDate && Number.isNaN(parsedWeeklyEndDate.getTime())) {
+        return res.status(400).json({ error: "Invalid endDate format" });
+      }
+
       const { parent, children } = await recurrenceService.createWeeklyEvents(
         prisma,
         {
@@ -284,6 +292,7 @@ export const createEvent = async (req: Request, res: Response) => {
           startDate: parsedEventDate,
           startTime: parsedStartTime,
           endTime: parsedEndTime,
+          endDate: parsedWeeklyEndDate,
           recurrenceLengthWeeks,
           location: validated.location,
         },

@@ -165,7 +165,7 @@ enum Batch {
   YEAR_3
   YEAR_4
   YEAR_5
-  POST_GRADUATE
+  GRADUATE
 }
 
 enum Campus {

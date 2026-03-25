@@ -37,8 +37,8 @@ const formatBatch = (value: string): string => {
   switch (value) {
     case "FRESHMAN":
       return "Freshman";
-    case "POST_GRADUATE":
-      return "Post Graduate";
+    case "GRADUATE":
+      return "Graduate";
     default:
       // YEAR_2 -> Year 2
       if (value.startsWith("YEAR_")) {
