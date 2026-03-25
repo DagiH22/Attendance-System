@@ -48,9 +48,6 @@ const CreateEvent: React.FC = () => {
   const [timeError, setTimeError] = useState("");
   const [locationError, setLocationError] = useState("");
 
-  // Get today's string format (YYYY-MM-DD) for min date constraint
-  const todayStr = new Date().toLocaleDateString("en-CA"); // 'en-CA' outputs YYYY-MM-DD
-
   // Custom dropdown state to keep the options list width equal to the control
   const typeWrapperRef = useRef<HTMLDivElement | null>(null);
   const [typeMenuOpen, setTypeMenuOpen] = useState(false);
@@ -119,13 +116,6 @@ const CreateEvent: React.FC = () => {
       return false;
     }
 
-    // Event Date Validation (no past dates)
-    // We add timezone offset handling to compare dates directly or use the string comparison
-    if (eventDate < todayStr) {
-      setDateError("Event date cannot be in the past");
-      isValid = false;
-    }
-
     if (!startTime || !endTime) {
       setTimeError(
         !startTime && !endTime
@@ -141,19 +131,6 @@ const CreateEvent: React.FC = () => {
     if (!location || location.trim() === "") {
       setLocationError("Event location is required");
       isValid = false;
-    }
-
-    // If today, start time cannot be in the past
-    if (eventDate === todayStr) {
-      const now = new Date();
-      const currentHoursStr = now.getHours().toString().padStart(2, "0");
-      const currentMinutesStr = now.getMinutes().toString().padStart(2, "0");
-      const currentTimeStr = `${currentHoursStr}:${currentMinutesStr}`;
-
-      if (startTime < currentTimeStr) {
-        setTimeError("Start time cannot be in the past");
-        isValid = false;
-      }
     }
 
     // End time must be after start time
@@ -404,7 +381,6 @@ const CreateEvent: React.FC = () => {
                 type="date"
                 id="eventDate"
                 required
-                min={todayStr}
                 value={eventDate}
                 onChange={(e) => setEventDate(e.target.value)}
                 className={`w-full px-4 py-2.5 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${dateError ? "border-red-300 bg-red-50" : "border-gray-300"}`}
@@ -427,7 +403,6 @@ const CreateEvent: React.FC = () => {
                 <input
                   type="date"
                   id="endDate"
-                  min={eventDate || todayStr}
                   required={type === "weekly" || type === "custom"}
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}

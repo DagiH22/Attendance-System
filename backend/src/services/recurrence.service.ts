@@ -40,12 +40,7 @@ export const createWeeklyEvents = async (
     input.recurrenceLengthWeeks && input.recurrenceLengthWeeks >= 1
       ? Math.floor(input.recurrenceLengthWeeks)
       : 4;
-
-  const today = normalizeToDateOnly(new Date());
   const startDateOnly = normalizeToDateOnly(input.startDate);
-  if (startDateOnly.getTime() < today.getTime()) {
-    throw new Error("startDate cannot be in the past");
-  }
 
   // create parent recurring event
   const parent = await prisma.event.create({
@@ -201,7 +196,10 @@ export const updateWeeklyEvents = async (
 
     if (targetLength > currentLength) {
       // create additional occurrences after the last existing recurrenceIndex
-      const lastIndex = children.length > 0 ? (children[children.length - 1].recurrenceIndex ?? 0) : 0;
+      const lastIndex =
+        children.length > 0
+          ? (children[children.length - 1].recurrenceIndex ?? 0)
+          : 0;
       for (let i = lastIndex; i < targetLength; i++) {
         const occurrenceDate = addDays(parent.eventDate, i * 7);
         const start = setTimeOnDate(occurrenceDate, parent.startTime);
@@ -229,8 +227,12 @@ export const updateWeeklyEvents = async (
 
     if (targetLength < currentLength) {
       // delete occurrences with recurrenceIndex > targetLength but do not delete past occurrences
-      const toDelete = children.filter((c) => (c.recurrenceIndex ?? 0) > targetLength);
-      const pastDeletes = toDelete.filter((c) => normalizeToDateOnly(c.eventDate).getTime() < today.getTime());
+      const toDelete = children.filter(
+        (c) => (c.recurrenceIndex ?? 0) > targetLength,
+      );
+      const pastDeletes = toDelete.filter(
+        (c) => normalizeToDateOnly(c.eventDate).getTime() < today.getTime(),
+      );
       if (pastDeletes.length > 0) {
         throw new Error("Cannot remove past occurrences");
       }

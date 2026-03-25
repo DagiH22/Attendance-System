@@ -76,10 +76,17 @@ const fourKiloDepartmentOptions = [
 ] as const;
 
 const batchOptionsByCampus: Record<Exclude<CampusOption, "">, BatchOption[]> = {
-  FOUR_KILO: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4"],
-  FIVE_KILO: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4", "YEAR_5"],
-  SIX_KILO: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4"],
-  ART: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4"],
+  FOUR_KILO: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4", "POST_GRADUATE"],
+  FIVE_KILO: [
+    "FRESHMAN",
+    "YEAR_2",
+    "YEAR_3",
+    "YEAR_4",
+    "YEAR_5",
+    "POST_GRADUATE",
+  ],
+  SIX_KILO: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4", "POST_GRADUATE"],
+  ART: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4", "POST_GRADUATE"],
 };
 
 const formatEnumLabel = (value: string) =>
