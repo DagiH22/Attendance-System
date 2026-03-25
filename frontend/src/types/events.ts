@@ -6,6 +6,13 @@ export interface EventCreator {
   name: string;
 }
 
+export interface EventClusterSummary {
+  id: string;
+  title: string;
+  startDate: string;
+  endDate: string;
+}
+
 export interface DashboardEvent {
   id: string;
   title: string;
@@ -20,6 +27,8 @@ export interface DashboardEvent {
   createdBy: EventCreator;
   attendanceCount: number;
   totalMembers: number;
+  cluster?: EventClusterSummary | null;
+  clusterLabel?: string | null;
 }
 
 export type AttendanceSortBy = "time" | "name";

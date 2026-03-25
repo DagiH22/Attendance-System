@@ -14,8 +14,14 @@ export const markAttendance = async (req: Request, res: Response) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const { memberUniqueId, memberId, eventId, markedMethod, method } =
-      req.body ?? {};
+    const {
+      memberUniqueId,
+      memberId,
+      eventId,
+      markedMethod,
+      method,
+      allowOverride,
+    } = req.body ?? {};
 
     const normalizedMemberIdentifier =
       typeof memberUniqueId === "string" && memberUniqueId.trim() !== ""
@@ -70,12 +76,25 @@ export const markAttendance = async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Event not found" });
     }
     const lifecycle = computeEventLifecycle(event);
-    if (!lifecycle.attendanceOpen) {
+    const isOverrideRequested = allowOverride === true;
+    const isAdminOverrideAllowed =
+      req.admin?.role === "ADMIN" || req.admin?.role === "SUPER_ADMIN";
+
+    if (
+      !lifecycle.attendanceOpen &&
+      !(isOverrideRequested && isAdminOverrideAllowed)
+    ) {
       return res.status(400).json({
         error:
           lifecycle.status === "DEACTIVATED"
             ? "Event is deactivated"
             : "Attendance is only allowed while the event is ACTIVE",
+      });
+    }
+
+    if (isOverrideRequested && !isAdminOverrideAllowed) {
+      return res.status(403).json({
+        error: "Only admins can override attendance restrictions",
       });
     }
 

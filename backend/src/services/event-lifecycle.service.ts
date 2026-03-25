@@ -21,6 +21,13 @@ type EventLifecycleInput = Pick<
 type SerializableEvent = Event & {
   manuallyClosedAt?: Date | null;
   _count?: { attendances?: number };
+  cluster?: {
+    id: string;
+    title: string;
+    startDate: Date;
+    endDate: Date;
+  } | null;
+  clusterLabel?: string | null;
 };
 
 export type EventLifecycleSnapshot = {
@@ -127,6 +134,13 @@ export const serializeEventForResponse = (
   referenceTime: Date = new Date(),
 ) => {
   const lifecycle = computeEventLifecycle(event, referenceTime);
+  const cluster = event.cluster
+    ? {
+        ...event.cluster,
+        startDate: event.cluster.startDate.toISOString(),
+        endDate: event.cluster.endDate.toISOString(),
+      }
+    : (event.cluster ?? null);
 
   return {
     ...event,
@@ -138,6 +152,7 @@ export const serializeEventForResponse = (
     manuallyClosedAt: event.manuallyClosedAt
       ? event.manuallyClosedAt.toISOString()
       : null,
+    cluster,
     status: lifecycle.status,
     attendanceOpen: lifecycle.attendanceOpen,
   };

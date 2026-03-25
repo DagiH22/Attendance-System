@@ -8,6 +8,7 @@ interface QrAttendanceScannerProps {
   onApiError: (error: any) => void;
   /** Optional function to map a scanned code to a UUID before sending to the backend */
   resolveMemberId?: (scannedCode: string) => string;
+  allowOverride?: boolean;
 }
 
 type ScannerState =
@@ -23,6 +24,7 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
   onScanSuccess,
   onApiError,
   resolveMemberId,
+  allowOverride = false,
 }) => {
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const isProcessingRef = useRef(false);
@@ -163,6 +165,7 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
         memberId: parentResolvedId,
         eventId: eventId,
         method: "QR",
+        allowOverride,
       });
 
       setScannerState("SUCCESS");

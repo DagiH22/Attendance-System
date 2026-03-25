@@ -8,9 +8,11 @@ import {
   deleteEvent,
   getAllEvents,
   getEventAttendance,
+  getEventClusterById,
   getEventById,
   getPresentMembersForEvent,
   updateEvent,
+  updateEventCluster,
 } from "../controllers/event.controller";
 
 const router = Router();
@@ -23,6 +25,9 @@ router.post("/", requireRole("SUPER_ADMIN"), createEvent);
 
 // get list of all events
 router.get("/", getAllEvents);
+
+// get event cluster by id
+router.get("/cluster/:clusterId", getEventClusterById);
 
 // get paginated attendance list for a specific event
 router.get("/:eventId/attendance", getEventAttendance);
@@ -41,6 +46,13 @@ router.patch("/:id/close", requireRole("SUPER_ADMIN"), closeEvent);
 
 // edit an event (super admin only)
 router.patch("/:id", requireRole("SUPER_ADMIN"), updateEvent);
+
+// edit a cluster (super admin only)
+router.patch(
+  "/cluster/:clusterId",
+  requireRole("SUPER_ADMIN"),
+  updateEventCluster,
+);
 
 // delete an upcoming event (super admin only)
 router.delete("/:id", requireRole("SUPER_ADMIN"), deleteEvent);

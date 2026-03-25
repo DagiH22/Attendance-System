@@ -7,7 +7,14 @@ import {
 } from "../services/event-lifecycle.service";
 import recurrenceService from "../services/recurrence.service";
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient() as PrismaClient & { eventCluster: any };
+
+type ClusterEventInput = {
+  eventDate: Date;
+  startTime: Date;
+  endTime: Date;
+  label?: string | null;
+};
 
 const validateEventPayload = (payload: {
   title?: unknown;
@@ -54,6 +61,81 @@ const validateEventPayload = (payload: {
   };
 };
 
+const validateClusterPayload = (payload: {
+  title?: unknown;
+  description?: unknown;
+  location?: unknown;
+}) => {
+  const title = String(payload.title ?? "").trim();
+  const description = String(payload.description ?? "").trim();
+  const location = String(payload.location ?? "").trim();
+
+  if (!title) {
+    return { error: "Event title is required" };
+  }
+
+  if (!description) {
+    return { error: "Event description is required" };
+  }
+
+  if (!location) {
+    return { error: "Event location is required" };
+  }
+
+  return {
+    value: {
+      title,
+      description,
+      location,
+    },
+  };
+};
+
+const parseClusterEvents = (clusterEvents: unknown) => {
+  if (!Array.isArray(clusterEvents) || clusterEvents.length === 0) {
+    return { error: "At least one cluster event is required" };
+  }
+
+  const parsed: ClusterEventInput[] = [];
+
+  for (const [index, rawEvent] of clusterEvents.entries()) {
+    const eventDateValue = (rawEvent as any)?.eventDate;
+    const startTimeValue = (rawEvent as any)?.startTime;
+    const endTimeValue = (rawEvent as any)?.endTime;
+    const labelValue = (rawEvent as any)?.label;
+
+    const eventDate = new Date(eventDateValue);
+    const startTime = new Date(startTimeValue);
+    const endTime = new Date(endTimeValue);
+
+    if (
+      Number.isNaN(eventDate.getTime()) ||
+      Number.isNaN(startTime.getTime()) ||
+      Number.isNaN(endTime.getTime())
+    ) {
+      return { error: `Invalid date/time for cluster event #${index + 1}` };
+    }
+
+    if (endTime <= startTime) {
+      return {
+        error: `End time must be after start time for cluster event #${index + 1}`,
+      };
+    }
+
+    parsed.push({
+      eventDate,
+      startTime,
+      endTime,
+      label:
+        typeof labelValue === "string" && labelValue.trim() !== ""
+          ? labelValue.trim()
+          : null,
+    });
+  }
+
+  return { value: parsed };
+};
+
 // Role checks are enforced with requireRole middleware at the route level
 
 /**
@@ -67,6 +149,8 @@ export const createEvent = async (req: Request, res: Response) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
+    const adminId = req.admin.id;
+
     // role enforced by requireRole middleware
 
     const {
@@ -77,22 +161,90 @@ export const createEvent = async (req: Request, res: Response) => {
       endTime,
       type,
       location,
+      clusterEvents,
     } = req.body ?? {};
 
-    const validation = validateEventPayload({
-      title,
-      description,
-      eventDate,
-      startTime,
-      endTime,
-      location,
-    });
+    const isClusterRequest =
+      Array.isArray(clusterEvents) && clusterEvents.length > 0;
+
+    const validation = isClusterRequest
+      ? validateClusterPayload({ title, description, location })
+      : validateEventPayload({
+          title,
+          description,
+          eventDate,
+          startTime,
+          endTime,
+          location,
+        });
 
     if (validation.error) {
       return res.status(400).json({ error: validation.error });
     }
 
     const validated = validation.value!;
+
+    if (isClusterRequest) {
+      const parsedClusterEvents = parseClusterEvents(clusterEvents);
+      if (parsedClusterEvents.error) {
+        return res.status(400).json({ error: parsedClusterEvents.error });
+      }
+
+      const clusterEventValues = parsedClusterEvents.value!;
+      const sortedByDate = [...clusterEventValues].sort(
+        (a, b) => a.eventDate.getTime() - b.eventDate.getTime(),
+      );
+      const clusterStartDate = sortedByDate[0].eventDate;
+      const clusterEndDate = sortedByDate[sortedByDate.length - 1].eventDate;
+
+      const cluster = await prisma.eventCluster.create({
+        data: {
+          title: validated.title,
+          description: validated.description,
+          location: validated.location,
+          startDate: clusterStartDate,
+          endDate: clusterEndDate,
+          createdById: adminId,
+          events: {
+            create: clusterEventValues.map((entry) => ({
+              title: validated.title,
+              description: validated.description,
+              location: validated.location,
+              eventDate: entry.eventDate,
+              startTime: entry.startTime,
+              endTime: entry.endTime,
+              clusterLabel: entry.label,
+              type: EventType.ONE_TIME,
+              createdById: adminId,
+            })) as any,
+          },
+        },
+        include: {
+          events: {
+            include: { _count: { select: { attendances: true } } },
+          },
+        },
+      });
+
+      return res.status(201).json({
+        cluster: {
+          ...cluster,
+          startDate: cluster.startDate.toISOString(),
+          endDate: cluster.endDate.toISOString(),
+        },
+        events: cluster.events.map((event: any) =>
+          serializeEventForResponse({
+            ...event,
+            cluster: {
+              id: cluster.id,
+              title: cluster.title,
+              startDate: cluster.startDate,
+              endDate: cluster.endDate,
+            },
+          }),
+        ),
+      });
+    }
 
     const parsedEventDate = new Date(eventDate);
     const parsedStartTime = new Date(startTime);
@@ -126,7 +278,7 @@ export const createEvent = async (req: Request, res: Response) => {
       const { parent, children } = await recurrenceService.createWeeklyEvents(
         prisma,
         {
-          adminId: req.admin.id,
+          adminId,
           title: validated.title,
           description: validated.description,
           startDate: parsedEventDate,
@@ -152,9 +304,14 @@ export const createEvent = async (req: Request, res: Response) => {
         endTime: parsedEndTime,
         type: eventType,
         location: validated.location,
-        createdById: req.admin.id,
+        createdById: adminId,
       },
-      include: { _count: { select: { attendances: true } } },
+      include: {
+        _count: { select: { attendances: true } },
+        cluster: {
+          select: { id: true, title: true, startDate: true, endDate: true },
+        },
+      } as any,
     });
 
     return res.status(201).json({ event: serializeEventForResponse(created) });
@@ -193,7 +350,12 @@ export const getAllEvents = async (req: Request, res: Response) => {
           AND: [{ startTime: { gt: now } }],
         },
         orderBy: [{ startTime: "asc" }, { eventDate: "asc" }],
-        include: { _count: { select: { attendances: true } } },
+        include: {
+          _count: { select: { attendances: true } },
+          cluster: {
+            select: { id: true, title: true, startDate: true, endDate: true },
+          },
+        } as any,
       }),
       // active candidates: startTime <= now (or eventDate <= now) and active
       prisma.event.findMany({
@@ -203,13 +365,26 @@ export const getAllEvents = async (req: Request, res: Response) => {
           startTime: { lte: now },
         },
         orderBy: [{ startTime: "asc" }, { eventDate: "asc" }],
-        include: { _count: { select: { attendances: true } } },
+        include: {
+          _count: { select: { attendances: true } },
+          cluster: {
+            select: { id: true, title: true, startDate: true, endDate: true },
+          },
+        } as any,
       }),
       // deactivated: explicit isActive === false
       prisma.event.findMany({
-        where: { NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] }, isActive: false },
+        where: {
+          NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] },
+          isActive: false,
+        },
         orderBy: [{ eventDate: "asc" }, { startTime: "asc" }],
-        include: { _count: { select: { attendances: true } } },
+        include: {
+          _count: { select: { attendances: true } },
+          cluster: {
+            select: { id: true, title: true, startDate: true, endDate: true },
+          },
+        } as any,
       }),
       // past candidates: endTime < now or (no endTime && eventDate < now)
       prisma.event.findMany({
@@ -219,9 +394,18 @@ export const getAllEvents = async (req: Request, res: Response) => {
           endTime: { lt: now },
         },
         orderBy: [{ endTime: "desc" }, { eventDate: "desc" }],
-        include: { _count: { select: { attendances: true } } },
+        include: {
+          _count: { select: { attendances: true } },
+          cluster: {
+            select: { id: true, title: true, startDate: true, endDate: true },
+          },
+        } as any,
       }),
-      prisma.event.count({ where: { NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] } } }),
+      prisma.event.count({
+        where: {
+          NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] },
+        },
+      }),
     ]);
 
     // Build ordered list following desired sequence using the candidate buckets:
@@ -278,7 +462,12 @@ export const getEventById = async (req: Request, res: Response) => {
 
     const event = await prisma.event.findUnique({
       where: { id: idStr },
-      include: { _count: { select: { attendances: true } } },
+      include: {
+        _count: { select: { attendances: true } },
+        cluster: {
+          select: { id: true, title: true, startDate: true, endDate: true },
+        },
+      } as any,
     });
     if (!event) return res.status(404).json({ error: "Event not found" });
 
@@ -324,6 +513,55 @@ export const getPresentMembersForEvent = async (
     });
   } catch (err: any) {
     console.error("Error in getPresentMembersForEvent:", err?.message ?? err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+// GET /api/events/cluster/:clusterId
+export const getEventClusterById = async (req: Request, res: Response) => {
+  try {
+    if (!req.admin?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { clusterId } = req.params;
+    const normalizedId = Array.isArray(clusterId) ? clusterId[0] : clusterId;
+
+    if (!normalizedId) {
+      return res.status(400).json({ error: "Cluster id is required" });
+    }
+
+    const cluster = await prisma.eventCluster.findUnique({
+      where: { id: normalizedId },
+      include: {
+        events: { include: { _count: { select: { attendances: true } } } },
+      },
+    });
+
+    if (!cluster) {
+      return res.status(404).json({ error: "Event cluster not found" });
+    }
+
+    return res.status(200).json({
+      cluster: {
+        ...cluster,
+        startDate: cluster.startDate.toISOString(),
+        endDate: cluster.endDate.toISOString(),
+      },
+      events: cluster.events.map((event: any) =>
+        serializeEventForResponse({
+          ...event,
+          cluster: {
+            id: cluster.id,
+            title: cluster.title,
+            startDate: cluster.startDate,
+            endDate: cluster.endDate,
+          },
+        }),
+      ),
+    });
+  } catch (err: any) {
+    console.error("Error in getEventClusterById:", err?.message ?? err);
     return res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -593,12 +831,202 @@ export const updateEvent = async (req: Request, res: Response) => {
     const updated = await prisma.event.update({
       where: { id: idStr },
       data: updateData,
-      include: { _count: { select: { attendances: true } } },
+      include: {
+        _count: { select: { attendances: true } },
+        cluster: {
+          select: { id: true, title: true, startDate: true, endDate: true },
+        },
+      } as any,
     });
 
     return res.status(200).json({ event: serializeEventForResponse(updated) });
   } catch (err: any) {
     console.error("Error in updateEvent:", err?.message ?? err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+// PATCH /api/events/cluster/:clusterId
+// Update an event cluster and its events. Only SUPER_ADMIN.
+export const updateEventCluster = async (req: Request, res: Response) => {
+  try {
+    if (!req.admin?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { clusterId } = req.params;
+    const normalizedId = Array.isArray(clusterId) ? clusterId[0] : clusterId;
+
+    if (!normalizedId) {
+      return res.status(400).json({ error: "Cluster id is required" });
+    }
+
+    const existingCluster = await prisma.eventCluster.findUnique({
+      where: { id: normalizedId },
+      include: { events: true },
+    });
+
+    if (!existingCluster) {
+      return res.status(404).json({ error: "Event cluster not found" });
+    }
+
+    const { title, description, location, events } = req.body ?? {};
+
+    if (!Array.isArray(events) || events.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "At least one cluster event is required" });
+    }
+
+    const parsedEvents = parseClusterEvents(events);
+    if (parsedEvents.error) {
+      return res.status(400).json({ error: parsedEvents.error });
+    }
+
+    const normalizedTitle =
+      typeof title === "string" && title.trim() !== ""
+        ? title.trim()
+        : existingCluster.title;
+    const normalizedDescription =
+      typeof description === "string" && description.trim() !== ""
+        ? description.trim()
+        : existingCluster.description;
+    const normalizedLocation =
+      typeof location === "string" && location.trim() !== ""
+        ? location.trim()
+        : existingCluster.location;
+
+    const parsedClusterEvents = parsedEvents.value!;
+    const sortedByDate = [...parsedClusterEvents].sort(
+      (a, b) => a.eventDate.getTime() - b.eventDate.getTime(),
+    );
+    const clusterStartDate = sortedByDate[0].eventDate;
+    const clusterEndDate = sortedByDate[sortedByDate.length - 1].eventDate;
+
+    const existingEventIds = new Set(
+      existingCluster.events.map((entry: { id: string }) => entry.id),
+    );
+    const incomingIds = new Set<string>();
+    const toCreate: ClusterEventInput[] = [];
+
+    parsedClusterEvents.forEach((entry, index) => {
+      const incomingId = (events[index] as any)?.id;
+      if (typeof incomingId === "string" && incomingId.trim() !== "") {
+        if (!existingEventIds.has(incomingId)) {
+          return;
+        }
+        incomingIds.add(incomingId);
+      } else {
+        toCreate.push(entry);
+      }
+    });
+
+    const invalidIncomingIds = parsedClusterEvents
+      .map((_, index) => (events[index] as any)?.id)
+      .filter(
+        (incomingId: any) =>
+          typeof incomingId === "string" &&
+          incomingId.trim() !== "" &&
+          !existingEventIds.has(incomingId),
+      );
+
+    if (invalidIncomingIds.length > 0) {
+      return res
+        .status(400)
+        .json({ error: "One or more cluster events are invalid." });
+    }
+
+    const updateOperations = parsedClusterEvents
+      .map((entry, index) => {
+        const incomingId = (events[index] as any)?.id;
+        if (typeof incomingId === "string" && incomingId.trim() !== "") {
+          return prisma.event.update({
+            where: { id: incomingId },
+            data: {
+              title: normalizedTitle,
+              description: normalizedDescription,
+              location: normalizedLocation,
+              eventDate: entry.eventDate,
+              startTime: entry.startTime,
+              endTime: entry.endTime,
+              clusterLabel: entry.label,
+            } as any,
+          });
+        }
+        return null;
+      })
+      .filter(Boolean) as Array<ReturnType<typeof prisma.event.update>>;
+
+    const deleteOperations = existingCluster.events
+      .filter((event: { id: string }) => !incomingIds.has(event.id))
+      .map((event: { id: string }) =>
+        prisma.event.delete({ where: { id: event.id } }),
+      );
+
+    const createOperations = toCreate.map((entry) =>
+      prisma.event.create({
+        data: {
+          title: normalizedTitle,
+          description: normalizedDescription,
+          location: normalizedLocation,
+          eventDate: entry.eventDate,
+          startTime: entry.startTime,
+          endTime: entry.endTime,
+          clusterLabel: entry.label,
+          type: EventType.ONE_TIME,
+          createdById: existingCluster.createdById,
+          clusterId: normalizedId,
+        } as any,
+      }),
+    );
+
+    await prisma.$transaction([
+      prisma.eventCluster.update({
+        where: { id: normalizedId },
+        data: {
+          title: normalizedTitle,
+          description: normalizedDescription,
+          location: normalizedLocation,
+          startDate: clusterStartDate,
+          endDate: clusterEndDate,
+        },
+      }),
+      ...updateOperations,
+      ...deleteOperations,
+      ...createOperations,
+    ]);
+
+    const refreshedCluster = await prisma.eventCluster.findUnique({
+      where: { id: normalizedId },
+      include: {
+        events: { include: { _count: { select: { attendances: true } } } },
+      },
+    });
+
+    if (!refreshedCluster) {
+      return res.status(404).json({ error: "Event cluster not found" });
+    }
+
+    return res.status(200).json({
+      cluster: {
+        ...refreshedCluster,
+        startDate: refreshedCluster.startDate.toISOString(),
+        endDate: refreshedCluster.endDate.toISOString(),
+      },
+      events: refreshedCluster.events.map((event: any) =>
+        serializeEventForResponse({
+          ...event,
+          cluster: {
+            id: refreshedCluster.id,
+            title: refreshedCluster.title,
+            startDate: refreshedCluster.startDate,
+            endDate: refreshedCluster.endDate,
+          },
+        }),
+      ),
+    });
+  } catch (err: any) {
+    console.error("Error in updateEventCluster:", err?.message ?? err);
     return res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -641,10 +1069,12 @@ export default {
   createEvent,
   getAllEvents,
   getEventById,
+  getEventClusterById,
   getEventAttendance,
   getPresentMembersForEvent,
   deactivateEvent,
   closeEvent,
   updateEvent,
+  updateEventCluster,
   deleteEvent,
 };

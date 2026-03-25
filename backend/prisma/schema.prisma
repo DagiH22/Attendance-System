@@ -29,16 +29,17 @@ model Member {
 }
 
 model Admin {
-  id                String           @id @default(uuid()) @db.Uuid
-  name              String
-  email             String           @unique
-  password          String
-  role              AdminRole        @default(ADMIN)
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  attendancesMarked Attendance[]     @relation("AdminToAttendances")
-  eventsCreated     Event[]          @relation("AdminToEvents")
-  refreshSessions   RefreshSession[]
+  id                  String         @id @default(uuid()) @db.Uuid
+  name                String
+  email               String         @unique
+  password            String
+  role                AdminRole      @default(ADMIN)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  attendancesMarked   Attendance[]   @relation("AdminToAttendances")
+  eventsCreated       Event[]        @relation("AdminToEvents")
+  eventClustersCreated EventCluster[] @relation("AdminToEventClusters")
+  refreshSessions     RefreshSession[]
 
   @@index([email])
   @@map("admins")
@@ -61,6 +62,25 @@ model RefreshSession {
   @@map("refresh_sessions")
 }
 
+model EventCluster {
+  id          String   @id @default(uuid()) @db.Uuid
+  title       String
+  description String
+  location    String
+  startDate   DateTime @db.Date
+  endDate     DateTime @db.Date
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String   @db.Uuid
+  events      Event[]
+  createdBy   Admin    @relation("AdminToEventClusters", fields: [createdById], references: [id])
+
+  @@index([createdById])
+  @@index([startDate])
+  @@index([endDate])
+  @@map("event_clusters")
+}
+
 model Event {
   id                    String       @id @default(uuid()) @db.Uuid
   title                 String
@@ -79,14 +99,18 @@ model Event {
   parentEventId         String?      @db.Uuid
   recurrenceIndex       Int?
   recurrenceLengthWeeks Int?
+  clusterId             String?      @db.Uuid
+  clusterLabel          String?
   attendances           Attendance[]
   createdBy             Admin        @relation("AdminToEvents", fields: [createdById], references: [id])
   parentEvent           Event?       @relation("RecurringEvents", fields: [parentEventId], references: [id])
   childrenEvents        Event[]      @relation("RecurringEvents")
+  cluster               EventCluster? @relation(fields: [clusterId], references: [id], onDelete: SetNull)
 
   @@index([parentEventId])
   @@index([eventDate])
   @@index([createdById])
+  @@index([clusterId])
   @@map("events")
 }
 

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import api from "../lib/api";
 import formatDate, { formatDateTime } from "../lib/formatDate";
+import QrAttendanceScanner from "../components/QrAttendanceScanner";
 import type {
   AttendanceSortBy,
   AttendanceSortOrder,
@@ -9,6 +10,7 @@ import type {
   EventAttendanceRecord,
   EventAttendanceResponse,
 } from "../types/events";
+import type { Member } from "../types/members";
 import { useAuth } from "../contexts/AuthContext";
 
 type LocationState = {
@@ -16,6 +18,14 @@ type LocationState = {
 };
 
 type EditableStatusOption = "UPCOMING" | "DEACTIVATED";
+
+type AddAttendanceTab = "QR" | "MANUAL";
+type AttendanceFeedbackTone = "success" | "error" | "info";
+type AttendanceFeedback = {
+  tone: AttendanceFeedbackTone;
+  title: string;
+  description?: string;
+};
 
 const EDITABLE_STATUS_OPTIONS: Array<{
   value: EditableStatusOption;
@@ -75,6 +85,15 @@ const mapEventToDashboardEvent = (rawEvent: any): DashboardEvent => {
     attendanceCount:
       rawEvent._count?.attendances || rawEvent.attendanceCount || 0,
     totalMembers: rawEvent.totalMembers || 0,
+    cluster: rawEvent.cluster
+      ? {
+          id: rawEvent.cluster.id,
+          title: rawEvent.cluster.title,
+          startDate: rawEvent.cluster.startDate,
+          endDate: rawEvent.cluster.endDate,
+        }
+      : null,
+    clusterLabel: rawEvent.clusterLabel ?? null,
   };
 };
 
@@ -84,6 +103,10 @@ const toDateTimeLocalValue = (value: string) => {
   const localDate = new Date(date.getTime() - offset * 60_000);
   return localDate.toISOString().slice(0, 16);
 };
+const toLocalDateValue = (value: string) =>
+  toDateTimeLocalValue(value).slice(0, 10);
+const toLocalTimeValue = (value: string) =>
+  toDateTimeLocalValue(value).slice(11, 16);
 
 const EventDetailsPage: React.FC = () => {
   const navigate = useNavigate();
@@ -117,6 +140,32 @@ const EventDetailsPage: React.FC = () => {
   const [attendanceOrder, setAttendanceOrder] =
     useState<AttendanceSortOrder>("asc");
   const [isAttendanceSortOpen, setIsAttendanceSortOpen] = useState(false);
+  const [isAddAttendeeOpen, setIsAddAttendeeOpen] = useState(false);
+  const [isClusterModalOpen, setIsClusterModalOpen] = useState(false);
+  const [clusterLoading, setClusterLoading] = useState(false);
+  const [clusterError, setClusterError] = useState("");
+  const [clusterForm, setClusterForm] = useState({
+    title: "",
+    description: "",
+    location: "",
+  });
+  const [clusterEvents, setClusterEvents] = useState<
+    Array<{
+      id?: string;
+      eventDate: string;
+      startTime: string;
+      endTime: string;
+      label: string;
+    }>
+  >([]);
+  const [addAttendeeTab, setAddAttendeeTab] = useState<AddAttendanceTab>("QR");
+  const [addAttendeeFeedback, setAddAttendeeFeedback] =
+    useState<AttendanceFeedback | null>(null);
+  const [addAttendeeError, setAddAttendeeError] = useState<string>("");
+  const [addAttendeeLoading, setAddAttendeeLoading] = useState(false);
+  const [addMembersLoading, setAddMembersLoading] = useState(false);
+  const [addMembersSearch, setAddMembersSearch] = useState("");
+  const [addMembers, setAddMembers] = useState<Member[]>([]);
   const [editValidationErrors, setEditValidationErrors] = useState<{
     title?: string;
     description?: string;
@@ -488,12 +537,251 @@ const EventDetailsPage: React.FC = () => {
         ? "Name (A–Z)"
         : "Name (Z–A)";
 
+  const isAdmin = admin?.role === "ADMIN" || admin?.role === "SUPER_ADMIN";
+
+  const presentMemberIds = useMemo(() => {
+    return new Set(attendanceRecords.map((record) => record.memberId));
+  }, [attendanceRecords]);
+
+  const filteredAddMembers = useMemo(() => {
+    const query = addMembersSearch.trim().toLowerCase();
+    if (!query) return addMembers;
+
+    return addMembers.filter((member) => {
+      return (
+        member.name.toLowerCase().includes(query) ||
+        member.uniqueId.toLowerCase().includes(query) ||
+        (member.email ?? "").toLowerCase().includes(query)
+      );
+    });
+  }, [addMembers, addMembersSearch]);
+
+  const loadAddMembers = React.useCallback(async () => {
+    try {
+      setAddMembersLoading(true);
+      const response = await api.get("/members");
+      setAddMembers(response.data?.members ?? []);
+    } catch (err: any) {
+      setAddAttendeeError(
+        err.response?.data?.error ||
+          err.response?.data?.message ||
+          "Failed to load members.",
+      );
+    } finally {
+      setAddMembersLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAddAttendeeOpen) return;
+    setAddAttendeeError("");
+    setAddAttendeeFeedback(null);
+    void loadAddMembers();
+  }, [isAddAttendeeOpen, loadAddMembers]);
+
+  const handleAddAttendance = async (
+    memberId: string,
+    method: "QR" | "MANUAL",
+  ) => {
+    if (!event) return;
+    setAddAttendeeLoading(true);
+    setAddAttendeeError("");
+    setAddAttendeeFeedback(null);
+
+    try {
+      const response = await api.post("/attendance", {
+        memberId,
+        eventId: event.id,
+        method,
+        allowOverride: true,
+      });
+
+      setAddAttendeeFeedback({
+        tone: "success",
+        title: "Attendance recorded",
+        description: response.data?.message,
+      });
+
+      await fetchAttendancePage(1, { preferCache: false });
+      setAttendancePage(1);
+    } catch (err: any) {
+      setAddAttendeeError(
+        err.response?.data?.error ||
+          err.response?.data?.message ||
+          "Failed to mark attendance.",
+      );
+      setAddAttendeeFeedback({
+        tone: "error",
+        title: "Unable to add attendee",
+        description:
+          err.response?.data?.error ||
+          err.response?.data?.message ||
+          "Please try again.",
+      });
+    } finally {
+      setAddAttendeeLoading(false);
+    }
+  };
+
   const isSuperAdmin = admin?.role === "SUPER_ADMIN";
   const hasStarted = event
     ? new Date(event.startTime).getTime() <= Date.now()
     : false;
   const canEdit = Boolean(isSuperAdmin && event && !hasStarted);
   const canDelete = Boolean(isSuperAdmin && event && !hasStarted);
+
+  const openClusterModal = async () => {
+    if (!event?.cluster?.id) {
+      return;
+    }
+
+    try {
+      setClusterLoading(true);
+      setClusterError("");
+
+      const response = await api.get(`/events/cluster/${event.cluster.id}`);
+      const cluster = response.data?.cluster;
+      const clusterEventsResponse = response.data?.events ?? [];
+
+      if (!cluster) {
+        setClusterError("Unable to load cluster details.");
+        return;
+      }
+
+      setClusterForm({
+        title: cluster.title ?? "",
+        description: cluster.description ?? "",
+        location: cluster.location ?? "",
+      });
+
+      setClusterEvents(
+        clusterEventsResponse.map((entry: any) => ({
+          id: entry.id,
+          eventDate: toLocalDateValue(entry.startTime),
+          startTime: toLocalTimeValue(entry.startTime),
+          endTime: toLocalTimeValue(entry.endTime),
+          label: entry.clusterLabel ?? "",
+        })),
+      );
+
+      setIsClusterModalOpen(true);
+    } catch (err: any) {
+      setClusterError(
+        err.response?.data?.error ||
+          err.response?.data?.message ||
+          "Failed to load cluster details.",
+      );
+    } finally {
+      setClusterLoading(false);
+    }
+  };
+
+  const updateClusterEvent = (
+    index: number,
+    field: "eventDate" | "startTime" | "endTime" | "label",
+    value: string,
+  ) => {
+    setClusterEvents((prev) =>
+      prev.map((entry, idx) =>
+        idx === index ? { ...entry, [field]: value } : entry,
+      ),
+    );
+  };
+
+  const addClusterEventRow = () => {
+    setClusterEvents((prev) => [
+      ...prev,
+      { eventDate: "", startTime: "", endTime: "", label: "" },
+    ]);
+  };
+
+  const removeClusterEventRow = (index: number) => {
+    setClusterEvents((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleClusterSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+
+    if (!event?.cluster?.id) {
+      return;
+    }
+
+    setClusterError("");
+
+    if (!clusterForm.title.trim()) {
+      setClusterError("Cluster title is required.");
+      return;
+    }
+
+    if (!clusterForm.description.trim()) {
+      setClusterError("Cluster description is required.");
+      return;
+    }
+
+    if (!clusterForm.location.trim()) {
+      setClusterError("Cluster location is required.");
+      return;
+    }
+
+    if (clusterEvents.length === 0) {
+      setClusterError("Add at least one event to the cluster.");
+      return;
+    }
+
+    for (let i = 0; i < clusterEvents.length; i += 1) {
+      const entry = clusterEvents[i];
+      if (!entry.eventDate || !entry.startTime || !entry.endTime) {
+        setClusterError(
+          `Cluster event #${i + 1} must have a date, start time, and end time.`,
+        );
+        return;
+      }
+
+      if (entry.endTime <= entry.startTime) {
+        setClusterError(`Cluster event #${i + 1} must end after it starts.`);
+        return;
+      }
+    }
+
+    try {
+      setIsSaving(true);
+      const payloadEvents = clusterEvents.map((entry) => ({
+        id: entry.id,
+        eventDate: new Date(entry.eventDate).toISOString(),
+        startTime: new Date(
+          `${entry.eventDate}T${entry.startTime}`,
+        ).toISOString(),
+        endTime: new Date(`${entry.eventDate}T${entry.endTime}`).toISOString(),
+        label: entry.label.trim() || undefined,
+      }));
+
+      const response = await api.patch(`/events/cluster/${event.cluster.id}`, {
+        title: clusterForm.title.trim(),
+        description: clusterForm.description.trim(),
+        location: clusterForm.location.trim(),
+        events: payloadEvents,
+      });
+
+      const updatedEvents = response.data?.events ?? [];
+      const updatedEvent = updatedEvents.find(
+        (entry: any) => entry.id === event.id,
+      );
+
+      if (updatedEvent) {
+        setEvent(mapEventToDashboardEvent(updatedEvent));
+      }
+
+      setIsClusterModalOpen(false);
+    } catch (err: any) {
+      setClusterError(
+        err.response?.data?.error ||
+          err.response?.data?.message ||
+          "Failed to update cluster.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const handleEditSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -674,6 +962,11 @@ const EventDetailsPage: React.FC = () => {
                 <h1 className="mt-2 text-2xl font-bold text-gray-900 sm:text-3xl">
                   {event.title}
                 </h1>
+                {event.clusterLabel && (
+                  <p className="mt-1 text-sm font-semibold text-blue-700">
+                    {event.clusterLabel}
+                  </p>
+                )}
               </div>
               <div className="flex flex-wrap gap-2">
                 <span
@@ -741,6 +1034,20 @@ const EventDetailsPage: React.FC = () => {
                 label="Time"
                 value={`${formatTime(event.startTime)} - ${formatTime(event.endTime)}`}
               />
+              {event.cluster && (
+                <InfoRow
+                  icon={
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M4 7h16M4 12h16M4 17h16"
+                    />
+                  }
+                  label="Cluster"
+                  value={event.cluster.title}
+                />
+              )}
             </div>
           </section>
 
@@ -846,6 +1153,21 @@ const EventDetailsPage: React.FC = () => {
             >
               Edit Event
             </button>
+
+            {event?.cluster && (
+              <button
+                type="button"
+                onClick={openClusterModal}
+                disabled={!canEdit || clusterLoading}
+                className={`rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${
+                  canEdit && !clusterLoading
+                    ? "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200"
+                    : "bg-white text-gray-400 cursor-not-allowed border border-gray-200"
+                }`}
+              >
+                {clusterLoading ? "Loading..." : "Edit Cluster"}
+              </button>
+            )}
 
             <button
               type="button"
@@ -1162,6 +1484,211 @@ const EventDetailsPage: React.FC = () => {
         </div>
       )}
 
+      {isClusterModalOpen && event?.cluster && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">
+                  Edit Cluster
+                </h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Update the cluster details and event schedule.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsClusterModalOpen(false);
+                  setClusterError("");
+                }}
+                className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                aria-label="Close cluster modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form className="mt-6 space-y-4" onSubmit={handleClusterSubmit}>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Cluster Title <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={clusterForm.title}
+                  onChange={(e) =>
+                    setClusterForm((prev) => ({
+                      ...prev,
+                      title: e.target.value,
+                    }))
+                  }
+                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Description <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={clusterForm.description}
+                  onChange={(e) =>
+                    setClusterForm((prev) => ({
+                      ...prev,
+                      description: e.target.value,
+                    }))
+                  }
+                  rows={3}
+                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Location <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={clusterForm.location}
+                  onChange={(e) =>
+                    setClusterForm((prev) => ({
+                      ...prev,
+                      location: e.target.value,
+                    }))
+                  }
+                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  required
+                />
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-gray-800">
+                    Cluster Events
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={addClusterEventRow}
+                    className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                  >
+                    + Add Event
+                  </button>
+                </div>
+
+                {clusterEvents.map((entry, index) => (
+                  <div
+                    key={entry.id ?? `cluster-event-${index}`}
+                    className="rounded-xl border border-gray-200 bg-gray-50 p-3"
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs font-semibold text-gray-600">
+                        Event {index + 1}
+                      </p>
+                      {clusterEvents.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeClusterEventRow(index)}
+                          className="text-xs font-semibold text-red-600 hover:text-red-700"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Label (optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={entry.label}
+                          onChange={(e) =>
+                            updateClusterEvent(index, "label", e.target.value)
+                          }
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Date
+                        </label>
+                        <input
+                          type="date"
+                          value={entry.eventDate}
+                          onChange={(e) =>
+                            updateClusterEvent(
+                              index,
+                              "eventDate",
+                              e.target.value,
+                            )
+                          }
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Start
+                        </label>
+                        <input
+                          type="time"
+                          value={entry.startTime}
+                          onChange={(e) =>
+                            updateClusterEvent(
+                              index,
+                              "startTime",
+                              e.target.value,
+                            )
+                          }
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          End
+                        </label>
+                        <input
+                          type="time"
+                          value={entry.endTime}
+                          onChange={(e) =>
+                            updateClusterEvent(index, "endTime", e.target.value)
+                          }
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {clusterError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {clusterError}
+                </div>
+              )}
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setIsClusterModalOpen(false)}
+                  className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"
+                >
+                  {isSaving ? "Saving..." : "Save Cluster"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {showDeleteConfirmModal && event && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
@@ -1256,93 +1783,104 @@ const EventDetailsPage: React.FC = () => {
                   {attendanceTotalCount} attendee
                   {attendanceTotalCount === 1 ? "" : "s"}
                 </div>
-                <div className="relative" ref={attendanceSortDropdownRef}>
-                  <button
-                    type="button"
-                    onClick={() => setIsAttendanceSortOpen((prev) => !prev)}
-                    className="flex w-full items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:min-w-[260px]"
-                  >
-                    <span className="truncate">{attendanceSortLabel}</span>
-                    <svg
-                      className={`h-4 w-4 text-slate-500 transition-transform ${isAttendanceSortOpen ? "rotate-180" : ""}`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => setIsAddAttendeeOpen(true)}
+                      className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100"
                     >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                        d="M19 9l-7 7-7-7"
-                      />
-                    </svg>
-                  </button>
-
-                  {isAttendanceSortOpen && (
-                    <div className="absolute right-0 z-20 mt-2 w-full min-w-[260px] rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
-                      {[
-                        {
-                          label: "Time registered (earliest first)",
-                          sortBy: "time" as AttendanceSortBy,
-                          order: "asc" as AttendanceSortOrder,
-                        },
-                        {
-                          label: "Time registered (latest first)",
-                          sortBy: "time" as AttendanceSortBy,
-                          order: "desc" as AttendanceSortOrder,
-                        },
-                        {
-                          label: "Name (A–Z)",
-                          sortBy: "name" as AttendanceSortBy,
-                          order: "asc" as AttendanceSortOrder,
-                        },
-                        {
-                          label: "Name (Z–A)",
-                          sortBy: "name" as AttendanceSortBy,
-                          order: "desc" as AttendanceSortOrder,
-                        },
-                      ].map((option) => {
-                        const isSelected =
-                          attendanceSortBy === option.sortBy &&
-                          attendanceOrder === option.order;
-
-                        return (
-                          <button
-                            key={`${option.sortBy}-${option.order}`}
-                            type="button"
-                            onClick={() =>
-                              void handleAttendanceSortChange(
-                                option.sortBy,
-                                option.order,
-                              )
-                            }
-                            className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition ${
-                              isSelected
-                                ? "bg-blue-50 font-semibold text-blue-700"
-                                : "text-slate-700 hover:bg-slate-50"
-                            }`}
-                          >
-                            <span>{option.label}</span>
-                            {isSelected && (
-                              <svg
-                                className="h-4 w-4"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth="2"
-                                  d="M5 13l4 4L19 7"
-                                />
-                              </svg>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
+                      Add Attendee
+                    </button>
                   )}
+                  <div className="relative" ref={attendanceSortDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => setIsAttendanceSortOpen((prev) => !prev)}
+                      className="flex w-full items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:min-w-[260px]"
+                    >
+                      <span className="truncate">{attendanceSortLabel}</span>
+                      <svg
+                        className={`h-4 w-4 text-slate-500 transition-transform ${isAttendanceSortOpen ? "rotate-180" : ""}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          d="M19 9l-7 7-7-7"
+                        />
+                      </svg>
+                    </button>
+
+                    {isAttendanceSortOpen && (
+                      <div className="absolute right-0 z-20 mt-2 w-full min-w-[260px] rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
+                        {[
+                          {
+                            label: "Time registered (earliest first)",
+                            sortBy: "time" as AttendanceSortBy,
+                            order: "asc" as AttendanceSortOrder,
+                          },
+                          {
+                            label: "Time registered (latest first)",
+                            sortBy: "time" as AttendanceSortBy,
+                            order: "desc" as AttendanceSortOrder,
+                          },
+                          {
+                            label: "Name (A–Z)",
+                            sortBy: "name" as AttendanceSortBy,
+                            order: "asc" as AttendanceSortOrder,
+                          },
+                          {
+                            label: "Name (Z–A)",
+                            sortBy: "name" as AttendanceSortBy,
+                            order: "desc" as AttendanceSortOrder,
+                          },
+                        ].map((option) => {
+                          const isSelected =
+                            attendanceSortBy === option.sortBy &&
+                            attendanceOrder === option.order;
+
+                          return (
+                            <button
+                              key={`${option.sortBy}-${option.order}`}
+                              type="button"
+                              onClick={() =>
+                                void handleAttendanceSortChange(
+                                  option.sortBy,
+                                  option.order,
+                                )
+                              }
+                              className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition ${
+                                isSelected
+                                  ? "bg-blue-50 font-semibold text-blue-700"
+                                  : "text-slate-700 hover:bg-slate-50"
+                              }`}
+                            >
+                              <span>{option.label}</span>
+                              {isSelected && (
+                                <svg
+                                  className="h-4 w-4"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth="2"
+                                    d="M5 13l4 4L19 7"
+                                  />
+                                </svg>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1451,6 +1989,186 @@ const EventDetailsPage: React.FC = () => {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isAddAttendeeOpen && event && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/50 px-4 py-4 sm:items-center sm:py-6">
+          <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="border-b border-slate-100 px-4 py-4 sm:px-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">
+                    Add Attendee
+                  </p>
+                  <h2 className="mt-2 text-xl font-bold text-slate-900">
+                    {event.title}
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Manually record attendance for this event.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddAttendeeOpen(false);
+                    setAddAttendeeFeedback(null);
+                    setAddAttendeeError("");
+                  }}
+                  className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                  aria-label="Close add attendee modal"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="mt-4 flex rounded-full bg-slate-200 p-1">
+                {(["QR", "MANUAL"] as AddAttendanceTab[]).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setAddAttendeeTab(tab)}
+                    className={`w-full rounded-full py-2 text-sm font-semibold transition-colors ${
+                      addAttendeeTab === tab
+                        ? "bg-white text-slate-900"
+                        : "text-slate-500"
+                    }`}
+                  >
+                    {tab === "QR" ? "QR Scan" : "Manual"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+              {addAttendeeError && (
+                <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {addAttendeeError}
+                </div>
+              )}
+
+              {addAttendeeFeedback && (
+                <div
+                  className={`mb-4 rounded-2xl border px-4 py-3 text-sm ${
+                    addAttendeeFeedback.tone === "success"
+                      ? "border-green-200 bg-green-50 text-green-800"
+                      : addAttendeeFeedback.tone === "error"
+                        ? "border-red-200 bg-red-50 text-red-700"
+                        : "border-blue-200 bg-blue-50 text-blue-800"
+                  }`}
+                >
+                  <p className="font-semibold">{addAttendeeFeedback.title}</p>
+                  {addAttendeeFeedback.description && (
+                    <p className="mt-1">{addAttendeeFeedback.description}</p>
+                  )}
+                </div>
+              )}
+
+              {addAttendeeTab === "QR" && (
+                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="relative mx-auto max-w-sm">
+                    <QrAttendanceScanner
+                      eventId={event.id}
+                      allowOverride
+                      onScanSuccess={async (result) => {
+                        setAddAttendeeFeedback({
+                          tone: "success",
+                          title: "Attendance recorded",
+                          description: result.memberName
+                            ? `${result.memberName} has been added.`
+                            : undefined,
+                        });
+                        await fetchAttendancePage(1, { preferCache: false });
+                        setAttendancePage(1);
+                      }}
+                      onApiError={(err) => {
+                        setAddAttendeeError(
+                          err?.response?.data?.error ||
+                            err?.response?.data?.message ||
+                            "Failed to mark attendance.",
+                        );
+                      }}
+                      resolveMemberId={(code) => {
+                        const match = addMembers.find(
+                          (m) => m.uniqueId === code || m.id === code,
+                        );
+                        return match ? match.id : code;
+                      }}
+                    />
+                  </div>
+                  <p className="mt-4 text-center text-sm text-slate-500">
+                    Point the camera at a member's QR code to mark attendance.
+                  </p>
+                </div>
+              )}
+
+              {addAttendeeTab === "MANUAL" && (
+                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="mb-4">
+                    <input
+                      type="text"
+                      placeholder="Search members..."
+                      value={addMembersSearch}
+                      onChange={(e) => setAddMembersSearch(e.target.value)}
+                      className="w-full rounded-full border border-slate-200 bg-slate-50 py-2 pl-4 pr-4 text-sm text-slate-800 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </div>
+
+                  {addMembersLoading ? (
+                    <div className="text-sm text-slate-500">
+                      Loading members…
+                    </div>
+                  ) : (
+                    <ul className="divide-y divide-slate-100">
+                      {filteredAddMembers.map((member) => {
+                        const isPresent = presentMemberIds.has(member.id);
+                        const isInactive = member.isActive === false;
+                        const canAdd = !isPresent && !isInactive;
+
+                        return (
+                          <li
+                            key={member.id}
+                            className="flex items-center justify-between py-3"
+                          >
+                            <div>
+                              <p
+                                className={`font-medium ${
+                                  isInactive
+                                    ? "text-slate-400"
+                                    : "text-slate-800"
+                                }`}
+                              >
+                                {member.name}
+                              </p>
+                              <p className="text-sm text-slate-500">
+                                {member.uniqueId}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleAddAttendance(member.id, "MANUAL")
+                              }
+                              disabled={!canAdd || addAttendeeLoading}
+                              className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+                                isPresent
+                                  ? "bg-green-100 text-green-700"
+                                  : isInactive
+                                    ? "cursor-not-allowed bg-slate-100 text-slate-400"
+                                    : "bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                              }`}
+                            >
+                              {isPresent ? "Present" : "Add"}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

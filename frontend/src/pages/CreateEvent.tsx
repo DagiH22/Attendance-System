@@ -37,6 +37,14 @@ const CreateEvent: React.FC = () => {
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [clusterEvents, setClusterEvents] = useState<
+    Array<{
+      eventDate: string;
+      startTime: string;
+      endTime: string;
+      label: string;
+    }>
+  >([{ eventDate: "", startTime: "", endTime: "", label: "" }]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -47,6 +55,7 @@ const CreateEvent: React.FC = () => {
   const [dateError, setDateError] = useState("");
   const [timeError, setTimeError] = useState("");
   const [locationError, setLocationError] = useState("");
+  const [clusterError, setClusterError] = useState("");
 
   // Custom dropdown state to keep the options list width equal to the control
   const typeWrapperRef = useRef<HTMLDivElement | null>(null);
@@ -92,6 +101,37 @@ const CreateEvent: React.FC = () => {
     }
   }, [type, eventDate]);
 
+  React.useEffect(() => {
+    if (type === "custom" && clusterEvents.length === 0) {
+      setClusterEvents([
+        { eventDate: "", startTime: "", endTime: "", label: "" },
+      ]);
+    }
+  }, [type, clusterEvents.length]);
+
+  const updateClusterEvent = (
+    index: number,
+    field: "eventDate" | "startTime" | "endTime" | "label",
+    value: string,
+  ) => {
+    setClusterEvents((prev) =>
+      prev.map((entry, idx) =>
+        idx === index ? { ...entry, [field]: value } : entry,
+      ),
+    );
+  };
+
+  const addClusterEvent = () => {
+    setClusterEvents((prev) => [
+      ...prev,
+      { eventDate: "", startTime: "", endTime: "", label: "" },
+    ]);
+  };
+
+  const removeClusterEvent = (index: number) => {
+    setClusterEvents((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
   // Validation logic
   const validateForm = () => {
     let isValid = true;
@@ -100,6 +140,7 @@ const CreateEvent: React.FC = () => {
     setDateError("");
     setTimeError("");
     setLocationError("");
+    setClusterError("");
 
     if (!title.trim()) {
       setTitleError("Event title is required");
@@ -111,20 +152,22 @@ const CreateEvent: React.FC = () => {
       isValid = false;
     }
 
-    if (!eventDate) {
-      setDateError("Event date is required");
-      return false;
-    }
+    if (type !== "custom") {
+      if (!eventDate) {
+        setDateError("Event date is required");
+        return false;
+      }
 
-    if (!startTime || !endTime) {
-      setTimeError(
-        !startTime && !endTime
-          ? "Start time and end time are required"
-          : !startTime
-            ? "Start time is required"
-            : "End time is required",
-      );
-      return false;
+      if (!startTime || !endTime) {
+        setTimeError(
+          !startTime && !endTime
+            ? "Start time and end time are required"
+            : !startTime
+              ? "Start time is required"
+              : "End time is required",
+        );
+        return false;
+      }
     }
 
     // Location must be provided
@@ -133,10 +176,34 @@ const CreateEvent: React.FC = () => {
       isValid = false;
     }
 
-    // End time must be after start time
-    if (endTime <= startTime) {
-      setTimeError("End time must be after start time");
-      isValid = false;
+    if (type !== "custom") {
+      // End time must be after start time
+      if (endTime <= startTime) {
+        setTimeError("End time must be after start time");
+        isValid = false;
+      }
+    }
+
+    if (type === "custom") {
+      if (clusterEvents.length === 0) {
+        setClusterError("Add at least one event to the cluster.");
+        return false;
+      }
+
+      for (let i = 0; i < clusterEvents.length; i += 1) {
+        const entry = clusterEvents[i];
+        if (!entry.eventDate || !entry.startTime || !entry.endTime) {
+          setClusterError(
+            `Cluster event #${i + 1} must have a date, start time, and end time.`,
+          );
+          return false;
+        }
+
+        if (entry.endTime <= entry.startTime) {
+          setClusterError(`Cluster event #${i + 1} must end after it starts.`);
+          return false;
+        }
+      }
     }
 
     return isValid;
@@ -150,27 +217,50 @@ const CreateEvent: React.FC = () => {
     setSuccess("");
 
     try {
-      // combine the date and time strings into an iso format
-      // E.g., eventDate "2026-03-10", startTime "14:30" => "2026-03-10T14:30:00.000Z"
-      const startDateTime = new Date(`${eventDate}T${startTime}`).toISOString();
-      const endDateTime = new Date(`${eventDate}T${endTime}`).toISOString();
+      let payload: Record<string, unknown>;
 
-      let backendType = "ONE_TIME";
-      if (type === "weekly") backendType = "WEEKLY";
-      if (type === "custom") backendType = "MONTHLY";
+      if (type === "custom") {
+        const clusterEventsPayload = clusterEvents.map((entry) => ({
+          eventDate: new Date(entry.eventDate).toISOString(),
+          startTime: new Date(
+            `${entry.eventDate}T${entry.startTime}`,
+          ).toISOString(),
+          endTime: new Date(
+            `${entry.eventDate}T${entry.endTime}`,
+          ).toISOString(),
+          label: entry.label.trim() || undefined,
+        }));
 
-      const payload = {
-        title,
-        description,
-        type: backendType,
-        eventDate: new Date(eventDate).toISOString(),
-        startTime: startDateTime,
-        endTime: endDateTime,
-        location: location.trim(),
-        ...((type === "weekly" || type === "custom") && endDate
-          ? { endDate: new Date(endDate).toISOString() }
-          : {}),
-      };
+        payload = {
+          title,
+          description,
+          location: location.trim(),
+          clusterEvents: clusterEventsPayload,
+        };
+      } else {
+        // combine the date and time strings into an iso format
+        // E.g., eventDate "2026-03-10", startTime "14:30" => "2026-03-10T14:30:00.000Z"
+        const startDateTime = new Date(
+          `${eventDate}T${startTime}`,
+        ).toISOString();
+        const endDateTime = new Date(`${eventDate}T${endTime}`).toISOString();
+
+        let backendType = "ONE_TIME";
+        if (type === "weekly") backendType = "WEEKLY";
+
+        payload = {
+          title,
+          description,
+          type: backendType,
+          eventDate: new Date(eventDate).toISOString(),
+          startTime: startDateTime,
+          endTime: endDateTime,
+          location: location.trim(),
+          ...(type === "weekly" && endDate
+            ? { endDate: new Date(endDate).toISOString() }
+            : {}),
+        };
+      }
 
       await api.post("/events", payload);
 
@@ -308,7 +398,7 @@ const CreateEvent: React.FC = () => {
                     ? "One-time Event"
                     : type === "weekly"
                       ? "Weekly"
-                      : "Custom / Monthly"}
+                      : "Custom Cluster"}
                 </span>
                 <svg
                   className="w-4 h-4 text-gray-500"
@@ -361,7 +451,7 @@ const CreateEvent: React.FC = () => {
                       setTypeMenuOpen(false);
                     }}
                   >
-                    Custom / Monthly
+                    Custom Cluster
                   </li>
                 </ul>
               )}
@@ -369,87 +459,197 @@ const CreateEvent: React.FC = () => {
           </div>
 
           {/* Date & Time Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <div>
-              <label
-                htmlFor="eventDate"
-                className="block text-sm font-medium text-gray-700 mb-1"
-              >
-                Event Date <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                id="eventDate"
-                required
-                value={eventDate}
-                onChange={(e) => setEventDate(e.target.value)}
-                className={`w-full px-4 py-2.5 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${dateError ? "border-red-300 bg-red-50" : "border-gray-300"}`}
-              />
-              {dateError && (
-                <p className="mt-1 text-xs text-red-600 font-medium">
-                  {dateError}
-                </p>
-              )}
-            </div>
-
-            {(type === "weekly" || type === "custom") && (
+          {type !== "custom" ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <div>
                 <label
-                  htmlFor="endDate"
+                  htmlFor="eventDate"
                   className="block text-sm font-medium text-gray-700 mb-1"
                 >
-                  End Date <span className="text-red-500">*</span>
+                  Event Date <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="date"
-                  id="endDate"
-                  required={type === "weekly" || type === "custom"}
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+                  id="eventDate"
+                  required
+                  value={eventDate}
+                  onChange={(e) => setEventDate(e.target.value)}
+                  className={`w-full px-4 py-2.5 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${dateError ? "border-red-300 bg-red-50" : "border-gray-300"}`}
+                />
+                {dateError && (
+                  <p className="mt-1 text-xs text-red-600 font-medium">
+                    {dateError}
+                  </p>
+                )}
+              </div>
+
+              {type === "weekly" && (
+                <div>
+                  <label
+                    htmlFor="endDate"
+                    className="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    End Date <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    id="endDate"
+                    required={type === "weekly"}
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label
+                  htmlFor="startTime"
+                  className="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  Start Time <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="time"
+                  id="startTime"
+                  required
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className={`w-full px-4 py-2.5 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${timeError ? "border-red-300 bg-red-50" : "border-gray-300"}`}
                 />
               </div>
-            )}
 
-            <div>
-              <label
-                htmlFor="startTime"
-                className="block text-sm font-medium text-gray-700 mb-1"
-              >
-                Start Time <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="time"
-                id="startTime"
-                required
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className={`w-full px-4 py-2.5 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${timeError ? "border-red-300 bg-red-50" : "border-gray-300"}`}
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="endTime"
-                className="block text-sm font-medium text-gray-700 mb-1"
-              >
-                End Time <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="time"
-                id="endTime"
-                required
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                className={`w-full px-4 py-2.5 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${timeError ? "border-red-300 bg-red-50" : "border-gray-300"}`}
-              />
-            </div>
-            {timeError && (
-              <div className="md:col-span-2">
-                <p className="text-xs text-red-600 font-medium">{timeError}</p>
+              <div>
+                <label
+                  htmlFor="endTime"
+                  className="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  End Time <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="time"
+                  id="endTime"
+                  required
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className={`w-full px-4 py-2.5 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${timeError ? "border-red-300 bg-red-50" : "border-gray-300"}`}
+                />
               </div>
-            )}
-          </div>
+              {timeError && (
+                <div className="md:col-span-2">
+                  <p className="text-xs text-red-600 font-medium">
+                    {timeError}
+                  </p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-800">
+                  Cluster Events
+                </h3>
+                <button
+                  type="button"
+                  onClick={addClusterEvent}
+                  className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                >
+                  + Add Event
+                </button>
+              </div>
+              {clusterError && (
+                <p className="text-xs font-medium text-red-600">
+                  {clusterError}
+                </p>
+              )}
+              <div className="space-y-3">
+                {clusterEvents.map((entry, index) => (
+                  <div
+                    key={`${index}-${entry.eventDate}-${entry.startTime}`}
+                    className="rounded-lg border border-gray-200 bg-gray-50 p-3"
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs font-semibold text-gray-600">
+                        Event {index + 1}
+                      </p>
+                      {clusterEvents.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeClusterEvent(index)}
+                          className="text-xs font-semibold text-red-600 hover:text-red-700"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Label (optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={entry.label}
+                          onChange={(e) =>
+                            updateClusterEvent(index, "label", e.target.value)
+                          }
+                          placeholder="e.g. Morning Session"
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Date
+                        </label>
+                        <input
+                          type="date"
+                          value={entry.eventDate}
+                          onChange={(e) =>
+                            updateClusterEvent(
+                              index,
+                              "eventDate",
+                              e.target.value,
+                            )
+                          }
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Start
+                        </label>
+                        <input
+                          type="time"
+                          value={entry.startTime}
+                          onChange={(e) =>
+                            updateClusterEvent(
+                              index,
+                              "startTime",
+                              e.target.value,
+                            )
+                          }
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          End
+                        </label>
+                        <input
+                          type="time"
+                          value={entry.endTime}
+                          onChange={(e) =>
+                            updateClusterEvent(index, "endTime", e.target.value)
+                          }
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Weekly Occurrences Preview */}
           {type === "weekly" && eventDate && (
