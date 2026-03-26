@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   createMember,
   getAllMembers,
+  getMemberAttendanceDetails,
   getMemberById,
   searchMembers,
   updateMember,
@@ -25,6 +26,9 @@ router.get("/", getAllMembers);
 
 // search and get by name or uniqueId (case-insensitive)
 router.get("/search", searchMembers);
+
+// attended/missed events lists
+router.get("/:id/attendance", getMemberAttendanceDetails);
 
 // get by id
 router.get("/:id", getMemberById);

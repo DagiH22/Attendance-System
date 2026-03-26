@@ -60,28 +60,36 @@ export const createWeeklyEvents = async (
     return Math.floor(diffDays / 7) + 1;
   })();
 
-  // create parent recurring event
-  const parent = await prisma.event.create({
+  // IMPORTANT: Do NOT create a separate parent/original row.
+  // We'll create only week occurrences. For grouping, we set parentEventId
+  // to the Week 1 occurrence id.
+  const week1Date = startDateOnly;
+  const week1Start = setTimeOnDate(week1Date, input.startTime);
+  const week1End = setTimeOnDate(week1Date, input.endTime);
+
+  const week1 = await prisma.event.create({
     data: {
-      title: input.title,
+      title: `${input.title} - Week 1`,
       description: input.description,
-      eventDate: startDateOnly,
-      startTime: setTimeOnDate(startDateOnly, input.startTime),
-      endTime: setTimeOnDate(startDateOnly, input.endTime),
+      eventDate: week1Date,
+      startTime: week1Start,
+      endTime: week1End,
       type: EventType.WEEKLY,
       location: input.location,
+      parentEventId: null,
+      recurrenceIndex: 1,
       recurrenceLengthWeeks: length,
       createdById: input.adminId,
     },
   });
 
-  const childrenCreates = [] as any[];
-  for (let i = 0; i < length; i++) {
+  const creates = [] as any[];
+  for (let i = 1; i < length; i++) {
     const occurrenceDate = addDays(startDateOnly, i * 7);
     const occurrenceStart = setTimeOnDate(occurrenceDate, input.startTime);
     const occurrenceEnd = setTimeOnDate(occurrenceDate, input.endTime);
 
-    childrenCreates.push(
+    creates.push(
       prisma.event.create({
         data: {
           title: `${input.title} - Week ${i + 1}`,
@@ -91,7 +99,7 @@ export const createWeeklyEvents = async (
           endTime: occurrenceEnd,
           type: EventType.WEEKLY,
           location: input.location,
-          parentEventId: parent.id,
+          parentEventId: week1.id,
           recurrenceIndex: i + 1,
           recurrenceLengthWeeks: length,
           createdById: input.adminId,
@@ -100,9 +108,12 @@ export const createWeeklyEvents = async (
     );
   }
 
-  const children = await prisma.$transaction(childrenCreates);
+  const rest = creates.length > 0 ? await prisma.$transaction(creates) : [];
+  const children = [week1, ...rest];
 
-  return { parent, children };
+  // For backwards compatibility with callers that expect { parent, children },
+  // we expose "parent" as the grouping root (week 1 occurrence).
+  return { parent: week1, children };
 };
 
 export const updateWeeklyEvents = async (

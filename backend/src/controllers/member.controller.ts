@@ -268,6 +268,88 @@ export const getMemberById = async (req: Request, res: Response) => {
   }
 };
 
+// GET /api/members/:id/attendance
+// Returns attended past events and missed past events for this member.
+export const getMemberAttendanceDetails = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const idStr = Array.isArray(id) ? id[0] : id;
+    if (!idStr) {
+      return res.status(400).json({ error: "Member id is required" });
+    }
+
+    const member = await prisma.member.findUnique({
+      where: { id: idStr },
+      select: { id: true, isActive: true },
+    });
+
+    if (!member) {
+      return res.status(404).json({ error: "Member not found" });
+    }
+
+    const now = new Date();
+
+    // attended past events
+    const attendances = await prisma.attendance.findMany({
+      where: {
+        memberId: idStr,
+        event: {
+          OR: [{ endedAt: { lte: now } }, { endTime: { lte: now } }],
+        },
+      },
+      select: {
+        id: true,
+        markedAt: true,
+        event: {
+          select: {
+            id: true,
+            title: true,
+            eventDate: true,
+            startTime: true,
+            endTime: true,
+            recurrenceIndex: true,
+          },
+        },
+      },
+      orderBy: { markedAt: "desc" },
+    });
+
+    // missed past events: events that ended in the past and have no attendance record for this member
+    const missedEvents = await prisma.event.findMany({
+      where: {
+        OR: [{ endedAt: { lte: now } }, { endTime: { lte: now } }],
+        attendances: {
+          none: {
+            memberId: idStr,
+          },
+        },
+      },
+      select: {
+        id: true,
+        title: true,
+        eventDate: true,
+        startTime: true,
+        endTime: true,
+        recurrenceIndex: true,
+      },
+      orderBy: { eventDate: "desc" },
+      take: 50,
+    });
+
+    return res.status(200).json({
+      attended: attendances.map((a) => ({
+        attendanceId: a.id,
+        markedAt: a.markedAt,
+        event: a.event,
+      })),
+      missed: missedEvents,
+    });
+  } catch (err: any) {
+    console.error("Error in getMemberAttendanceDetails:", err?.message ?? err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
 export const updateMember = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;

@@ -23,6 +23,29 @@ interface MemberDetails extends Member {
   };
 }
 
+type AttendanceDetailsResponse = {
+  attended: Array<{
+    attendanceId: string;
+    markedAt: string;
+    event: {
+      id: string;
+      title: string;
+      eventDate: string;
+      startTime: string;
+      endTime: string;
+      recurrenceIndex?: number | null;
+    };
+  }>;
+  missed: Array<{
+    id: string;
+    title: string;
+    eventDate: string;
+    startTime: string;
+    endTime: string;
+    recurrenceIndex?: number | null;
+  }>;
+};
+
 const NOT_SPECIFIED = "Not specified";
 
 const formatEnumLabel = (value?: string | null) => {
@@ -64,6 +87,13 @@ const MemberDetailsPage: React.FC = () => {
   const [resendMessage, setResendMessage] = useState<string | null>(null);
   const [resendError, setResendError] = useState<string | null>(null);
 
+  const [statsModalOpen, setStatsModalOpen] = useState(false);
+  const [statsTab, setStatsTab] = useState<"attended" | "missed">("attended");
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [attendanceDetails, setAttendanceDetails] =
+    useState<AttendanceDetailsResponse | null>(null);
+
   // Note: hard-coded user role for now until auth context provides it
   const isSuperAdmin = true;
 
@@ -80,6 +110,46 @@ const MemberDetailsPage: React.FC = () => {
           percentage: 0,
           recentRecords: [],
         };
+        // Also fetch attendance details (attended + missed) so we can show
+        // the last 5 events (present or absent) in Recent Attendance.
+        try {
+          const attRes = await api.get<AttendanceDetailsResponse>(
+            `/members/${memberId}/attendance`,
+          );
+          const attended = attRes.data.attended || [];
+          const missed = attRes.data.missed || [];
+
+          const combined: AttendanceRecord[] = [
+            // attended -> Present
+            ...attended.map((a) => ({
+              id: a.attendanceId,
+              eventId: a.event.id,
+              eventName: a.event.title,
+              // use attendance markedAt for attended entries
+              markedAt: a.markedAt,
+              status: "Present" as AttendanceRecord["status"],
+            })),
+            // missed -> Absent (use eventDate as markedAt for display)
+            ...missed.map((e) => ({
+              id: e.id,
+              eventId: e.id,
+              eventName: e.title,
+              markedAt: e.eventDate,
+              status: "Absent" as AttendanceRecord["status"],
+            })),
+          ];
+
+          // sort by date desc and keep last 5
+          combined.sort(
+            (x, y) =>
+              new Date(y.markedAt).getTime() - new Date(x.markedAt).getTime(),
+          );
+
+          memberData.attendanceData.recentRecords = combined.slice(0, 5);
+        } catch (err) {
+          // non-fatal: if attendance details fail, leave recentRecords as-is
+          // console.debug('Failed to fetch attendance details for recent records', err);
+        }
         setMember(memberData);
         setError(null);
       } catch (err: unknown) {
@@ -185,6 +255,40 @@ const MemberDetailsPage: React.FC = () => {
     }
   };
 
+  const openStatsModal = async (tab: "attended" | "missed") => {
+    if (!memberId) return;
+    setStatsTab(tab);
+    setStatsModalOpen(true);
+
+    // If we already loaded once, don't refetch unless you want to.
+    if (attendanceDetails) {
+      return;
+    }
+
+    setStatsLoading(true);
+    setStatsError(null);
+    try {
+      const response = await api.get<AttendanceDetailsResponse>(
+        `/members/${memberId}/attendance`,
+      );
+      setAttendanceDetails(response.data);
+    } catch (err: unknown) {
+      const friendly = toFriendlyError(err, {
+        action: "load the attendance details",
+        fallbackTitle: "Couldn't load attendance",
+        fallbackMessage: "Please try again.",
+      });
+      setStatsError(friendly.message);
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
+  const closeStatsModal = () => {
+    setStatsModalOpen(false);
+    setStatsError(null);
+  };
+
   if (loading) {
     return (
       <div className="p-4 sm:p-6 lg:p-8 flex justify-center mt-20">
@@ -210,6 +314,144 @@ const MemberDetailsPage: React.FC = () => {
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
+      {statsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-8">
+          <div className="w-full max-w-2xl rounded-xl bg-white shadow-xl border border-gray-200 overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Attendance details
+                </h3>
+                <p className="text-sm text-gray-500">{member.name}</p>
+              </div>
+              <button
+                type="button"
+                onClick={closeStatsModal}
+                className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="px-5 pt-4">
+              <div className="inline-flex rounded-lg border bg-gray-50 p-1">
+                <button
+                  type="button"
+                  onClick={() => setStatsTab("attended")}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
+                    statsTab === "attended"
+                      ? "bg-white text-gray-900 shadow-sm"
+                      : "text-gray-600 hover:text-gray-900"
+                  }`}
+                >
+                  Attended
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatsTab("missed")}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
+                    statsTab === "missed"
+                      ? "bg-white text-gray-900 shadow-sm"
+                      : "text-gray-600 hover:text-gray-900"
+                  }`}
+                >
+                  Missed
+                </button>
+              </div>
+            </div>
+
+            <div className="px-5 py-4 max-h-[70vh] overflow-auto">
+              {statsLoading && (
+                <div className="text-sm text-gray-600">Loading…</div>
+              )}
+              {statsError && (
+                <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {statsError}
+                </div>
+              )}
+
+              {!statsLoading && !statsError && (
+                <>
+                  {statsTab === "attended" && (
+                    <div className="space-y-2">
+                      {(attendanceDetails?.attended ?? []).length === 0 ? (
+                        <div className="text-sm text-gray-500">
+                          No attended events yet.
+                        </div>
+                      ) : (
+                        attendanceDetails!.attended.map((row) => (
+                          <button
+                            key={row.attendanceId}
+                            type="button"
+                            onClick={() =>
+                              navigate(`/events/${row.event.id}`, {
+                                replace: false,
+                              })
+                            }
+                            className="w-full text-left rounded-lg border border-gray-200 p-3 hover:bg-gray-50 transition"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="font-medium text-gray-900">
+                                  {row.event.title}
+                                </div>
+                                <div className="text-sm text-gray-500">
+                                  {formatDate(row.event.eventDate)}
+                                </div>
+                              </div>
+                              <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-1">
+                                Present
+                              </div>
+                            </div>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+
+                  {statsTab === "missed" && (
+                    <div className="space-y-2">
+                      {(attendanceDetails?.missed ?? []).length === 0 ? (
+                        <div className="text-sm text-gray-500">
+                          No missed events found.
+                        </div>
+                      ) : (
+                        attendanceDetails!.missed.map((event) => (
+                          <button
+                            key={event.id}
+                            type="button"
+                            onClick={() =>
+                              navigate(`/events/${event.id}`, {
+                                replace: false,
+                              })
+                            }
+                            className="w-full text-left rounded-lg border border-gray-200 p-3 hover:bg-gray-50 transition"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="font-medium text-gray-900">
+                                  {event.title}
+                                </div>
+                                <div className="text-sm text-gray-500">
+                                  {formatDate(event.eventDate)}
+                                </div>
+                              </div>
+                              <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-full px-2 py-1">
+                                Absent
+                              </div>
+                            </div>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center space-x-4 mb-6">
         <button
           onClick={() => navigate("/members")}
@@ -298,33 +540,60 @@ const MemberDetailsPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Attendance Stats */}
+          {/* Attendance Stats  */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
             <h2 className="text-xl font-semibold text-gray-800 mb-4 pb-2 border-b border-gray-100">
-              Attendance Statistics
+              Attendance
             </h2>
-            <div className="grid grid-cols-3 gap-4 text-center">
-              <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
-                <p className="text-3xl font-bold text-blue-600">
-                  {member.attendanceData?.totalAttended}
-                </p>
-                <p className="text-sm text-blue-800 mt-1 font-medium">
-                  Attended
-                </p>
-              </div>
-              <div className="bg-orange-50 rounded-lg p-4 border border-orange-100">
-                <p className="text-3xl font-bold text-orange-600">
-                  {member.attendanceData?.totalMissed}
-                </p>
-                <p className="text-sm text-orange-800 mt-1 font-medium">
-                  Missed
-                </p>
-              </div>
-              <div className="bg-green-50 rounded-lg p-4 border border-green-100">
-                <p className="text-3xl font-bold text-green-600">
-                  {member.attendanceData?.percentage}%
-                </p>
-                <p className="text-sm text-green-800 mt-1 font-medium">Rate</p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <button
+                type="button"
+                onClick={() => openStatsModal("attended")}
+                className="rounded-lg p-4 text-center transition"
+              >
+                <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
+                  <div className="text-3xl font-bold text-blue-600">
+                    {member.attendanceData?.totalAttended ?? 0}
+                  </div>
+                  <div className="text-sm text-blue-800 mt-1 font-medium">
+                    Attended
+                  </div>
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {" "}
+                  Tap to view the Events
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => openStatsModal("missed")}
+                className="rounded-lg p-4 text-center transition"
+              >
+                <div className="bg-red-50 rounded-lg p-4 border border-red-100">
+                  <div className="text-3xl font-bold text-red-600">
+                    {member.attendanceData?.totalMissed ?? 0}
+                  </div>
+                  <div className="text-sm text-red-800 mt-1 font-medium">
+                    Missed
+                  </div>
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {" "}
+                  Tap to view the Events
+                </div>
+              </button>
+
+              <div className="rounded-lg p-4">
+                <div className="bg-green-50 rounded-lg p-4 border border-green-100 text-center">
+                  <div className="text-3xl font-bold text-green-600">
+                    {member.attendanceData?.percentage ?? 0}%
+                  </div>
+                  <div className="text-sm text-green-800 mt-1 font-medium">
+                    Rate
+                  </div>
+                </div>
               </div>
             </div>
           </div>

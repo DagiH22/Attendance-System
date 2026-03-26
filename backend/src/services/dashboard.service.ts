@@ -9,35 +9,51 @@ export class DashboardService {
     const activeEndThreshold = new Date(now.getTime() - 90 * 60000); // 1.5h after
 
     // 1. Summary Metrics
-    const [
-      totalMembers,
-      activeMembers,
-      totalEvents,
-      activeEvents,
-      totalAttendances,
-    ] = await Promise.all([
-      prisma.member.count(),
-      prisma.member.count({ where: { isActive: true } }),
-      prisma.event.count({ where: { isActive: true } }),
-      prisma.event.findMany({
-        where: {
-          startTime: { lte: activeStartThreshold },
-          endTime: { gte: activeEndThreshold },
-        },
-        include: { _count: { select: { attendances: true } } },
-      }),
-      prisma.attendance.count(),
-    ]);
+    const [totalMembers, activeMembers, totalEvents, activeEvents] =
+      await Promise.all([
+        prisma.member.count(),
+        prisma.member.count({ where: { isActive: true } }),
+        prisma.event.count({ where: { isActive: true } }),
+        prisma.event.findMany({
+          where: {
+            startTime: { lte: activeStartThreshold },
+            endTime: { gte: activeEndThreshold },
+          },
+          include: { _count: { select: { attendances: true } } },
+        }),
+      ]);
 
-    const attendanceRate =
-      totalMembers && totalEvents
-        ? totalAttendances / (totalMembers * totalEvents)
-        : 0;
+    // Avg attendance: use the most recent completed events so the metric reflects recent reality.
+    // Computes: (avg attendees per event) / activeMembers
+    const recentEventsForAverage = await prisma.event.findMany({
+      where: {
+        endTime: { lt: now },
+        // For WEEKLY recurrence, only count occurrences (recurrenceIndex set).
+        NOT: { AND: [{ type: "WEEKLY" as any }, { recurrenceIndex: null }] },
+      },
+      orderBy: { eventDate: "desc" },
+      take: 10,
+      include: { _count: { select: { attendances: true } } },
+    });
+
+    const avgAttendeesPerEvent = recentEventsForAverage.length
+      ? recentEventsForAverage.reduce(
+          (sum, e) => sum + e._count.attendances,
+          0,
+        ) / recentEventsForAverage.length
+      : 0;
+
+    const attendanceRate = activeMembers
+      ? avgAttendeesPerEvent / activeMembers
+      : 0;
 
     // 2. Alerts System
     // Fetch last 3 past events
     const last3Events = await prisma.event.findMany({
-      where: { endTime: { lt: now } },
+      where: {
+        endTime: { lt: now },
+        NOT: { AND: [{ type: "WEEKLY" as any }, { recurrenceIndex: null }] },
+      },
       orderBy: { eventDate: "desc" },
       take: 3,
       select: { id: true, title: true, eventDate: true },
@@ -47,31 +63,60 @@ export class DashboardService {
 
     let absentAlerts: any[] = [];
     if (last3EventIds.length > 0) {
-      // Find members who missed the last 2 or 3 events
-      const recentAttendances = await prisma.attendance.groupBy({
-        by: ["memberId"],
+      // Mark which members attended each of the last events.
+      const recentAttendances = await prisma.attendance.findMany({
         where: { eventId: { in: last3EventIds } },
-        _count: { eventId: true },
+        select: { memberId: true, eventId: true },
       });
 
-      const attendedMemberIds = recentAttendances.map((a) => a.memberId);
+      const attendedByEvent = new Map<string, Set<string>>();
+      for (const eventId of last3EventIds) {
+        attendedByEvent.set(eventId, new Set());
+      }
+      for (const row of recentAttendances) {
+        attendedByEvent.get(row.eventId)?.add(row.memberId);
+      }
 
-      const missingMembers = await prisma.member.findMany({
-        where: { id: { notIn: attendedMemberIds }, isActive: true },
+      const activeMemberList = await prisma.member.findMany({
+        where: { isActive: true },
         select: { id: true, name: true, email: true },
       });
 
-      absentAlerts = missingMembers.map((m) => ({
-        ...m,
-        consecutiveAbsences: last3EventIds.length,
-        status: last3EventIds.length >= 3 ? "Critical" : "Warning",
-      }));
+      // Count consecutive absences starting from the most recent event.
+      absentAlerts = activeMemberList
+        .map((m) => {
+          let consecutiveAbsences = 0;
+          for (const eventId of last3EventIds) {
+            const attended = attendedByEvent.get(eventId)?.has(m.id);
+            if (attended) {
+              break;
+            }
+            consecutiveAbsences += 1;
+          }
+
+          const status =
+            consecutiveAbsences >= 3
+              ? "Critical"
+              : consecutiveAbsences >= 2
+                ? "Warning"
+                : "OK";
+
+          return {
+            ...m,
+            consecutiveAbsences,
+            status,
+          };
+        })
+        .filter((a) => a.status !== "OK");
     }
 
     // Low Attendance Events
     const lowAttendanceEvents = await prisma.event
       .findMany({
-        where: { endTime: { lt: now } },
+        where: {
+          endTime: { lt: now },
+          NOT: { AND: [{ type: "WEEKLY" as any }, { recurrenceIndex: null }] },
+        },
         include: { _count: { select: { attendances: true } } },
         orderBy: { eventDate: "desc" },
         take: 10,
@@ -80,7 +125,7 @@ export class DashboardService {
         events
           .map((e) => ({
             ...e,
-            rate: totalMembers ? e._count.attendances / totalMembers : 0,
+            rate: activeMembers ? e._count.attendances / activeMembers : 0,
           }))
           .filter((e) => e.rate < 0.5),
       );

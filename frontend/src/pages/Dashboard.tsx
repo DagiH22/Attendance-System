@@ -3,6 +3,7 @@ import { dashboardApi } from "../lib/dashboard.api";
 import { AlertCircle, Calendar, Users, TrendingUp } from "lucide-react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { toFriendlyError } from "../lib/errors";
 
 export default function DashboardPage() {
   const [data, setData] = useState<any>(null);
@@ -16,8 +17,15 @@ export default function DashboardPage() {
   useEffect(() => {
     dashboardApi
       .getAnalytics()
-      .then((res) => setData(res.data))
-      .catch((err) => setError(err.message))
+      .then((res) => setData(res))
+      .catch((err) => {
+        const friendly = toFriendlyError(err, {
+          action: "load the dashboard",
+          fallbackTitle: "Couldn't load dashboard",
+          fallbackMessage: "Please try again.",
+        });
+        setError(friendly.message);
+      })
       .finally(() => setLoading(false));
   }, []);
 

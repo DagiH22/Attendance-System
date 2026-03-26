@@ -469,18 +469,26 @@ export const getEventById = async (req: Request, res: Response) => {
     const idStr = Array.isArray(id) ? id[0] : id;
     if (!idStr) return res.status(400).json({ error: "Event id is required" });
 
-    const event = await prisma.event.findUnique({
-      where: { id: idStr },
-      include: {
-        _count: { select: { attendances: true } },
-        cluster: {
-          select: { id: true, title: true, startDate: true, endDate: true },
-        },
-      } as any,
-    });
+    const [event, activeMembers] = await Promise.all([
+      prisma.event.findUnique({
+        where: { id: idStr },
+        include: {
+          _count: { select: { attendances: true } },
+          cluster: {
+            select: { id: true, title: true, startDate: true, endDate: true },
+          },
+        } as any,
+      }),
+      prisma.member.count({ where: { isActive: true } }),
+    ]);
     if (!event) return res.status(404).json({ error: "Event not found" });
 
-    return res.status(200).json({ event: serializeEventForResponse(event) });
+    return res.status(200).json({
+      event: {
+        ...serializeEventForResponse(event),
+        totalMembers: activeMembers,
+      },
+    });
   } catch (err: any) {
     console.error("Error in getEventById:", err?.message ?? err);
     return res.status(500).json({ error: "Internal server error" });
