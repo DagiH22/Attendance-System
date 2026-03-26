@@ -6,7 +6,8 @@ import axios, {
 } from "axios";
 
 const ACCESS_TOKEN_KEY = "accessToken";
-const apiBaseUrl =(import.meta.env.VITE_API_URL as string) || "http://localhost:10000";
+const apiBaseUrl =
+  (import.meta.env.VITE_API_URL as string) || "http://localhost:10000";
 
 let isRefreshing = false;
 let refreshPromise: Promise<string | null> | null = null;
@@ -96,12 +97,17 @@ api.interceptors.response.use(
     const originalRequest = error.config as RetryableRequestConfig | undefined;
     const status = error.response?.status;
     const requestUrl = originalRequest?.url ?? "";
+    const isAuthEndpoint =
+      requestUrl.includes("/auth/login") ||
+      requestUrl.includes("/auth/refresh") ||
+      requestUrl.includes("/auth/logout") ||
+      requestUrl.includes("/auth/me");
     const isRefreshCall = requestUrl.includes("/auth/refresh");
     const shouldAttemptRefresh =
       status === 401 &&
       originalRequest &&
       !originalRequest._retry &&
-      !isRefreshCall;
+      !isAuthEndpoint;
 
     if (!shouldAttemptRefresh) {
       if (status === 401 && isRefreshCall) {

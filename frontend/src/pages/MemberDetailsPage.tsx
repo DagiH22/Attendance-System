@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import api from "../lib/api";
+import { toFriendlyError } from "../lib/errors";
 import formatDate from "../lib/formatDate";
 import type { Member } from "../types/members";
 
@@ -82,14 +83,12 @@ const MemberDetailsPage: React.FC = () => {
         setMember(memberData);
         setError(null);
       } catch (err: unknown) {
-        if (err instanceof Error) {
-          setError(
-            (err as { response?: { data?: { message?: string } } }).response
-              ?.data?.message || "Failed to load member details.",
-          );
-        } else {
-          setError("Failed to load member details.");
-        }
+        const friendly = toFriendlyError(err, {
+          action: "load the member details",
+          fallbackTitle: "Couldn't load member",
+          fallbackMessage: "Please refresh the page and try again.",
+        });
+        setError(friendly.message);
       } finally {
         setLoading(false);
       }
@@ -106,8 +105,14 @@ const MemberDetailsPage: React.FC = () => {
       setMember((prev) => (prev ? { ...prev, isActive: false } : null));
       setShowConfirmModal(false);
       setPendingAction(null);
-    } catch {
-      console.error("Failed to deactivate member");
+    } catch (err) {
+      console.error("Failed to deactivate member", err);
+      const friendly = toFriendlyError(err, {
+        action: "deactivate the member",
+        fallbackTitle: "Couldn't deactivate member",
+        fallbackMessage: "Please try again.",
+      });
+      setError(friendly.message);
     }
   };
 
@@ -117,8 +122,14 @@ const MemberDetailsPage: React.FC = () => {
       setMember((prev) => (prev ? { ...prev, isActive: true } : null));
       setShowConfirmModal(false);
       setPendingAction(null);
-    } catch {
-      console.error("Failed to activate member");
+    } catch (err) {
+      console.error("Failed to activate member", err);
+      const friendly = toFriendlyError(err, {
+        action: "activate the member",
+        fallbackTitle: "Couldn't activate member",
+        fallbackMessage: "Please try again.",
+      });
+      setError(friendly.message);
     }
   };
 
@@ -142,9 +153,13 @@ const MemberDetailsPage: React.FC = () => {
           "You've reached the weekly resend limit. Please try again later or contact support.",
         );
       } else {
-        setResendError(
-          "We couldn't send the email right now. Please try again later or contact support.",
-        );
+        const friendly = toFriendlyError(err, {
+          action: "resend the QR code",
+          fallbackTitle: "Couldn't resend QR code",
+          fallbackMessage:
+            "Please try again later. If the issue continues, contact support.",
+        });
+        setResendError(friendly.message);
       }
     } finally {
       setIsResending(false);

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { toFriendlyError } from "../lib/errors";
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState("");
@@ -35,17 +36,11 @@ const Login: React.FC = () => {
       navigate("/events", { replace: true });
     } catch (err: any) {
       console.error("Login error:", err);
-      const serverMessage = err?.response?.data?.error;
-      const statusText = err?.response?.statusText;
-      const statusCode = err?.response?.status;
-
-      if (serverMessage) {
-        setError(serverMessage);
-      } else if (statusCode && statusText) {
-        setError(`Request failed: ${statusCode} ${statusText}`);
-      } else {
-        setError("An unexpected error occurred. Please try again.");
-      }
+      const friendly = toFriendlyError(err, {
+        action: "sign in",
+        fallbackMessage: "Please try again.",
+      });
+      setError(friendly.message);
     } finally {
       setIsLoading(false);
     }

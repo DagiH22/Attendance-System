@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../lib/api";
+import { toFriendlyError } from "../lib/errors";
 import formatDate from "../lib/formatDate";
 import type { DashboardEvent } from "../types/events";
 import { useAuth } from "../contexts/AuthContext";
@@ -298,11 +299,12 @@ const EventsPage: React.FC = () => {
       }
     } catch (err: any) {
       console.error("Error fetching events:", err);
-      setError(
-        err.response?.data?.message ||
-          err.response?.data?.error ||
-          "Failed to load events.",
-      );
+      const friendly = toFriendlyError(err, {
+        action: "load events",
+        fallbackTitle: "Couldn't load events",
+        fallbackMessage: "Please try again.",
+      });
+      setError(friendly.message);
     } finally {
       pendingBatchOffsetsRef.current.delete(offset);
       if (showLoader) {

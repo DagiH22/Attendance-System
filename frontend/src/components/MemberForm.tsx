@@ -77,14 +77,7 @@ const fourKiloDepartmentOptions = [
 
 const batchOptionsByCampus: Record<Exclude<CampusOption, "">, BatchOption[]> = {
   FOUR_KILO: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4", "GRADUATE"],
-  FIVE_KILO: [
-    "FRESHMAN",
-    "YEAR_2",
-    "YEAR_3",
-    "YEAR_4",
-    "YEAR_5",
-    "GRADUATE",
-  ],
+  FIVE_KILO: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4", "YEAR_5", "GRADUATE"],
   SIX_KILO: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4", "GRADUATE"],
   ART: ["FRESHMAN", "YEAR_2", "YEAR_3", "YEAR_4", "GRADUATE"],
 };

@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AxiosError } from "axios";
 import { useNavigate, useParams } from "react-router-dom";
 import api from "../lib/api";
 import MemberForm, { type MemberFormValues } from "../components/MemberForm";
+import { toFriendlyError } from "../lib/errors";
 
 const emptyValues: MemberFormValues = {
   name: "",
@@ -48,15 +48,12 @@ const EditMemberPage: React.FC = () => {
             typeof member.isActive === "boolean" ? member.isActive : true,
         });
       } catch (error) {
-        const axiosError = error as AxiosError<{
-          error?: string;
-          message?: string;
-        }>;
-        setSubmitError(
-          axiosError.response?.data?.error ||
-            axiosError.response?.data?.message ||
-            "Failed to load member details.",
-        );
+        const friendly = toFriendlyError(error, {
+          action: "load the member details",
+          fallbackTitle: "Couldn't load member",
+          fallbackMessage: "Please refresh the page and try again.",
+        });
+        setSubmitError(friendly.message);
       } finally {
         setLoading(false);
       }
@@ -97,15 +94,12 @@ const EditMemberPage: React.FC = () => {
         state: { updated: true },
       });
     } catch (error) {
-      const axiosError = error as AxiosError<{
-        error?: string;
-        message?: string;
-      }>;
-      setSubmitError(
-        axiosError.response?.data?.error ||
-          axiosError.response?.data?.message ||
-          "We couldn't update the member right now. Please try again.",
-      );
+      const friendly = toFriendlyError(error, {
+        action: "update the member",
+        fallbackTitle: "Update failed",
+        fallbackMessage: "Please try again.",
+      });
+      setSubmitError(friendly.message);
     } finally {
       setIsSubmitting(false);
     }

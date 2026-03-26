@@ -1,8 +1,8 @@
 import React, { useState } from "react";
-import { AxiosError } from "axios";
 import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
 import MemberForm, { type MemberFormValues } from "../components/MemberForm";
+import { toFriendlyError } from "../lib/errors";
 
 const initialFormState: MemberFormValues = {
   name: "",
@@ -42,15 +42,12 @@ const RegisterMemberPage: React.FC = () => {
         state: { registered: true },
       });
     } catch (error) {
-      const axiosError = error as AxiosError<{
-        error?: string;
-        message?: string;
-      }>;
-      setSubmitError(
-        axiosError.response?.data?.error ||
-          axiosError.response?.data?.message ||
-          "We couldn't register the member right now. Please try again.",
-      );
+      const friendly = toFriendlyError(error, {
+        action: "register the member",
+        fallbackTitle: "Registration failed",
+        fallbackMessage: "Please try again.",
+      });
+      setSubmitError(friendly.message);
     } finally {
       setIsSubmitting(false);
     }
