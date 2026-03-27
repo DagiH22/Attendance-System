@@ -37,6 +37,11 @@ const api: AxiosInstance = axios.create({
   withCredentials: true,
 });
 
+export const getMembersCount = async (): Promise<number> => {
+  const response = await api.get<{ count?: number }>("/members/count");
+  return Number(response.data?.count ?? 0);
+};
+
 const applyAccessToken = (
   config: InternalAxiosRequestConfig,
   token: string,

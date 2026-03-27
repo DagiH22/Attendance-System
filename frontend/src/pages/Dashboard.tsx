@@ -5,9 +5,12 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { toFriendlyError } from "../lib/errors";
 
+const DASHBOARD_CACHE_KEY = "dashboard:analytics:v1";
+
 export default function DashboardPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
   const navigate = useNavigate();
@@ -15,30 +18,61 @@ export default function DashboardPage() {
   const { logout } = useAuth();
 
   useEffect(() => {
-    dashboardApi
-      .getAnalytics()
-      .then((res) => setData(res))
-      .catch((err) => {
+    let cancelled = false;
+
+    const loadDashboard = async () => {
+      try {
+        const cachedRaw = sessionStorage.getItem(DASHBOARD_CACHE_KEY);
+        if (cachedRaw) {
+          const cached = JSON.parse(cachedRaw);
+          if (cached?.data) {
+            setData(cached.data);
+            setLoading(false);
+            setRefreshing(true);
+          }
+        }
+      } catch {
+        // Ignore cache parse/storage errors.
+      }
+
+      try {
+        const res = await dashboardApi.getAnalytics();
+        if (cancelled) return;
+
+        setData(res);
+        setError("");
+
+        try {
+          sessionStorage.setItem(
+            DASHBOARD_CACHE_KEY,
+            JSON.stringify({ data: res, cachedAt: Date.now() }),
+          );
+        } catch {
+          // Ignore cache write errors.
+        }
+      } catch (err) {
+        if (cancelled) return;
+
         const friendly = toFriendlyError(err, {
           action: "load the dashboard",
           fallbackTitle: "Couldn't load dashboard",
           fallbackMessage: "Please try again.",
         });
         setError(friendly.message);
-      })
-      .finally(() => setLoading(false));
-  }, []);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+      }
+    };
 
-  if (loading)
-    return (
-      <div className="p-8">
-        <div className="animate-pulse flex space-x-4">Loading dashboard...</div>
-      </div>
-    );
-  if (error)
-    return (
-      <div className="p-8 text-red-500">Error loading dashboard: {error}</div>
-    );
+    void loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 relative">
@@ -98,177 +132,229 @@ export default function DashboardPage() {
 
       {/* Main Content */}
       <div className="max-w-4xl mx-auto w-full px-4 pt-32 sm:pt-40 pb-6 space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Summary Cards */}
-          <div className="bg-white p-6 rounded-lg shadow-sm border">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-gray-500 text-sm font-medium">
-                Total Members
-              </h3>
-              <Users className="text-blue-500" size={20} />
-            </div>
-            <div className="text-3xl font-bold">
-              {data?.summary.totalMembers}
-            </div>
-            <div className="text-sm text-green-500 mt-2">
-              {data?.summary.activeMembers} active
-            </div>
+        {refreshing && !loading && (
+          <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+            Updating dashboard…
           </div>
+        )}
 
-          <div className="bg-white p-6 rounded-lg shadow-sm border">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-gray-500 text-sm font-medium">
-                Active Events
-              </h3>
-              <Calendar className="text-green-500" size={20} />
-            </div>
-            <div className="text-3xl font-bold">
-              {data?.summary.activeEventsCount}
-            </div>
-            <div className="text-sm text-gray-500 mt-2">
-              out of {data?.summary.totalEvents} total
-            </div>
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            Error loading dashboard: {error}
           </div>
+        )}
 
-          <div className="bg-white p-6 rounded-lg shadow-sm border">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-gray-500 text-sm font-medium">
-                Avg Attendance
-              </h3>
-              <TrendingUp className="text-purple-500" size={20} />
-            </div>
-            <div className="text-3xl font-bold">
-              {(data?.summary.attendanceRate * 100).toFixed(1)}%
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-          {/* Alerts Panel */}
-          <div className="bg-white p-6 rounded-lg shadow-sm border border-red-100">
-            <div className="flex items-center gap-2 mb-4 text-red-600">
-              <AlertCircle size={24} />
-              <h2 className="text-xl font-semibold">Critical Alerts</h2>
-            </div>
-            <div className="space-y-4">
-              {data?.alerts.absentAlerts
-                .filter((a: any) => a.status === "Critical")
-                .map((alert: any) => (
-                  <div
-                    key={alert.id}
-                    className="p-3 bg-red-50 rounded-md border border-red-200 flex justify-between"
-                  >
-                    <div>
-                      <div className="font-medium">{alert.name}</div>
-                      <div className="text-sm text-red-600">
-                        Missed {alert.consecutiveAbsences} consecutive events
-                      </div>
-                    </div>
-                    <Link
-                      to={`/members/${alert.id}`}
-                      className="text-sm font-medium text-red-700 hover:underline"
-                    >
-                      View Profile
-                    </Link>
-                  </div>
-                ))}
-              {data?.alerts.absentAlerts.filter(
-                (a: any) => a.status === "Critical",
-              ).length === 0 && (
-                <div className="text-gray-500 text-sm">No critical alerts.</div>
-              )}
-            </div>
-          </div>
-
-          {/* Warnings Panel */}
-          <div className="bg-white p-6 rounded-lg shadow-sm border border-yellow-100">
-            <div className="flex items-center gap-2 mb-4 text-yellow-600">
-              <AlertCircle size={24} />
-              <h2 className="text-xl font-semibold">Warnings</h2>
-            </div>
-            <div className="space-y-4">
-              {data?.alerts.absentAlerts
-                .filter((a: any) => a.status === "Warning")
-                .map((alert: any) => (
-                  <div
-                    key={alert.id}
-                    className="p-3 bg-yellow-50 rounded-md border border-yellow-200 flex justify-between"
-                  >
-                    <div>
-                      <div className="font-medium">{alert.name}</div>
-                      <div className="text-sm text-yellow-700">
-                        Missed {alert.consecutiveAbsences} events
-                      </div>
-                    </div>
-                    <Link
-                      to={`/members/${alert.id}`}
-                      className="text-sm font-medium text-yellow-800 hover:underline"
-                    >
-                      View Profile
-                    </Link>
-                  </div>
-                ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-          {/* Top Attendees */}
-          <div className="bg-white p-6 rounded-lg shadow-sm border">
-            <h2 className="text-xl font-semibold mb-4">Top Attendees</h2>
-            <div className="space-y-3">
-              {data?.analytics.topAttendees.map(
-                (member: any, index: number) => (
-                  <div
-                    key={member.id}
-                    className="flex items-center justify-between p-2 hover:bg-gray-50 rounded"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 font-bold flex items-center justify-center">
-                        {index + 1}
-                      </div>
-                      <div className="font-medium">{member.name}</div>
-                    </div>
-                    <div className="font-bold">{member._count.attendances}</div>
-                  </div>
-                ),
-              )}
-            </div>
-          </div>
-
-          {/* Low Attendance Events */}
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h2 className="text-xl font-semibold mb-4">
-              Events Needing Attention
-            </h2>
-            <div className="space-y-3">
-              {data?.alerts.lowAttendanceEvents.map((event: any) => (
+        {loading && !data ? (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+              {[1, 2, 3, 4].map((i) => (
                 <div
-                  key={event.id}
-                  onClick={() => navigate(`/events/${event.id}`)}
-                  className="p-3 border rounded-md flex justify-between items-center cursor-pointer hover:bg-gray-50 transition"
-                >
-                  <div>
-                    <div className="font-medium text-gray-900 hover:text-blue-600 transition">
-                      {event.title}
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      {new Date(event.eventDate).toLocaleDateString()}
-                    </div>
-                  </div>
-                  <div className="text-red-600 font-bold">
-                    {(event.rate * 100).toFixed(1)}%
-                  </div>
-                </div>
+                  key={i}
+                  className="h-28 animate-pulse rounded-lg border bg-white"
+                />
               ))}
-              {data?.alerts.lowAttendanceEvents.length === 0 && (
-                <div className="text-gray-500">
-                  All recent events had good attendance.
-                </div>
-              )}
+            </div>
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <div className="h-56 animate-pulse rounded-lg border bg-white" />
+              <div className="h-56 animate-pulse rounded-lg border bg-white" />
             </div>
           </div>
-        </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Summary Cards */}
+              <div className="bg-white p-6 rounded-lg shadow-sm border">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-gray-500 text-sm font-medium">
+                    Total Members
+                  </h3>
+                  <Users className="text-blue-500" size={20} />
+                </div>
+                <div className="text-3xl font-bold">
+                  {data?.summary?.totalMembers ?? 0}
+                </div>
+                <div className="text-sm text-green-500 mt-2">
+                  {data?.summary?.activeMembers ?? 0} active
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-lg shadow-sm border">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-gray-500 text-sm font-medium">
+                    Active Events
+                  </h3>
+                  <Calendar className="text-green-500" size={20} />
+                </div>
+                <div className="text-3xl font-bold">
+                  {data?.summary?.activeEventsCount ?? 0}
+                </div>
+                <div className="text-sm text-gray-500 mt-2">
+                  out of {data?.summary?.totalEvents ?? 0} total
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-lg shadow-sm border">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-gray-500 text-sm font-medium">
+                    Avg Attendance
+                  </h3>
+                  <TrendingUp className="text-purple-500" size={20} />
+                </div>
+                <div className="text-3xl font-bold">
+                  {(
+                    ((data?.summary?.attendanceRate as number | undefined) ??
+                      0) * 100
+                  ).toFixed(1)}
+                  %
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+              {/* Alerts Panel */}
+              <div className="bg-white p-6 rounded-lg shadow-sm border border-red-100">
+                <div className="flex items-center gap-2 mb-4 text-red-600">
+                  <AlertCircle size={24} />
+                  <h2 className="text-xl font-semibold">Critical Alerts</h2>
+                </div>
+                <div className="space-y-4">
+                  {(data?.alerts?.absentAlerts ?? [])
+                    .filter((a: any) => a.status === "Critical")
+                    .map((alert: any) => (
+                      <div
+                        key={alert.id}
+                        className="p-3 bg-red-50 rounded-md border border-red-200 flex justify-between"
+                      >
+                        <div>
+                          <div className="font-medium">{alert.name}</div>
+                          <div className="text-sm text-red-600">
+                            Missed {alert.consecutiveAbsences} consecutive
+                            events
+                          </div>
+                        </div>
+                        <Link
+                          to={`/members/${alert.id}`}
+                          className="text-sm font-medium text-red-700 hover:underline"
+                        >
+                          View Profile
+                        </Link>
+                      </div>
+                    ))}
+                  {(data?.alerts?.absentAlerts ?? []).filter(
+                    (a: any) => a.status === "Critical",
+                  ).length === 0 && (
+                    <div className="text-gray-500 text-sm">
+                      No critical alerts.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Warnings Panel */}
+              <div className="bg-white p-6 rounded-lg shadow-sm border border-yellow-100">
+                <div className="flex items-center gap-2 mb-4 text-yellow-600">
+                  <AlertCircle size={24} />
+                  <h2 className="text-xl font-semibold">Warnings</h2>
+                </div>
+                <div className="space-y-4">
+                  {(data?.alerts?.absentAlerts ?? [])
+                    .filter((a: any) => a.status === "Warning")
+                    .map((alert: any) => (
+                      <div
+                        key={alert.id}
+                        className="p-3 bg-yellow-50 rounded-md border border-yellow-200 flex justify-between"
+                      >
+                        <div>
+                          <div className="font-medium">{alert.name}</div>
+                          <div className="text-sm text-yellow-700">
+                            Missed {alert.consecutiveAbsences} events
+                          </div>
+                        </div>
+                        <Link
+                          to={`/members/${alert.id}`}
+                          className="text-sm font-medium text-yellow-800 hover:underline"
+                        >
+                          View Profile
+                        </Link>
+                      </div>
+                    ))}
+                  {(data?.alerts?.absentAlerts ?? []).filter(
+                    (a: any) => a.status === "Warning",
+                  ).length === 0 && (
+                    <div className="text-gray-500 text-sm">No warnings.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+              {/* Top Attendees */}
+              <div className="bg-white p-6 rounded-lg shadow-sm border">
+                <h2 className="text-xl font-semibold mb-4">Top Attendees</h2>
+                <div className="space-y-3">
+                  {(data?.analytics?.topAttendees ?? []).map(
+                    (member: any, index: number) => (
+                      <div
+                        key={member.id}
+                        className="flex items-center justify-between p-2 hover:bg-gray-50 rounded"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 font-bold flex items-center justify-center">
+                            {index + 1}
+                          </div>
+                          <div className="font-medium">{member.name}</div>
+                        </div>
+                        <div className="font-bold">
+                          {member._count.attendances}
+                        </div>
+                      </div>
+                    ),
+                  )}
+                  {(data?.analytics?.topAttendees ?? []).length === 0 && (
+                    <div className="text-gray-500 text-sm">
+                      No attendance data yet.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Low Attendance Events */}
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h2 className="text-xl font-semibold mb-4">
+                  Events Needing Attention
+                </h2>
+                <div className="space-y-3">
+                  {(data?.alerts?.lowAttendanceEvents ?? []).map(
+                    (event: any) => (
+                      <div
+                        key={event.id}
+                        onClick={() => navigate(`/events/${event.id}`)}
+                        className="p-3 border rounded-md flex justify-between items-center cursor-pointer hover:bg-gray-50 transition"
+                      >
+                        <div>
+                          <div className="font-medium text-gray-900 hover:text-blue-600 transition">
+                            {event.title}
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            {new Date(event.eventDate).toLocaleDateString()}
+                          </div>
+                        </div>
+                        <div className="text-red-600 font-bold">
+                          {(event.rate * 100).toFixed(1)}%
+                        </div>
+                      </div>
+                    ),
+                  )}
+                  {(data?.alerts?.lowAttendanceEvents ?? []).length === 0 && (
+                    <div className="text-gray-500">
+                      All recent events had good attendance.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

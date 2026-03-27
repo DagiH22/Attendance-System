@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import api from "../lib/api";
+import api, { getMembersCount } from "../lib/api";
 import formatDate, { formatDateTime } from "../lib/formatDate";
 import QrAttendanceScanner from "../components/QrAttendanceScanner";
 import type {
@@ -135,6 +135,7 @@ const EventDetailsPage: React.FC = () => {
   const [attendancePage, setAttendancePage] = useState(1);
   const [attendanceTotalPages, setAttendanceTotalPages] = useState(1);
   const [attendanceTotalCount, setAttendanceTotalCount] = useState(0);
+  const [membersCount, setMembersCount] = useState<number | null>(null);
   const [attendanceSortBy, setAttendanceSortBy] =
     useState<AttendanceSortBy>("time");
   const [attendanceOrder, setAttendanceOrder] =
@@ -293,7 +294,17 @@ const EventDetailsPage: React.FC = () => {
           throw new Error("Event not found");
         }
 
-        setEvent(mapEventToDashboardEvent(rawEvent));
+        const mapped = mapEventToDashboardEvent(rawEvent);
+        setEvent(mapped);
+
+        if (!mapped.totalMembers) {
+          try {
+            const count = await getMembersCount();
+            setMembersCount(count);
+          } catch {
+            setMembersCount(0);
+          }
+        }
       } catch (err: any) {
         console.error("Error loading event details:", err);
         setError(
@@ -398,8 +409,14 @@ const EventDetailsPage: React.FC = () => {
   }, [isAttendanceModalOpen, isAttendanceSortOpen]);
 
   const attendanceStats = useMemo(() => {
-    const totalMembers = event?.totalMembers ?? 0;
-    const attendees = event?.attendanceCount ?? 0;
+    const totalMembers =
+      event?.totalMembers && event.totalMembers > 0
+        ? event.totalMembers
+        : (membersCount ?? 0);
+    const attendees =
+      attendanceTotalCount > 0
+        ? attendanceTotalCount
+        : (event?.attendanceCount ?? 0);
     const absentees = Math.max(totalMembers - attendees, 0);
     const attendancePercentage =
       totalMembers > 0 ? Math.round((attendees / totalMembers) * 100) : 0;
@@ -410,7 +427,7 @@ const EventDetailsPage: React.FC = () => {
       absentees,
       attendancePercentage,
     };
-  }, [event]);
+  }, [event, attendanceTotalCount, membersCount]);
 
   const formatTime = (value: string) =>
     new Date(value).toLocaleTimeString([], {
@@ -624,11 +641,8 @@ const EventDetailsPage: React.FC = () => {
   };
 
   const isSuperAdmin = admin?.role === "SUPER_ADMIN";
-  const hasStarted = event
-    ? new Date(event.startTime).getTime() <= Date.now()
-    : false;
-  const canEdit = Boolean(isSuperAdmin && event && !hasStarted);
-  const canDelete = Boolean(isSuperAdmin && event && !hasStarted);
+  const canEdit = Boolean(isSuperAdmin && event);
+  const canDelete = Boolean(isSuperAdmin && event);
 
   const openClusterModal = async () => {
     if (!event?.cluster?.id) {
@@ -837,13 +851,6 @@ const EventDetailsPage: React.FC = () => {
       return;
     }
 
-    if (parsedStartTime.getTime() <= Date.now()) {
-      setActionError(
-        "Editing is only allowed for events that have not started yet.",
-      );
-      return;
-    }
-
     if (parsedEndTime <= parsedStartTime) {
       setActionError("End time must be after start time.");
       return;
@@ -979,17 +986,6 @@ const EventDetailsPage: React.FC = () => {
                 </span>
               </div>
             </div>
-
-            {isSuperAdmin && (
-              <div className="mt-5 border-t border-gray-100 pt-4">
-                {!canEdit && (
-                  <p className="w-full text-sm text-gray-500">
-                    Editing and deletion are only available before the event
-                    starts.
-                  </p>
-                )}
-              </div>
-            )}
 
             {actionError && (
               <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

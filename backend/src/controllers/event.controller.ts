@@ -732,7 +732,7 @@ export const closeEvent = async (req: Request, res: Response) => {
 };
 
 // PATCH /api/events/:id
-// Only SUPER_ADMIN. Editing is blocked once the event has started.
+// Only SUPER_ADMIN.
 export const updateEvent = async (req: Request, res: Response) => {
   try {
     if (!req.admin?.id) {
@@ -751,11 +751,6 @@ export const updateEvent = async (req: Request, res: Response) => {
     }
 
     const now = new Date();
-    if (existing.startTime <= now) {
-      return res
-        .status(403)
-        .json({ error: "Event has already started; editing is disabled" });
-    }
 
     const { title, description, status, startTime, endTime, location } =
       req.body ?? {};
@@ -799,11 +794,6 @@ export const updateEvent = async (req: Request, res: Response) => {
       const parsedStartTime = new Date(startTime);
       if (Number.isNaN(parsedStartTime.getTime())) {
         return res.status(400).json({ error: "Invalid startTime" });
-      }
-      if (parsedStartTime <= now) {
-        return res
-          .status(400)
-          .json({ error: "startTime must be in the future" });
       }
       updateData.startTime = parsedStartTime;
     }
@@ -1049,7 +1039,7 @@ export const updateEventCluster = async (req: Request, res: Response) => {
 };
 
 // DELETE /api/events/:id
-// Only SUPER_ADMIN. Event must still be upcoming.
+// Only SUPER_ADMIN.
 export const deleteEvent = async (req: Request, res: Response) => {
   try {
     if (!req.admin?.id) {
@@ -1065,12 +1055,6 @@ export const deleteEvent = async (req: Request, res: Response) => {
     const existing = await prisma.event.findUnique({ where: { id: idStr } });
     if (!existing) {
       return res.status(404).json({ error: "Event not found" });
-    }
-
-    if (existing.startTime <= new Date()) {
-      return res
-        .status(403)
-        .json({ error: "Cannot delete an event that has already started" });
     }
 
     await prisma.event.delete({ where: { id: idStr } });

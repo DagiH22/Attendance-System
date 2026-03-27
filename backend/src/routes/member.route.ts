@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   createMember,
   getAllMembers,
+  getMembersCount,
   getMemberAttendanceDetails,
   getMemberById,
   searchMembers,
@@ -23,6 +24,9 @@ router.post("/", createMember);
 
 // get all members
 router.get("/", getAllMembers);
+
+// get total member count (lightweight)
+router.get("/count", getMembersCount);
 
 // search and get by name or uniqueId (case-insensitive)
 router.get("/search", searchMembers);

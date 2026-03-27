@@ -196,6 +196,16 @@ export const getAllMembers = async (_req: Request, res: Response) => {
   }
 };
 
+export const getMembersCount = async (_req: Request, res: Response) => {
+  try {
+    const count = await prisma.member.count();
+    return res.status(200).json({ count });
+  } catch (err: any) {
+    console.error("Error in getMembersCount:", err?.message ?? err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
 export const getMemberById = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -270,7 +280,10 @@ export const getMemberById = async (req: Request, res: Response) => {
 
 // GET /api/members/:id/attendance
 // Returns attended past events and missed past events for this member.
-export const getMemberAttendanceDetails = async (req: Request, res: Response) => {
+export const getMemberAttendanceDetails = async (
+  req: Request,
+  res: Response,
+) => {
   try {
     const { id } = req.params;
     const idStr = Array.isArray(id) ? id[0] : id;
