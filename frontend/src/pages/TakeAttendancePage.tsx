@@ -28,31 +28,16 @@ type LocationState = {
 };
 
 const mapEventToDashboardEvent = (rawEvent: any): DashboardEvent => {
-  const now = new Date();
   const eventStart = rawEvent.startTime
     ? new Date(rawEvent.startTime)
-    : new Date(rawEvent.eventDate ?? now);
+    : new Date(rawEvent.eventDate ?? new Date());
   const eventEnd = rawEvent.endTime
     ? new Date(rawEvent.endTime)
     : new Date(eventStart.getTime() + 2 * 60 * 60 * 1000);
 
-  let status: DashboardEvent["status"] =
+  const status: DashboardEvent["status"] =
     (rawEvent.status as DashboardEvent["status"]) ?? "UPCOMING";
-  let attendanceOpen = Boolean(rawEvent.attendanceOpen);
-
-  if (!rawEvent.status) {
-    if (rawEvent.isActive === false) {
-      status = "DEACTIVATED";
-    } else if (now >= eventStart && now <= eventEnd) {
-      status = "ACTIVE";
-    } else if (now > eventEnd) {
-      status = "PAST";
-    } else {
-      status = "UPCOMING";
-    }
-
-    attendanceOpen = status === "ACTIVE";
-  }
+  const attendanceOpen = Boolean(rawEvent.attendanceOpen);
 
   return {
     id: rawEvent.id,

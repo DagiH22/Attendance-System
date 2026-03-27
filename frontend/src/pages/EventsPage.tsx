@@ -40,29 +40,15 @@ const toDateTimeLocalValue = (value: string) => {
 
 const mapEventToDashboardEvent = (event: any): DashboardEvent => {
   // Prefer server-provided normalized ISO timestamps and status when available
-  const now = new Date();
   const startIso = event.startTime ?? event.eventDate;
-  const eventStart = startIso ? new Date(startIso) : now;
+  const eventStart = startIso ? new Date(startIso) : new Date();
   const eventEnd = event.endTime
     ? new Date(event.endTime)
     : new Date(eventStart.getTime() + 2 * 60 * 60 * 1000);
 
-  // Server sends `status` now; fallback to client calc if missing
-  let status: DashboardEvent["status"] =
+  const status: DashboardEvent["status"] =
     (event.status as DashboardEvent["status"]) ?? "UPCOMING";
-  let attendanceOpen = Boolean(event.attendanceOpen);
-
-  if (!event.status) {
-    if (now > eventEnd || event.isActive === false) {
-      status = "PAST";
-    } else if (now >= eventStart && now <= eventEnd) {
-      status = "ACTIVE";
-    } else {
-      status = "UPCOMING";
-    }
-
-    attendanceOpen = status === "ACTIVE";
-  }
+  const attendanceOpen = Boolean(event.attendanceOpen);
 
   return {
     id: event.id,
