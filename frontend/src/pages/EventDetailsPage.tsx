@@ -564,10 +564,11 @@ const EventDetailsPage: React.FC = () => {
       );
 
       const fallbackFileName = `${sanitizeDownloadFileName(event.title)}.xlsx`;
-      const fileName = getFileNameFromContentDisposition(
+      const fileName =
+        getFileNameFromContentDisposition(
         response.headers["content-disposition"],
         fallbackFileName,
-      );
+      ) ?? fallbackFileName;
 
       const blob = new Blob([response.data], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
