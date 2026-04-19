@@ -88,7 +88,9 @@ const TakeAttendancePage: React.FC = () => {
   const [loadingMembers, setLoadingMembers] = useState<boolean>(true);
   const [pageError, setPageError] = useState<string>("");
   const [activeTab, setActiveTab] = useState<PageTab>("QR");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submittingMemberId, setSubmittingMemberId] = useState<string | null>(
+    null,
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [feedback, setFeedback] = useState<AttendanceFeedback | null>(null);
   const [presentMembers, setPresentMembers] = useState<Set<string>>(
@@ -476,7 +478,15 @@ const TakeAttendancePage: React.FC = () => {
       return;
     }
 
-    setIsSubmitting(true);
+    const memberIdForLoading =
+      memberForUi?.id ??
+      members.find(
+        (member) =>
+          member.id === memberIdentifier || member.uniqueId === memberIdentifier,
+      )?.id ??
+      null;
+
+    setSubmittingMemberId(memberIdForLoading);
     setFeedback(null);
 
     try {
@@ -519,7 +529,7 @@ const TakeAttendancePage: React.FC = () => {
     } catch (error) {
       setFeedback(getFeedbackFromError(error));
     } finally {
-      setIsSubmitting(false);
+      setSubmittingMemberId(null);
     }
   };
 
@@ -961,11 +971,14 @@ const TakeAttendancePage: React.FC = () => {
                   const isPresent = presentMembers.has(member.id);
                   const isDeactivated = member.isActive === false;
                   const canMark = !isDeactivated && !isPresent;
+                  const isMarkingThisMember = submittingMemberId === member.id;
 
                   return (
                     <li
                       key={member.id}
-                      className="flex items-center justify-between py-3"
+                      className={`flex items-center justify-between rounded-xl py-3 transition ${
+                        isMarkingThisMember ? "bg-blue-50/70 px-2" : ""
+                      }`}
                     >
                       <div className="flex items-center gap-3">
                         <div
@@ -1006,9 +1019,9 @@ const TakeAttendancePage: React.FC = () => {
                           markAttendance(member.id, "MANUAL", member)
                         }
                         disabled={
-                          !canMark || isSubmitting || attendanceDisabled
+                          !canMark || submittingMemberId !== null || attendanceDisabled
                         }
-                        className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+                        className={`inline-flex min-w-[96px] items-center justify-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
                           isPresent
                             ? "bg-green-100 text-green-700"
                             : isDeactivated
@@ -1016,7 +1029,16 @@ const TakeAttendancePage: React.FC = () => {
                               : "bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                         }`}
                       >
-                        {isPresent ? "Present" : "Mark"}
+                        {isPresent ? (
+                          "Present"
+                        ) : isMarkingThisMember ? (
+                          <>
+                            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700" />
+                            Marking
+                          </>
+                        ) : (
+                          "Mark"
+                        )}
                       </button>
                     </li>
                   );
