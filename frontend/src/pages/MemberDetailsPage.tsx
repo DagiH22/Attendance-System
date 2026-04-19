@@ -73,6 +73,34 @@ const getDisplayValue = (value?: string | null) => {
   return value;
 };
 
+const buildRecentRecords = (
+  attended: AttendanceDetailsResponse["attended"],
+  missed: AttendanceDetailsResponse["missed"],
+): AttendanceRecord[] => {
+  const combined: AttendanceRecord[] = [
+    ...attended.map((a) => ({
+      id: a.attendanceId,
+      eventId: a.event.id,
+      eventName: a.event.title,
+      markedAt: a.markedAt,
+      status: "Present" as AttendanceRecord["status"],
+    })),
+    ...missed.map((e) => ({
+      id: e.id,
+      eventId: e.id,
+      eventName: e.title,
+      markedAt: e.eventDate,
+      status: "Absent" as AttendanceRecord["status"],
+    })),
+  ];
+
+  combined.sort(
+    (x, y) => new Date(y.markedAt).getTime() - new Date(x.markedAt).getTime(),
+  );
+
+  return combined.slice(0, 5);
+};
+
 const MemberDetailsPage: React.FC = () => {
   const { memberId } = useParams<{ memberId: string }>();
   const navigate = useNavigate();
@@ -91,83 +119,72 @@ const MemberDetailsPage: React.FC = () => {
   const [statsTab, setStatsTab] = useState<"attended" | "missed">("attended");
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
+  const [statsActionMessage, setStatsActionMessage] = useState<string | null>(
+    null,
+  );
+  const [markingEventId, setMarkingEventId] = useState<string | null>(null);
   const [attendanceDetails, setAttendanceDetails] =
     useState<AttendanceDetailsResponse | null>(null);
 
   // Note: hard-coded user role for now until auth context provides it
   const isSuperAdmin = true;
 
-  useEffect(() => {
-    const fetchMemberDetails = async () => {
-      try {
+  const fetchMemberDetails = React.useCallback(async (options?: {
+    withGlobalLoading?: boolean;
+  }) => {
+    if (!memberId) return;
+
+    const withGlobalLoading = options?.withGlobalLoading !== false;
+
+    try {
+      if (withGlobalLoading) {
         setLoading(true);
-        const response = await api.get(`/members/${memberId}`);
-        // backend returns { member }
-        const memberData = response.data?.member ?? response.data;
-        memberData.attendanceData = memberData.attendanceData || {
-          totalAttended: 0,
-          totalMissed: 0,
-          percentage: 0,
-          recentRecords: [],
-        };
-        // Also fetch attendance details (attended + missed) so we can show
-        // the last 5 events (present or absent) in Recent Attendance.
-        try {
-          const attRes = await api.get<AttendanceDetailsResponse>(
-            `/members/${memberId}/attendance`,
-          );
-          const attended = attRes.data.attended || [];
-          const missed = attRes.data.missed || [];
+      }
+      const response = await api.get(`/members/${memberId}`);
+      const memberData = response.data?.member ?? response.data;
 
-          const combined: AttendanceRecord[] = [
-            // attended -> Present
-            ...attended.map((a) => ({
-              id: a.attendanceId,
-              eventId: a.event.id,
-              eventName: a.event.title,
-              // use attendance markedAt for attended entries
-              markedAt: a.markedAt,
-              status: "Present" as AttendanceRecord["status"],
-            })),
-            // missed -> Absent (use eventDate as markedAt for display)
-            ...missed.map((e) => ({
-              id: e.id,
-              eventId: e.id,
-              eventName: e.title,
-              markedAt: e.eventDate,
-              status: "Absent" as AttendanceRecord["status"],
-            })),
-          ];
+      memberData.attendanceData = memberData.attendanceData || {
+        totalAttended: 0,
+        totalMissed: 0,
+        percentage: 0,
+        recentRecords: [],
+      };
 
-          // sort by date desc and keep last 5
-          combined.sort(
-            (x, y) =>
-              new Date(y.markedAt).getTime() - new Date(x.markedAt).getTime(),
-          );
+      try {
+        const attRes = await api.get<AttendanceDetailsResponse>(
+          `/members/${memberId}/attendance`,
+        );
+        const attended = attRes.data.attended || [];
+        const missed = attRes.data.missed || [];
 
-          memberData.attendanceData.recentRecords = combined.slice(0, 5);
-        } catch (err) {
-          // non-fatal: if attendance details fail, leave recentRecords as-is
-          // console.debug('Failed to fetch attendance details for recent records', err);
-        }
-        setMember(memberData);
-        setError(null);
-      } catch (err: unknown) {
-        const friendly = toFriendlyError(err, {
-          action: "load the member details",
-          fallbackTitle: "Couldn't load member",
-          fallbackMessage: "Please refresh the page and try again.",
-        });
-        setError(friendly.message);
-      } finally {
+        memberData.attendanceData.recentRecords = buildRecentRecords(
+          attended,
+          missed,
+        );
+        setAttendanceDetails(attRes.data);
+      } catch {
+        // non-fatal: if attendance details fail, leave recentRecords as-is
+      }
+
+      setMember(memberData);
+      setError(null);
+    } catch (err: unknown) {
+      const friendly = toFriendlyError(err, {
+        action: "load the member details",
+        fallbackTitle: "Couldn't load member",
+        fallbackMessage: "Please refresh the page and try again.",
+      });
+      setError(friendly.message);
+    } finally {
+      if (withGlobalLoading) {
         setLoading(false);
       }
-    };
-
-    if (memberId) {
-      fetchMemberDetails();
     }
   }, [memberId]);
+
+  useEffect(() => {
+    void fetchMemberDetails({ withGlobalLoading: true });
+  }, [fetchMemberDetails]);
 
   const handleDeactivate = async () => {
     try {
@@ -259,6 +276,7 @@ const MemberDetailsPage: React.FC = () => {
     if (!memberId) return;
     setStatsTab(tab);
     setStatsModalOpen(true);
+    setStatsActionMessage(null);
 
     // If we already loaded once, don't refetch unless you want to.
     if (attendanceDetails) {
@@ -287,6 +305,40 @@ const MemberDetailsPage: React.FC = () => {
   const closeStatsModal = () => {
     setStatsModalOpen(false);
     setStatsError(null);
+    setStatsActionMessage(null);
+    setMarkingEventId(null);
+  };
+
+  const handleMarkPresentFromMissed = async (
+    eventId: string,
+    eventTitle: string,
+  ) => {
+    if (!memberId) return;
+
+    setStatsActionMessage(null);
+    setStatsError(null);
+    setMarkingEventId(eventId);
+
+    try {
+      await api.post("/attendance", {
+        memberId,
+        eventId,
+        method: "MANUAL",
+        allowOverride: true,
+      });
+
+      await fetchMemberDetails({ withGlobalLoading: false });
+      setStatsActionMessage(`Marked present for "${eventTitle}".`);
+    } catch (err: unknown) {
+      const friendly = toFriendlyError(err, {
+        action: "mark attendance",
+        fallbackTitle: "Couldn't mark attendance",
+        fallbackMessage: "Please try again.",
+      });
+      setStatsError(friendly.message);
+    } finally {
+      setMarkingEventId(null);
+    }
   };
 
   if (loading) {
@@ -369,6 +421,11 @@ const MemberDetailsPage: React.FC = () => {
                   {statsError}
                 </div>
               )}
+              {statsActionMessage && (
+                <div className="mb-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                  {statsActionMessage}
+                </div>
+              )}
 
               {!statsLoading && !statsError && (
                 <>
@@ -417,30 +474,58 @@ const MemberDetailsPage: React.FC = () => {
                         </div>
                       ) : (
                         attendanceDetails!.missed.map((event) => (
-                          <button
+                          <div
                             key={event.id}
-                            type="button"
-                            onClick={() =>
-                              navigate(`/events/${event.id}`, {
-                                replace: false,
-                              })
-                            }
-                            className="w-full text-left rounded-lg border border-gray-200 p-3 hover:bg-gray-50 transition"
+                            className={`w-full rounded-lg border p-3 transition ${
+                              markingEventId === event.id
+                                ? "border-blue-200 bg-blue-50/60"
+                                : "border-gray-200"
+                            }`}
                           >
                             <div className="flex items-start justify-between gap-3">
-                              <div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  navigate(`/events/${event.id}`, {
+                                    replace: false,
+                                  })
+                                }
+                                className="text-left hover:opacity-90 transition"
+                              >
                                 <div className="font-medium text-gray-900">
                                   {event.title}
                                 </div>
                                 <div className="text-sm text-gray-500">
                                   {formatDate(event.eventDate)}
                                 </div>
-                              </div>
-                              <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-full px-2 py-1">
-                                Absent
+                              </button>
+                              <div className="flex items-center gap-2">
+                                <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-full px-2 py-1">
+                                  Absent
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleMarkPresentFromMissed(
+                                      event.id,
+                                      event.title,
+                                    )
+                                  }
+                                  disabled={markingEventId !== null}
+                                  className="inline-flex items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:cursor-wait disabled:opacity-70"
+                                >
+                                  {markingEventId === event.id ? (
+                                    <>
+                                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700" />
+                                      Marking
+                                    </>
+                                  ) : (
+                                    "Mark present"
+                                  )}
+                                </button>
                               </div>
                             </div>
-                          </button>
+                          </div>
                         ))
                       )}
                     </div>
