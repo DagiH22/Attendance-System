@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   createMember,
+  exportMembersExcel,
   getAllMembers,
   getMembersCount,
   getMemberAttendanceDetails,
@@ -30,6 +31,9 @@ router.get("/count", getMembersCount);
 
 // search and get by name or uniqueId (case-insensitive)
 router.get("/search", searchMembers);
+
+// export members list as Excel
+router.get("/export/excel", exportMembersExcel);
 
 // attended/missed events lists
 router.get("/:id/attendance", getMemberAttendanceDetails);

@@ -1,8 +1,10 @@
 import { Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
+import ExcelJS from "exceljs";
 import { getNextMezmurId } from "../utils/idGenerator";
 import { sendMemberEmail } from "../utils/email.service";
 import { generateQrWithLogo } from "../utils/qrCodeGenerator";
+import { setExcelDownloadHeaders } from "../utils/excelExport";
 
 const prisma = new PrismaClient();
 
@@ -202,6 +204,103 @@ export const getMembersCount = async (_req: Request, res: Response) => {
     return res.status(200).json({ count });
   } catch (err: any) {
     console.error("Error in getMembersCount:", err?.message ?? err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+// GET /api/members/export/excel
+export const exportMembersExcel = async (req: Request, res: Response) => {
+  try {
+    if (!req.admin?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const status = String(req.query.status ?? "ALL").toUpperCase();
+    const gender = String(req.query.gender ?? "ALL").toUpperCase();
+    const sortBy = String(req.query.sortBy ?? "ALPHA_ASC").toUpperCase();
+    const query = String(req.query.q ?? "").trim();
+
+    const where: any = {
+      ...(status === "ACTIVE"
+        ? { isActive: true }
+        : status === "INACTIVE"
+          ? { isActive: false }
+          : {}),
+      ...(gender === "MALE" || gender === "FEMALE" ? { gender } : {}),
+      ...(query
+        ? {
+            OR: [
+              { name: { contains: query, mode: "insensitive" } },
+              { uniqueId: { contains: query, mode: "insensitive" } },
+              { email: { contains: query, mode: "insensitive" } },
+              { phoneNumber: { contains: query, mode: "insensitive" } },
+            ],
+          }
+        : {}),
+    };
+
+    const members = await prisma.member.findMany({
+      where,
+      include: { _count: { select: { attendances: true } } },
+    });
+
+    const sorted = [...members].sort((a, b) => {
+      switch (sortBy) {
+        case "ALPHA_DESC":
+          return b.name.localeCompare(a.name);
+        case "MOST_ATTENDANCE":
+          return (b._count?.attendances ?? 0) - (a._count?.attendances ?? 0);
+        case "LEAST_ATTENDANCE":
+          return (a._count?.attendances ?? 0) - (b._count?.attendances ?? 0);
+        case "RECENTLY_REGISTERED":
+          return (
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          );
+        case "ALPHA_ASC":
+        default:
+          return a.name.localeCompare(b.name);
+      }
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "Attendance System";
+    workbook.created = new Date();
+
+    const sheet = workbook.addWorksheet("Members");
+    sheet.columns = [
+      { header: "Member ID", key: "uniqueId", width: 20 },
+      { header: "Name", key: "name", width: 28 },
+      { header: "Email", key: "email", width: 30 },
+      { header: "Phone", key: "phoneNumber", width: 18 },
+      { header: "Department", key: "department", width: 18 },
+      { header: "Batch", key: "batch", width: 16 },
+      { header: "Campus", key: "campus", width: 16 },
+      { header: "Gender", key: "gender", width: 12 },
+      { header: "Attendance Count", key: "attendanceCount", width: 18 },
+    ];
+
+    sheet.getRow(1).font = { bold: true };
+    sheet.views = [{ state: "frozen", ySplit: 1 }];
+
+    for (const member of sorted) {
+      sheet.addRow({
+        uniqueId: member.uniqueId,
+        name: member.name,
+        email: member.email,
+        phoneNumber: member.phoneNumber ?? "",
+        department: member.department ?? "",
+        batch: member.batch ?? "",
+        campus: member.campus ?? "",
+        gender: member.gender ?? "",
+        attendanceCount: member._count?.attendances ?? 0,
+      });
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    setExcelDownloadHeaders(res, "members", "members");
+    return res.status(200).send(Buffer.from(buffer));
+  } catch (err: any) {
+    console.error("Error in exportMembersExcel:", err?.message ?? err);
     return res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -590,6 +689,7 @@ export const searchMembers = async (req: Request, res: Response) => {
 export default {
   createMember,
   getAllMembers,
+  exportMembersExcel,
   getMemberById,
   updateMember,
   deactivateMember,

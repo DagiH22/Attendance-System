@@ -1,5 +1,7 @@
 import { Request, Response } from "express";
 import { PrismaClient, EventType } from "@prisma/client";
+import ExcelJS from "exceljs";
+import { setExcelDownloadHeaders } from "../utils/excelExport";
 import {
   computeEventLifecycle,
   serializeEventForResponse,
@@ -670,6 +672,103 @@ export const getEventAttendance = async (req: Request, res: Response) => {
   }
 };
 
+// GET /api/events/:eventId/attendance/export/excel?sortBy=time|name&order=asc|desc
+export const exportEventAttendanceExcel = async (
+  req: Request,
+  res: Response,
+) => {
+  try {
+    if (!req.admin?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { eventId } = req.params;
+    const normalizedEventId = Array.isArray(eventId) ? eventId[0] : eventId;
+
+    if (!normalizedEventId) {
+      return res.status(400).json({ error: "Event id is required" });
+    }
+
+    const sortBy = req.query.sortBy === "name" ? "name" : "time";
+    const order = req.query.order === "desc" ? "desc" : "asc";
+
+    const event = await prisma.event.findUnique({
+      where: { id: normalizedEventId },
+      select: { id: true, title: true, startTime: true, endTime: true },
+    });
+
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const orderBy =
+      sortBy === "name"
+        ? [{ member: { name: order } as const }, { markedAt: "asc" as const }]
+        : [
+            { markedAt: order as "asc" | "desc" },
+            { member: { name: "asc" as const } },
+          ];
+
+    const attendanceRecords = await prisma.attendance.findMany({
+      where: { eventId: normalizedEventId },
+      orderBy,
+      include: {
+        member: {
+          select: {
+            uniqueId: true,
+            name: true,
+            email: true,
+            phoneNumber: true,
+            isActive: true,
+          },
+        },
+      },
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "Attendance System";
+    workbook.created = new Date();
+
+    const sheet = workbook.addWorksheet("Attended Members");
+    sheet.columns = [
+      { header: "Member ID", key: "uniqueId", width: 20 },
+      { header: "Name", key: "name", width: 28 },
+      { header: "Email", key: "email", width: 30 },
+      { header: "Phone", key: "phone", width: 18 },
+      { header: "Marked On", key: "markedAt", width: 28 },
+    ];
+    sheet.getRow(1).font = { bold: true };
+    sheet.views = [{ state: "frozen", ySplit: 1 }];
+
+    for (const record of attendanceRecords) {
+      const markedDate = new Date(record.markedAt);
+      const markedFriendly = markedDate.toLocaleString(undefined, {
+        weekday: "short",
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+
+      sheet.addRow({
+        uniqueId: record.member.uniqueId,
+        name: record.member.name,
+        email: record.member.email,
+        phone: record.member.phoneNumber ?? "",
+        markedAt: markedFriendly,
+      });
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    setExcelDownloadHeaders(res, event.title, "event-attendance");
+    return res.status(200).send(Buffer.from(buffer));
+  } catch (err: any) {
+    console.error("Error in exportEventAttendanceExcel:", err?.message ?? err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
 // PATCH /api/events/:id/deactivate
 // Sets isActive false, but doesn't delete the record. Only SUPER_ADMIN can perform this action.
 export const deactivateEvent = async (req: Request, res: Response) => {
@@ -1072,6 +1171,7 @@ export default {
   getEventById,
   getEventClusterById,
   getEventAttendance,
+  exportEventAttendanceExcel,
   getPresentMembersForEvent,
   deactivateEvent,
   closeEvent,

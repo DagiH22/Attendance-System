@@ -16,6 +16,20 @@ type SortOption =
 
 const UI_PAGE_SIZE = 15;
 
+const sanitizeDownloadFileName = (value: string) =>
+  value
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, " ") || "members";
+
+const getFileNameFromContentDisposition = (header?: string, fallback?: string) => {
+  const fileNameMatch = header?.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+  const encoded = fileNameMatch?.[1];
+  const plain = fileNameMatch?.[2];
+  const extracted = encoded ? decodeURIComponent(encoded) : plain;
+  return extracted || fallback || "members.xlsx";
+};
+
 // Extending Member to include attendance count if the backend returns it
 export interface DashboardMember extends Member {
   attendanceCount: number;
@@ -26,6 +40,7 @@ const MembersPage: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
   const [successMessage, setSuccessMessage] = useState<string>("");
+  const [isExporting, setIsExporting] = useState<boolean>(false);
   const [currentPage, setCurrentPage] = useState<number>(1);
 
   // Filters and Sorting State
@@ -132,6 +147,48 @@ const MembersPage: React.FC = () => {
       setError("Failed to load members.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    try {
+      setIsExporting(true);
+      setError("");
+
+      const response = await api.get("/members/export/excel", {
+        responseType: "blob",
+        params: {
+          status: statusFilter,
+          gender: genderFilter,
+          sortBy,
+          q: debouncedSearchQuery,
+        },
+      });
+
+      const headerFileName = getFileNameFromContentDisposition(
+        response.headers["content-disposition"],
+      );
+      const fileName = headerFileName || `${sanitizeDownloadFileName("members")}.xlsx`;
+      const blob = new Blob([response.data], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error("Error exporting members excel:", err);
+      setError(
+        err?.response?.data?.error ||
+          err?.response?.data?.message ||
+          "Failed to export members.",
+      );
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -583,6 +640,25 @@ const MembersPage: React.FC = () => {
                 </div>
               )}
             </div>
+
+            <button
+              type="button"
+              onClick={() => void handleExportExcel()}
+              disabled={loading || isExporting}
+              className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg text-sm font-medium text-emerald-700 hover:bg-emerald-100 transition-colors mb-1 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {isExporting ? (
+                <>
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-300 border-t-emerald-700" />
+                  Exporting...
+                </>
+              ) : (
+                <>
+                  <span>⬇</span>
+                  Export Excel
+                </>
+              )}
+            </button>
           </div>
         </div>
 

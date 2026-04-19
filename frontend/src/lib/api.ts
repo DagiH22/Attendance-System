@@ -6,8 +6,7 @@ import axios, {
 } from "axios";
 
 const ACCESS_TOKEN_KEY = "accessToken";
-const apiBaseUrl =
-  (import.meta.env.VITE_API_URL as string) || "http://localhost:10000";
+const apiBaseUrl =(import.meta.env.VITE_API_URL as string) || "http://localhost:4000";
 
 let isRefreshing = false;
 let refreshPromise: Promise<string | null> | null = null;
@@ -36,11 +35,6 @@ const api: AxiosInstance = axios.create({
   baseURL: apiBaseUrl,
   withCredentials: true,
 });
-
-export const getMembersCount = async (): Promise<number> => {
-  const response = await api.get<{ count?: number }>("/members/count");
-  return Number(response.data?.count ?? 0);
-};
 
 const applyAccessToken = (
   config: InternalAxiosRequestConfig,
@@ -102,17 +96,12 @@ api.interceptors.response.use(
     const originalRequest = error.config as RetryableRequestConfig | undefined;
     const status = error.response?.status;
     const requestUrl = originalRequest?.url ?? "";
-    const isAuthEndpoint =
-      requestUrl.includes("/auth/login") ||
-      requestUrl.includes("/auth/refresh") ||
-      requestUrl.includes("/auth/logout") ||
-      requestUrl.includes("/auth/me");
     const isRefreshCall = requestUrl.includes("/auth/refresh");
     const shouldAttemptRefresh =
       status === 401 &&
       originalRequest &&
       !originalRequest._retry &&
-      !isAuthEndpoint;
+      !isRefreshCall;
 
     if (!shouldAttemptRefresh) {
       if (status === 401 && isRefreshCall) {
@@ -141,3 +130,8 @@ api.interceptors.response.use(
 );
 
 export default api;
+
+export const getMembersCount = async (): Promise<number> => {
+  const res = await api.get(`/members/count`);
+  return res.data?.count ?? 0;
+};

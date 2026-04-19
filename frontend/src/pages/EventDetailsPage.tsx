@@ -40,6 +40,20 @@ const RECENT_MARK_THRESHOLD_MS = 15 * 60 * 1000;
 
 const attendanceCache = new Map<string, EventAttendanceResponse>();
 
+const sanitizeDownloadFileName = (value: string) =>
+  value
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, " ") || "event";
+
+const getFileNameFromContentDisposition = (header?: string, fallback?: string) => {
+  const fileNameMatch = header?.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+  const encoded = fileNameMatch?.[1];
+  const plain = fileNameMatch?.[2];
+  const extracted = encoded ? decodeURIComponent(encoded) : plain;
+  return extracted || fallback;
+};
+
 const mapEventToDashboardEvent = (rawEvent: any): DashboardEvent => {
   const eventStart = rawEvent.startTime
     ? new Date(rawEvent.startTime)
@@ -120,6 +134,7 @@ const EventDetailsPage: React.FC = () => {
   const [attendancePage, setAttendancePage] = useState(1);
   const [attendanceTotalPages, setAttendanceTotalPages] = useState(1);
   const [attendanceTotalCount, setAttendanceTotalCount] = useState(0);
+  const [attendanceExporting, setAttendanceExporting] = useState(false);
   const [membersCount, setMembersCount] = useState<number | null>(null);
   const [attendanceSortBy, setAttendanceSortBy] =
     useState<AttendanceSortBy>("time");
@@ -527,6 +542,52 @@ const EventDetailsPage: React.FC = () => {
       );
     } finally {
       setAttendanceLoading(false);
+    }
+  };
+
+  const handleExportAttendanceExcel = async () => {
+    if (!event) return;
+
+    try {
+      setAttendanceExporting(true);
+      setAttendanceError("");
+
+      const response = await api.get(
+        `/events/${event.id}/attendance/export/excel`,
+        {
+          responseType: "blob",
+          params: {
+            sortBy: attendanceSortBy,
+            order: attendanceOrder,
+          },
+        },
+      );
+
+      const fallbackFileName = `${sanitizeDownloadFileName(event.title)}.xlsx`;
+      const fileName = getFileNameFromContentDisposition(
+        response.headers["content-disposition"],
+        fallbackFileName,
+      );
+
+      const blob = new Blob([response.data], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setAttendanceError(
+        err.response?.data?.error ||
+          err.response?.data?.message ||
+          "Failed to export attendance.",
+      );
+    } finally {
+      setAttendanceExporting(false);
     }
   };
 
@@ -1774,6 +1835,14 @@ const EventDetailsPage: React.FC = () => {
                       Add Attendee
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => void handleExportAttendanceExcel()}
+                    disabled={attendanceLoading || attendanceExporting}
+                    className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {attendanceExporting ? "Exporting..." : "Export Excel"}
+                  </button>
                   <div className="relative" ref={attendanceSortDropdownRef}>
                     <button
                       type="button"

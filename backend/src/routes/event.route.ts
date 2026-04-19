@@ -6,6 +6,7 @@ import {
   createEvent,
   deactivateEvent,
   deleteEvent,
+  exportEventAttendanceExcel,
   getAllEvents,
   getEventAttendance,
   getEventClusterById,
@@ -31,6 +32,9 @@ router.get("/cluster/:clusterId", getEventClusterById);
 
 // get paginated attendance list for a specific event
 router.get("/:eventId/attendance", getEventAttendance);
+
+// export attendance list for a specific event
+router.get("/:eventId/attendance/export/excel", exportEventAttendanceExcel);
 
 // get specific evenet by id
 router.get("/:eventId/present-members", getPresentMembersForEvent);
