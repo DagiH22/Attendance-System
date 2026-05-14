@@ -164,6 +164,9 @@ const EventDetailsPage: React.FC = () => {
     useState<AttendanceFeedback | null>(null);
   const [addAttendeeError, setAddAttendeeError] = useState<string>("");
   const [addAttendeeLoading, setAddAttendeeLoading] = useState(false);
+  const [addAttendeeMemberId, setAddAttendeeMemberId] = useState<string | null>(
+    null,
+  );
   const [addMembersLoading, setAddMembersLoading] = useState(false);
   const [addMembersSearch, setAddMembersSearch] = useState("");
   const [addMembers, setAddMembers] = useState<Member[]>([]);
@@ -649,6 +652,7 @@ const EventDetailsPage: React.FC = () => {
   ) => {
     if (!event) return;
     setAddAttendeeLoading(true);
+    setAddAttendeeMemberId(memberId);
     setAddAttendeeError("");
     setAddAttendeeFeedback(null);
 
@@ -684,6 +688,7 @@ const EventDetailsPage: React.FC = () => {
       });
     } finally {
       setAddAttendeeLoading(false);
+      setAddAttendeeMemberId(null);
     }
   };
 
@@ -2177,6 +2182,9 @@ const EventDetailsPage: React.FC = () => {
                         const isPresent = presentMemberIds.has(member.id);
                         const isInactive = member.isActive === false;
                         const canAdd = !isPresent && !isInactive;
+                        const isAddingThisMember =
+                          addAttendeeLoading &&
+                          addAttendeeMemberId === member.id;
 
                         return (
                           <li
@@ -2211,7 +2219,16 @@ const EventDetailsPage: React.FC = () => {
                                     : "bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                               }`}
                             >
-                              {isPresent ? "Present" : "Add"}
+                              {isPresent ? (
+                                "Present"
+                              ) : isAddingThisMember ? (
+                                <span className="inline-flex items-center gap-1.5">
+                                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700" />
+                                  Adding
+                                </span>
+                              ) : (
+                                "Add"
+                              )}
                             </button>
                           </li>
                         );
