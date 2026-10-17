@@ -11,6 +11,8 @@ import {
   getStudyStats,
   getStudyGrid,
   exportStudyExcel,
+  getNotParticipatingMembers,
+  exportNotParticipatingExcel,
 } from "../controllers/study.controller";
 
 const router = Router();
@@ -23,6 +25,12 @@ router.get("/", getAllStudies);
 
 // Create study (super admin only)
 router.post("/", requireRole("SUPER_ADMIN"), createStudy);
+
+// Get study not-participating excel export (ADMIN and SUPER_ADMIN)
+router.get("/:id/not-participating/export", exportNotParticipatingExcel);
+
+// Get study not-participating members (ADMIN and SUPER_ADMIN)
+router.get("/:id/not-participating", getNotParticipatingMembers);
 
 // Get study detail with sessions and summary stats
 router.get("/:id", getStudyById);

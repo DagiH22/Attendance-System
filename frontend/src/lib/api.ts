@@ -145,6 +145,15 @@ export const deleteStudy = async (id: string) => (await api.delete(`/studies/${i
 export const addSessionsToStudy = async (id: string, data: any) => (await api.post(`/studies/${id}/sessions`, data)).data;
 export const getStudyStats = async (id: string) => (await api.get(`/studies/${id}/stats`)).data;
 export const getStudyGrid = async (id: string) => (await api.get(`/studies/${id}/grid`)).data;
+export const getStudyNotParticipating = async (id: string, params?: any) =>
+  (await api.get(`/studies/${id}/not-participating`, { params })).data;
+export const exportStudyNotParticipatingExcel = async (id: string, params?: any) => {
+  const response = await api.get(`/studies/${id}/not-participating/export`, {
+    params,
+    responseType: "blob",
+  });
+  return response.data;
+};
 
 // Events
 export const rescheduleEvent = async (id: string, data: { startTime: string; endTime: string; reason: string }) =>

@@ -388,4 +388,44 @@ describe("Integration Tests against Throwaway Database", () => {
       }
     });
   });
+
+  describe("Amendment 2: Not Participating Section and Export", () => {
+    it("allows ADMIN to view not-participating members", async () => {
+      const res = await request(app)
+        .get(`/studies/${createdStudyId}/not-participating`)
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.study).toBeDefined();
+      expect(res.body.study.id).toBe(createdStudyId);
+      expect(typeof res.body.totalEligible).toBe("number");
+      expect(typeof res.body.totalNotParticipating).toBe("number");
+      expect(Array.isArray(res.body.members)).toBe(true);
+      expect(Array.isArray(res.body.departments)).toBe(true);
+      expect(Array.isArray(res.body.audienceBatches)).toBe(true);
+    });
+
+    it("filters not-participating members by campus and search", async () => {
+      const res = await request(app)
+        .get(`/studies/${createdStudyId}/not-participating?campus=KILO_4&search=4K-`)
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      for (const m of res.body.members) {
+        expect(m.campus).toBe("KILO_4");
+        expect(m.uniqueId.includes("4K-") || m.name.toLowerCase().includes("4k-")).toBe(true);
+      }
+    });
+
+    it("allows ADMIN and SUPER_ADMIN to export not-participating to Excel with filters applied", async () => {
+      const res = await request(app)
+        .get(`/studies/${createdStudyId}/not-participating/export?campus=KILO_4`)
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("spreadsheetml");
+      expect(res.headers["content-disposition"]).toContain("attachment; filename=");
+      expect(res.headers["content-disposition"]).toContain(".xlsx");
+    });
+  });
 });

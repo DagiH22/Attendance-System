@@ -5,6 +5,8 @@ import api, {
   createStudy,
   addSessionsToStudy,
   getStudyStats,
+  getStudyNotParticipating,
+  exportStudyNotParticipatingExcel,
 } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
 import formatDate from "../lib/formatDate";
@@ -13,7 +15,45 @@ import type {
   StudyStatsResponse,
   AudienceType,
   SessionType,
+  NotParticipatingResponse,
 } from "../types/events";
+
+const formatCampus = (campus: string) => {
+  switch (campus) {
+    case "FOUR_KILO":
+    case "KILO_4":
+      return "4 Kilo";
+    case "FIVE_KILO":
+    case "KILO_5":
+      return "5 Kilo";
+    case "SIX_KILO":
+    case "KILO_6":
+      return "6 Kilo";
+    case "ART":
+      return "Art";
+    default:
+      return campus;
+  }
+};
+
+const formatBatch = (batch: string) => {
+  switch (batch) {
+    case "FRESHMAN":
+      return "Freshman";
+    case "YEAR_2":
+      return "Year 2";
+    case "YEAR_3":
+      return "Year 3";
+    case "YEAR_4":
+      return "Year 4";
+    case "YEAR_5":
+      return "Year 5";
+    case "GRADUATE":
+      return "Graduate";
+    default:
+      return batch;
+  }
+};
 
 const StudiesPage: React.FC = () => {
   const navigate = useNavigate();
@@ -36,6 +76,18 @@ const StudiesPage: React.FC = () => {
   const [gridSearch, setGridSearch] = useState("");
   const [gridCampusFilter, setGridCampusFilter] = useState("ALL");
   const [gridBatchFilter, setGridBatchFilter] = useState("ALL");
+
+  // Not Participating state (Amendment 2)
+  const [notPartData, setNotPartData] = useState<NotParticipatingResponse | null>(null);
+  const [loadingNotPart, setLoadingNotPart] = useState(false);
+  const [notPartSearch, setNotPartSearch] = useState("");
+  const [notPartCampus, setNotPartCampus] = useState("ALL");
+  const [notPartBatch, setNotPartBatch] = useState("ALL");
+  const [notPartDept, setNotPartDept] = useState("ALL");
+  const [notPartHideOther, setNotPartHideOther] = useState(false);
+  const [notPartPage, setNotPartPage] = useState(1);
+  const [copyToast, setCopyToast] = useState("");
+  const [exportingNotPartExcel, setExportingNotPartExcel] = useState(false);
 
   // Create Study Form state
   const [createForm, setCreateForm] = useState({
@@ -121,6 +173,87 @@ const StudiesPage: React.FC = () => {
     }
   };
 
+  const fetchNotParticipating = async (studyId: string, page = notPartPage) => {
+    if (!studyId) return;
+    try {
+      setLoadingNotPart(true);
+      const res = await getStudyNotParticipating(studyId, {
+        search: notPartSearch.trim() || undefined,
+        campus: notPartCampus !== "ALL" ? notPartCampus : undefined,
+        batch: notPartBatch !== "ALL" ? notPartBatch : undefined,
+        department: notPartDept !== "ALL" ? notPartDept : undefined,
+        hideAttendingOther: notPartHideOther ? true : undefined,
+        page,
+        limit: 25,
+      });
+      setNotPartData(res);
+    } catch (err: any) {
+      console.error("Failed to load not-participating members:", err);
+    } finally {
+      setLoadingNotPart(false);
+    }
+  };
+
+  const handleNotPartFilterChange = (setter: (val: any) => void, val: any) => {
+    setter(val);
+    setNotPartPage(1);
+  };
+
+  const handleExportNotParticipatingExcel = async () => {
+    if (!selectedStudyId) return;
+    try {
+      setExportingNotPartExcel(true);
+      const blob = await exportStudyNotParticipatingExcel(selectedStudyId, {
+        search: notPartSearch.trim() || undefined,
+        campus: notPartCampus !== "ALL" ? notPartCampus : undefined,
+        batch: notPartBatch !== "ALL" ? notPartBatch : undefined,
+        department: notPartDept !== "ALL" ? notPartDept : undefined,
+        hideAttendingOther: notPartHideOther ? true : undefined,
+      });
+
+      const url = window.URL.createObjectURL(new Blob([blob]));
+      const link = document.createElement("a");
+      link.href = url;
+      const safeName = (selectedStudy?.name || "study").replace(/[^a-zA-Z0-9_-]/g, "_");
+      link.setAttribute("download", `${safeName}_not_participating.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode?.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error("Failed to export Excel:", err);
+      setError("Failed to export not-participating members to Excel");
+    } finally {
+      setExportingNotPartExcel(false);
+    }
+  };
+
+  const handleCopyPhoneNumbers = async () => {
+    if (!notPartData?.members || notPartData.members.length === 0) {
+      setCopyToast("No members matching current filters");
+      setTimeout(() => setCopyToast(""), 3000);
+      return;
+    }
+
+    const phones = notPartData.members
+      .map((m) => m.phoneNumber?.trim())
+      .filter((p): p is string => Boolean(p && p.length > 0));
+
+    if (phones.length === 0) {
+      setCopyToast("No phone numbers available for current list");
+      setTimeout(() => setCopyToast(""), 3000);
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(phones.join(", "));
+      setCopyToast(`Copied ${phones.length} phone number${phones.length > 1 ? "s" : ""} to clipboard!`);
+    } catch {
+      setCopyToast("Failed to copy to clipboard");
+    }
+    setTimeout(() => setCopyToast(""), 3500);
+  };
+
   useEffect(() => {
     void fetchStudies();
   }, []);
@@ -128,8 +261,30 @@ const StudiesPage: React.FC = () => {
   useEffect(() => {
     if (selectedStudyId) {
       void fetchStats(selectedStudyId);
+      setNotPartPage(1);
+      setNotPartCampus("ALL");
+      setNotPartBatch("ALL");
+      setNotPartDept("ALL");
+      setNotPartSearch("");
+      setNotPartHideOther(false);
     }
   }, [selectedStudyId]);
+
+  useEffect(() => {
+    if (!selectedStudyId) return;
+    const timer = setTimeout(() => {
+      void fetchNotParticipating(selectedStudyId, notPartPage);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [
+    selectedStudyId,
+    notPartSearch,
+    notPartCampus,
+    notPartBatch,
+    notPartDept,
+    notPartHideOther,
+    notPartPage,
+  ]);
 
   const handleCreateStudy = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -529,73 +684,310 @@ const StudiesPage: React.FC = () => {
               )}
             </div>
 
-            {/* Attended All vs Attended None Lists */}
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              {/* Attended All */}
-              <div className="rounded-3xl border border-emerald-100 bg-emerald-50/40 p-5 shadow-sm">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-900">
-                    ⭐ Attended All Sessions ({statsData.attendedAllMembers.length})
-                  </h3>
-                  <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
-                    Exemplary
-                  </span>
-                </div>
-                <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
-                  {statsData.attendedAllMembers.length === 0 ? (
-                    <p className="text-xs italic text-slate-400">No members have attended every session.</p>
-                  ) : (
-                    statsData.attendedAllMembers.map((m) => (
+            {/* Attended All Sessions (Kept as is) */}
+            <div className="rounded-3xl border border-emerald-100 bg-emerald-50/40 p-5 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-900">
+                  ⭐ Attended All Sessions ({statsData.attendedAllMembers.length})
+                </h3>
+                <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
+                  Exemplary
+                </span>
+              </div>
+              <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                {statsData.attendedAllMembers.length === 0 ? (
+                  <p className="text-xs italic text-slate-400">No members have attended every session.</p>
+                ) : (
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3">
+                    {statsData.attendedAllMembers.map((m) => (
                       <div
                         key={m.id}
                         onClick={() => navigate(`/members/${m.id}`)}
-                        className="flex cursor-pointer items-center justify-between rounded-xl bg-white p-2.5 shadow-xs border border-emerald-100 hover:border-emerald-300 transition"
+                        className="flex cursor-pointer items-center justify-between rounded-xl bg-white p-2.5 shadow-2xs border border-emerald-100 hover:border-emerald-300 transition"
                       >
                         <div>
                           <p className="text-xs font-bold text-slate-900">{m.name}</p>
                           <p className="text-[10px] text-slate-500">
-                            {m.uniqueId} • {m.campus} • {m.effectiveBatch}
+                            {m.uniqueId} • {formatCampus(m.campus)} • {formatBatch(m.effectiveBatch)}
                           </p>
                         </div>
                         <span className="text-xs font-bold text-emerald-600">100%</span>
                       </div>
-                    ))
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Dedicated "Not participating" Section (Replaces Attended None) */}
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+              {/* Header */}
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between border-b border-slate-100 pb-4">
+                <div>
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <h2 className="text-lg font-bold text-slate-900">
+                      Not participating
+                      {notPartData ? (
+                        <span className="font-semibold text-slate-600 ml-1.5 text-base">
+                          ({notPartData.totalNotParticipating} of {notPartData.totalEligible} eligible members)
+                        </span>
+                      ) : null}
+                    </h2>
+                    {notPartData?.study.audienceLabel && (
+                      <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-0.5 text-xs font-semibold text-blue-700 border border-blue-200">
+                        Audience: {notPartData.study.audienceLabel}
+                      </span>
+                    )}
+                    {notPartData && !notPartData.isOngoing && (
+                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-600">
+                        Evaluated as of study end ({formatDate(notPartData.evaluationDate)})
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Eligible members who have not attended any session of this study
+                  </p>
+                </div>
+
+                {/* Actions: Export Excel & Copy Phone Numbers */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {copyToast && (
+                    <span className="rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-1.5 text-xs font-semibold text-emerald-800">
+                      ✓ {copyToast}
+                    </span>
                   )}
+                  <button
+                    type="button"
+                    onClick={handleCopyPhoneNumbers}
+                    disabled={!notPartData || notPartData.members.length === 0}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 disabled:opacity-50 transition"
+                    title="Copy phone numbers for calling"
+                  >
+                    <span>📞</span> Copy Phone Numbers
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportNotParticipatingExcel}
+                    disabled={exportingNotPartExcel || !notPartData || notPartData.totalNotParticipating === 0}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white shadow-2xs hover:bg-emerald-700 disabled:opacity-50 transition"
+                  >
+                    {exportingNotPartExcel ? (
+                      <>
+                        <span className="animate-spin inline-block h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full" />
+                        Exporting...
+                      </>
+                    ) : (
+                      <>
+                        <span>📊</span> Export to Excel
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
 
-              {/* Attended None */}
-              <div className="rounded-3xl border border-red-100 bg-red-50/40 p-5 shadow-sm">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-red-900">
-                    ⚠️ Missed All Sessions ({statsData.attendedNoneMembers.length})
-                  </h3>
-                  <span className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-bold text-red-800">
-                    Follow Up
-                  </span>
-                </div>
-                <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
-                  {statsData.attendedNoneMembers.length === 0 ? (
-                    <p className="text-xs italic text-slate-400">All eligible members have attended at least one session.</p>
-                  ) : (
-                    statsData.attendedNoneMembers.map((m) => (
-                      <div
-                        key={m.id}
-                        onClick={() => navigate(`/members/${m.id}`)}
-                        className="flex cursor-pointer items-center justify-between rounded-xl bg-white p-2.5 shadow-xs border border-red-100 hover:border-red-300 transition"
-                      >
-                        <div>
-                          <p className="text-xs font-bold text-slate-900">{m.name}</p>
-                          <p className="text-[10px] text-slate-500">
-                            {m.uniqueId} • {m.campus} • {m.effectiveBatch}
-                          </p>
-                        </div>
-                        <span className="text-xs font-bold text-red-600">0%</span>
-                      </div>
-                    ))
+              {/* Filters Bar */}
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Search */}
+                <div className="relative min-w-[200px] flex-1">
+                  <input
+                    type="text"
+                    value={notPartSearch}
+                    onChange={(e) => handleNotPartFilterChange(setNotPartSearch, e.target.value)}
+                    placeholder="Search by name, ID, or phone..."
+                    className="w-full rounded-xl border border-slate-200 px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none"
+                  />
+                  {notPartSearch && (
+                    <button
+                      onClick={() => handleNotPartFilterChange(setNotPartSearch, "")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
+                    >
+                      ✕
+                    </button>
                   )}
                 </div>
+
+                {/* Campus Filter */}
+                <select
+                  value={notPartCampus}
+                  onChange={(e) => handleNotPartFilterChange(setNotPartCampus, e.target.value)}
+                  className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="ALL">All Campuses</option>
+                  <option value="FOUR_KILO">4 Kilo</option>
+                  <option value="FIVE_KILO">5 Kilo</option>
+                  <option value="SIX_KILO">6 Kilo</option>
+                  <option value="ART">Art</option>
+                </select>
+
+                {/* Batch Filter - Only batches inside the audience are offered */}
+                <select
+                  value={notPartBatch}
+                  onChange={(e) => handleNotPartFilterChange(setNotPartBatch, e.target.value)}
+                  className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="ALL">All Audience Batches</option>
+                  {notPartData?.audienceBatches?.map((b) => (
+                    <option key={b} value={b}>
+                      {formatBatch(b)}
+                    </option>
+                  ))}
+                </select>
+
+                {/* Department Filter */}
+                <select
+                  value={notPartDept}
+                  onChange={(e) => handleNotPartFilterChange(setNotPartDept, e.target.value)}
+                  className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="ALL">All Departments</option>
+                  {notPartData?.departments?.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+
+                {/* Hide Attending Other Study Toggle */}
+                <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl px-3 py-1.5 transition">
+                  <input
+                    type="checkbox"
+                    checked={notPartHideOther}
+                    onChange={(e) => handleNotPartFilterChange(setNotPartHideOther, e.target.checked)}
+                    className="rounded text-blue-600 focus:ring-blue-500 h-4 w-4"
+                  />
+                  <span>Hide members attending another study</span>
+                </label>
               </div>
+
+              {/* Table */}
+              <div className="overflow-x-auto rounded-2xl border border-slate-100">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-600 border-b border-slate-200 font-bold">
+                      <th className="p-3">Name</th>
+                      <th className="p-3">Unique ID</th>
+                      <th className="p-3">Phone</th>
+                      <th className="p-3">Campus</th>
+                      <th className="p-3">Effective Batch</th>
+                      <th className="p-3">Department</th>
+                      <th className="p-3">Badges</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {loadingNotPart ? (
+                      <tr>
+                        <td colSpan={7} className="p-8 text-center text-slate-400">
+                          <div className="inline-block animate-spin h-5 w-5 border-2 border-blue-600 border-t-transparent rounded-full mb-2" />
+                          <p>Loading not participating members...</p>
+                        </td>
+                      </tr>
+                    ) : !notPartData || notPartData.members.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="p-8 text-center text-slate-400">
+                          No members found matching the specified filters.
+                        </td>
+                      </tr>
+                    ) : (
+                      notPartData.members.map((m) => {
+                        const isGreyed = m.attendingOtherStudy;
+                        return (
+                          <tr
+                            key={m.id}
+                            onClick={() => navigate(`/members/${m.id}`)}
+                            className={`cursor-pointer transition ${
+                              isGreyed
+                                ? "bg-slate-50/70 opacity-70 text-slate-500 hover:bg-slate-100/70"
+                                : "bg-white hover:bg-slate-50/70"
+                            }`}
+                          >
+                            <td className="p-3 font-semibold text-slate-900">
+                              {m.name}
+                            </td>
+                            <td className="p-3 font-mono font-medium text-slate-600">
+                              {m.uniqueId}
+                            </td>
+                            <td className="p-3 text-slate-600">
+                              {m.phoneNumber ? (
+                                <a
+                                  href={`tel:${m.phoneNumber}`}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-blue-600 hover:underline"
+                                >
+                                  {m.phoneNumber}
+                                </a>
+                              ) : (
+                                <span className="text-slate-400">—</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-slate-600">
+                              {formatCampus(m.campus)}
+                            </td>
+                            <td className="p-3 text-slate-600">
+                              <span className="inline-block rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                                {formatBatch(m.effectiveBatch)}
+                              </span>
+                            </td>
+                            <td className="p-3 text-slate-600">
+                              {m.department || "—"}
+                            </td>
+                            <td className="p-3">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {m.isExcusedOnly && (
+                                  <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-[10px] font-bold text-blue-700 border border-blue-200">
+                                    Excused
+                                  </span>
+                                )}
+                                {m.attendingOtherStudy && (
+                                  <span className="inline-flex items-center rounded-full bg-purple-50 px-2.5 py-0.5 text-[10px] font-bold text-purple-700 border border-purple-200">
+                                    Attending other study
+                                  </span>
+                                )}
+                                {!m.isExcusedOnly && !m.attendingOtherStudy && (
+                                  <span className="text-[11px] text-slate-400 italic">
+                                    No attendance
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              {notPartData && notPartData.totalPages > 1 && (
+                <div className="flex items-center justify-between pt-2">
+                  <p className="text-xs text-slate-500">
+                    Showing {(notPartData.page - 1) * notPartData.limit + 1} to{" "}
+                    {Math.min(notPartData.page * notPartData.limit, notPartData.totalFiltered)} of{" "}
+                    {notPartData.totalFiltered} filtered members
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={notPartData.page <= 1}
+                      onClick={() => setNotPartPage((p) => Math.max(1, p - 1))}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                    >
+                      Previous
+                    </button>
+                    <span className="text-xs text-slate-600 font-medium">
+                      Page {notPartData.page} of {notPartData.totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={notPartData.page >= notPartData.totalPages}
+                      onClick={() => setNotPartPage((p) => Math.min(notPartData.totalPages, p + 1))}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Dropped Off Report for Ended Studies */}

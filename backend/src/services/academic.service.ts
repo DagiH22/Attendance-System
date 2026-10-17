@@ -10,11 +10,17 @@ export type AudienceType = "ALL" | "FINAL_YEAR" | "BATCHES";
 
 export interface AcademicMemberLike {
   id: string;
+  name?: string;
+  uniqueId?: string;
+  phoneNumber?: string | null;
   campus: Campus;
+  department?: string | null;
   entryAcademicYear: number;
   batchOverride?: Batch | null;
-  createdAt: Date;
-  deactivatedAt?: Date | null;
+  createdAt: Date | string;
+  deactivatedAt?: Date | string | null;
+  isActive?: boolean;
+  [key: string]: any;
 }
 
 export interface AcademicStudyLike {
@@ -392,7 +398,7 @@ export function getEffectiveStudyId(studyId?: string | null): string {
 }
 
 export function isStudyOngoing(
-  study: { isActive?: boolean; endDate?: Date | null } | null | undefined,
+  study: { isActive?: boolean; endDate?: Date | string | null } | null | undefined,
   asOf: Date,
 ): boolean {
   if (!study) return true; // Regular pseudo-study is always ongoing
@@ -613,4 +619,283 @@ export function checkAttendingOtherStudy(
   }
 
   return false;
+}
+
+/**
+ * Determines the evaluation date for a study:
+ * - Ongoing study: evaluated as of today (asOf).
+ * - Ended study: evaluated as of the study's last session date (or study.endDate if no sessions).
+ */
+export function getStudyEvaluationDate(
+  study: AcademicStudyLike & { endDate?: Date | string | null; isActive?: boolean },
+  studyEvents: AcademicEventLike[] = [],
+  asOf: Date = new Date(),
+): Date {
+  const ongoing = isStudyOngoing(study, asOf);
+  if (ongoing) {
+    return asOf;
+  }
+
+  const nonCancelledSessions = studyEvents
+    .filter((e) => !e.cancelledAt)
+    .sort(
+      (a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime(),
+    );
+
+  if (nonCancelledSessions.length > 0) {
+    const lastSession = nonCancelledSessions[0];
+    return new Date(lastSession.endTime || lastSession.endedAt || lastSession.startTime);
+  }
+
+  return study.endDate ? new Date(study.endDate) : asOf;
+}
+
+export function getStudyAudienceBatches(study: AcademicStudyLike): Batch[] {
+  const audienceType: AudienceType = (study.audienceType as AudienceType) || "ALL";
+  if (audienceType === "ALL") {
+    return [
+      Batch.FRESHMAN,
+      Batch.YEAR_2,
+      Batch.YEAR_3,
+      Batch.YEAR_4,
+      Batch.YEAR_5,
+      Batch.GRADUATE,
+    ];
+  }
+  if (audienceType === "FINAL_YEAR") {
+    return [Batch.YEAR_4, Batch.YEAR_5];
+  }
+  if (audienceType === "BATCHES") {
+    return ((study.audienceBatches || []) as Batch[]).filter(Boolean);
+  }
+  return [];
+}
+
+export function getStudyAudienceLabel(study: AcademicStudyLike): string {
+  const audienceType: AudienceType = (study.audienceType as AudienceType) || "ALL";
+  if (audienceType === "ALL") {
+    return "All members";
+  }
+  if (audienceType === "FINAL_YEAR") {
+    return "Final-year students";
+  }
+  if (audienceType === "BATCHES") {
+    const batches = (study.audienceBatches || []) as string[];
+    return batches.length > 0 ? `Batches: ${batches.join(", ")}` : "Specific batches";
+  }
+  return "All members";
+}
+
+/**
+ * Evaluates eligible members for a study as of reference evaluation date.
+ * Excludes members who registered after asOf or were deactivated on/before asOf.
+ */
+export function getEligibleMembersForStudy<T extends AcademicMemberLike>(
+  study: AcademicStudyLike,
+  allMembers: T[],
+  asOf: Date,
+): T[] {
+  const asOfDate = new Date(asOf);
+  const audienceType: AudienceType = (study.audienceType as AudienceType) || "ALL";
+  const audienceBatches = (study.audienceBatches || []) as Batch[];
+
+  return allMembers.filter((member) => {
+    // Registered at or before asOf (never count members who registered after the study/date)
+    const registeredAt = new Date(member.createdAt);
+    if (registeredAt > asOfDate) {
+      return false;
+    }
+
+    // Exclude deactivated members
+    if (member.deactivatedAt && new Date(member.deactivatedAt) <= asOfDate) {
+      return false;
+    }
+    if ((member as any).isActive === false && (!member.deactivatedAt || new Date(member.deactivatedAt) <= asOfDate)) {
+      return false;
+    }
+
+    // Audience filtering based on computed batch at asOf
+    if (audienceType === "ALL") {
+      return true;
+    }
+
+    if (audienceType === "FINAL_YEAR") {
+      return isFinalYear(member, asOfDate);
+    }
+
+    if (audienceType === "BATCHES") {
+      const batch = computeBatch(member, asOfDate);
+      return audienceBatches.includes(batch);
+    }
+
+    return false;
+  });
+}
+
+export interface NotParticipatingMember {
+  id: string;
+  name: string;
+  uniqueId: string;
+  phoneNumber?: string | null;
+  campus: Campus;
+  effectiveBatch: Batch;
+  department?: string | null;
+  hasExcusedOnly: boolean;
+  attendingOtherStudy: boolean;
+  badges: string[];
+  createdAt: Date | string;
+}
+
+export interface NotParticipatingResult {
+  evaluationDate: Date;
+  isOngoing: boolean;
+  totalEligible: number;
+  totalParticipants: number;
+  totalNotParticipating: number;
+  audienceLabel: string;
+  audienceBatches: Batch[];
+  members: NotParticipatingMember[];
+}
+
+export function getNotParticipatingMembers<
+  T extends AcademicMemberLike & {
+    name: string;
+    uniqueId: string;
+    phoneNumber?: string | null;
+    department?: string | null;
+  },
+>(
+  study: AcademicStudyLike & { id: string; endDate?: Date | string | null; isActive?: boolean },
+  allMembers: T[],
+  studyEvents: AcademicEventLike[],
+  studyAttendances: AcademicAttendanceLike[],
+  allEvents: AcademicEventLike[] = studyEvents,
+  allAttendances: AcademicAttendanceLike[] = studyAttendances,
+  ongoingStudyIds: Set<string> | string[] = [],
+  asOf: Date = new Date(),
+): NotParticipatingResult {
+  const evaluationDate = getStudyEvaluationDate(study, studyEvents, asOf);
+  const isOngoing = isStudyOngoing(study, asOf);
+
+  // 1. Non-cancelled event IDs of this study
+  const nonCancelledEventIds = new Set(
+    studyEvents
+      .filter((e) => getEffectiveStudyId(e.studyId) === study.id && !e.cancelledAt)
+      .map((e) => e.id),
+  );
+
+  // 2. Participants: at least one non-removed PRESENT or LATE attendance in held session
+  const participantIds = new Set(
+    getStudyParticipants(study.id, studyEvents, studyAttendances, evaluationDate),
+  );
+
+  // 3. Eligible members as of evaluationDate
+  const eligible = getEligibleMembersForStudy(study, allMembers, evaluationDate);
+
+  // 4. Exclude participants (participants never appear)
+  const nonParticipants = eligible.filter((m) => !participantIds.has(m.id));
+
+  // 5. Build member records
+  const members: NotParticipatingMember[] = nonParticipants.map((m) => {
+    const effectiveBatch = computeBatch(m, evaluationDate);
+
+    // Excused only: has non-removed EXCUSED attendance in a non-cancelled session of this study
+    const hasExcusedOnly = studyAttendances.some(
+      (a) =>
+        a.memberId === m.id &&
+        !a.removedAt &&
+        a.status === "EXCUSED" &&
+        nonCancelledEventIds.has(a.eventId),
+    );
+
+    // Attended any session of another ongoing study in the last 3 weeks
+    const attendingOtherStudy = checkAttendingOtherStudy(
+      m.id,
+      study.id,
+      allEvents,
+      allAttendances,
+      ongoingStudyIds,
+      evaluationDate,
+    );
+
+    const badges: string[] = [];
+    if (hasExcusedOnly) badges.push("Excused");
+    if (attendingOtherStudy) badges.push("Attending Other Study");
+
+    return {
+      id: m.id,
+      name: m.name,
+      uniqueId: m.uniqueId,
+      phoneNumber: m.phoneNumber || null,
+      campus: m.campus,
+      effectiveBatch,
+      department: m.department || null,
+      hasExcusedOnly,
+      attendingOtherStudy,
+      badges,
+      createdAt: m.createdAt,
+    };
+  });
+
+  // 6. Sort: members with attendingOtherStudy badge sorted below members without, then alphabetically
+  members.sort((a, b) => {
+    if (a.attendingOtherStudy !== b.attendingOtherStudy) {
+      return a.attendingOtherStudy ? 1 : -1;
+    }
+    return a.name.localeCompare(b.name);
+  });
+
+  return {
+    evaluationDate,
+    isOngoing,
+    totalEligible: eligible.length,
+    totalParticipants: participantIds.size,
+    totalNotParticipating: members.length,
+    audienceLabel: getStudyAudienceLabel(study),
+    audienceBatches: getStudyAudienceBatches(study),
+    members,
+  };
+}
+
+export interface NotParticipatingFilterOptions {
+  search?: string;
+  campus?: Campus | string;
+  batch?: Batch | string;
+  department?: string;
+  hideAttendingOther?: boolean | string;
+}
+
+export function filterNotParticipatingMembers(
+  members: NotParticipatingMember[],
+  filters: NotParticipatingFilterOptions = {},
+): NotParticipatingMember[] {
+  const { search, campus, batch, department, hideAttendingOther } = filters;
+  const isHideAttending =
+    hideAttendingOther === true || hideAttendingOther === "true";
+  const query = search?.trim().toLowerCase();
+
+  return members.filter((m) => {
+    if (isHideAttending && m.attendingOtherStudy) {
+      return false;
+    }
+    if (campus && campus !== "ALL" && m.campus !== campus) {
+      return false;
+    }
+    if (batch && batch !== "ALL" && m.effectiveBatch !== batch) {
+      return false;
+    }
+    if (department && department !== "ALL" && m.department !== department) {
+      return false;
+    }
+    if (query) {
+      const matchName = m.name.toLowerCase().includes(query);
+      const matchUniqueId = m.uniqueId.toLowerCase().includes(query);
+      const matchPhone = m.phoneNumber?.toLowerCase().includes(query);
+      const matchDept = m.department?.toLowerCase().includes(query);
+      if (!matchName && !matchUniqueId && !matchPhone && !matchDept) {
+        return false;
+      }
+    }
+    return true;
+  });
 }

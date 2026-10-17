@@ -184,3 +184,49 @@ export interface StudyStatsResponse {
   }>;
   grid: MemberStudyRow[];
 }
+
+export interface NotParticipatingMember {
+  id: string;
+  name: string;
+  uniqueId: string;
+  phoneNumber: string | null;
+  campus: string;
+  effectiveBatch: string;
+  department: string | null;
+  attendingOtherStudy: boolean;
+  isExcusedOnly: boolean;
+  badges: string[];
+}
+
+export interface NotParticipatingResponse {
+  study: {
+    id: string;
+    name: string;
+    audienceType: AudienceType;
+    audienceBatches: string[];
+    audienceLabel: string;
+  };
+  evaluationDate: string;
+  isOngoing: boolean;
+  totalEligible: number;
+  totalParticipants: number;
+  totalNotParticipating: number;
+  totalFiltered: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  audienceBatches: string[];
+  departments: string[];
+  members: NotParticipatingMember[];
+  allFilteredCount: number;
+}
+
+export interface NotParticipatingFilters {
+  search?: string;
+  campus?: string;
+  batch?: string;
+  department?: string;
+  hideAttendingOther?: boolean;
+  page?: number;
+  limit?: number;
+}

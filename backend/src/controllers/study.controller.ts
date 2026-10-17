@@ -211,3 +211,56 @@ export const exportStudyExcel = async (req: Request, res: Response) => {
     return res.status(500).json({ error: err.message || "Failed to export Excel" });
   }
 };
+
+export const getNotParticipatingMembers = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const idStr = Array.isArray(id) ? id[0] : id;
+    if (!idStr) return res.status(400).json({ error: "Study id is required" });
+
+    const { search, campus, batch, department, hideAttendingOther, page, limit } = req.query;
+
+    const result = await studyService.getNotParticipating(idStr, {
+      search: typeof search === "string" ? search : undefined,
+      campus: typeof campus === "string" ? (campus as any) : undefined,
+      batch: typeof batch === "string" ? (batch as any) : undefined,
+      department: typeof department === "string" ? department : undefined,
+      hideAttendingOther:
+        hideAttendingOther === "true" || hideAttendingOther === "1",
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+
+    return res.status(200).json(result);
+  } catch (err: any) {
+    console.error("Error in getNotParticipatingMembers:", err?.message ?? err);
+    return res.status(500).json({ error: err.message || "Internal server error" });
+  }
+};
+
+export const exportNotParticipatingExcel = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const idStr = Array.isArray(id) ? id[0] : id;
+    if (!idStr) return res.status(400).json({ error: "Study id is required" });
+
+    const { search, campus, batch, department, hideAttendingOther } = req.query;
+
+    const { workbook, studyName } = await studyService.exportNotParticipatingToExcel(idStr, {
+      search: typeof search === "string" ? search : undefined,
+      campus: typeof campus === "string" ? (campus as any) : undefined,
+      batch: typeof batch === "string" ? (batch as any) : undefined,
+      department: typeof department === "string" ? department : undefined,
+      hideAttendingOther:
+        hideAttendingOther === "true" || hideAttendingOther === "1",
+    });
+
+    const safeName = (studyName || "study").replace(/[^a-zA-Z0-9_-]/g, "_");
+    setExcelDownloadHeaders(res, safeName, "not_participating");
+    await workbook.xlsx.write(res);
+    return res.end();
+  } catch (err: any) {
+    console.error("Error in exportNotParticipatingExcel:", err?.message ?? err);
+    return res.status(500).json({ error: err.message || "Failed to export Excel" });
+  }
+};

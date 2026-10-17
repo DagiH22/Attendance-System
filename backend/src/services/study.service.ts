@@ -9,6 +9,11 @@ import {
   getHeldSessions,
   isStudyOngoing,
   computeParticipantTrailingMisses,
+  REGULAR_STUDY_ID,
+  getStudyEvaluationDate,
+  getNotParticipatingMembers,
+  filterNotParticipatingMembers,
+  NotParticipatingFilterOptions,
 } from "./academic.service";
 import {
   setTimeOnDate,
@@ -807,5 +812,163 @@ export class StudyService {
     }
 
     return workbook;
+  }
+
+  async getNotParticipating(
+    studyId: string,
+    filters: NotParticipatingFilterOptions & { page?: number; limit?: number } = {},
+  ) {
+    const study = await this.prisma.study.findUnique({
+      where: { id: studyId },
+    });
+    if (!study) {
+      throw new Error("Study not found");
+    }
+
+    const now = new Date();
+
+    const [allMembers, studyEvents, studyAttendances, allEvents, allAttendances, allStudies] =
+      await Promise.all([
+        this.prisma.member.findMany({
+          select: {
+            id: true,
+            name: true,
+            uniqueId: true,
+            phoneNumber: true,
+            campus: true,
+            batch: true,
+            department: true,
+            entryAcademicYear: true,
+            batchOverride: true,
+            createdAt: true,
+            deactivatedAt: true,
+            isActive: true,
+          },
+        }),
+        this.prisma.event.findMany({
+          where: { studyId },
+          orderBy: { startTime: "asc" },
+        }),
+        this.prisma.attendance.findMany({
+          where: {
+            removedAt: null,
+            event: { studyId },
+          },
+        }),
+        this.prisma.event.findMany({
+          where: { cancelledAt: null },
+          select: { id: true, studyId: true, startTime: true, endTime: true, cancelledAt: true },
+        }),
+        this.prisma.attendance.findMany({
+          where: { removedAt: null },
+          select: { id: true, memberId: true, eventId: true, status: true, markedAt: true, removedAt: true },
+        }),
+        this.prisma.study.findMany({
+          select: { id: true, isActive: true, endDate: true },
+        }),
+      ]);
+
+    const ongoingStudyIds = [
+      REGULAR_STUDY_ID,
+      ...allStudies.filter((s) => isStudyOngoing(s, now)).map((s) => s.id),
+    ];
+
+    const result = getNotParticipatingMembers(
+      study,
+      allMembers.map((m) => ({ ...m, entryAcademicYear: m.entryAcademicYear ?? 2025 })),
+      studyEvents,
+      studyAttendances,
+      allEvents,
+      allAttendances,
+      ongoingStudyIds,
+      now,
+    );
+
+    const filtered = filterNotParticipatingMembers(result.members, filters);
+
+    const page = Math.max(1, Number(filters.page) || 1);
+    const limit = filters.limit ? Math.max(1, Number(filters.limit)) : 50;
+    const totalFiltered = filtered.length;
+    const totalPages = Math.ceil(totalFiltered / limit) || 1;
+    const paginatedMembers = filtered.slice((page - 1) * limit, page * limit);
+
+    const departments = Array.from(
+      new Set(result.members.map((m) => m.department).filter(Boolean)),
+    ).sort() as string[];
+
+    return {
+      study: {
+        id: study.id,
+        name: study.name,
+        audienceType: study.audienceType,
+        audienceBatches: study.audienceBatches,
+        audienceLabel: result.audienceLabel,
+      },
+      evaluationDate: result.evaluationDate,
+      isOngoing: result.isOngoing,
+      totalEligible: result.totalEligible,
+      totalParticipants: result.totalParticipants,
+      totalNotParticipating: result.totalNotParticipating,
+      totalFiltered,
+      page,
+      limit,
+      totalPages,
+      audienceBatches: result.audienceBatches,
+      departments,
+      members: paginatedMembers,
+      allFilteredCount: totalFiltered,
+    };
+  }
+
+  async exportNotParticipatingToExcel(
+    studyId: string,
+    filters: NotParticipatingFilterOptions = {},
+  ): Promise<{ workbook: ExcelJS.Workbook; studyName: string }> {
+    const data = await this.getNotParticipating(studyId, {
+      ...filters,
+      page: 1,
+      limit: 100000,
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet(
+      "Not Participating".slice(0, 31),
+    );
+
+    sheet.columns = [
+      { header: "Unique ID", key: "uniqueId", width: 16 },
+      { header: "Full Name", key: "name", width: 26 },
+      { header: "Phone Number", key: "phoneNumber", width: 18 },
+      { header: "Campus", key: "campus", width: 14 },
+      { header: "Effective Batch", key: "effectiveBatch", width: 16 },
+      { header: "Department", key: "department", width: 24 },
+      { header: "Status / Badges", key: "badges", width: 28 },
+    ];
+
+    sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+    sheet.getRow(1).fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FF1E3A8A" }, // Dark blue
+    };
+
+    for (const m of data.members) {
+      const badgeText = m.badges.length > 0 ? m.badges.join(", ") : "Not Participating";
+      const row = sheet.addRow({
+        uniqueId: m.uniqueId,
+        name: m.name,
+        phoneNumber: m.phoneNumber || "—",
+        campus: m.campus,
+        effectiveBatch: m.effectiveBatch,
+        department: m.department || "—",
+        badges: badgeText,
+      });
+
+      if (m.attendingOtherStudy) {
+        row.font = { color: { argb: "FF6B7280" } }; // Muted grey
+      }
+    }
+
+    return { workbook, studyName: data.study.name };
   }
 }

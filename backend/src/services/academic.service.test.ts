@@ -15,6 +15,12 @@ import {
   computeParticipantTrailingMisses,
   checkAttendingOtherStudy,
   REGULAR_STUDY_ID,
+  getStudyEvaluationDate,
+  getStudyAudienceBatches,
+  getStudyAudienceLabel,
+  getEligibleMembersForStudy,
+  getNotParticipatingMembers,
+  filterNotParticipatingMembers,
   AcademicMemberLike,
   AcademicEventLike,
   AcademicAttendanceLike,
@@ -726,6 +732,274 @@ describe("academic.service unit tests", () => {
       expect(result.isParticipant).toBe(true);
       expect(result.trailingMisses).toBe(2);
       expect(result.alertLevel).toBe("WARNING");
+    });
+  });
+
+  describe("Amendment 2: Not participating section per study", () => {
+    const asOf = new Date(2026, 9, 17); // Oct 17, 2026 (Academic Year 2026)
+
+    it("1. ALL audience lists everyone eligible not participating", () => {
+      const study = {
+        id: "study-all",
+        name: "Epiphany Hymns",
+        audienceType: "ALL" as const,
+        isActive: true,
+      };
+
+      const m1 = { id: "m1", name: "Abebe", uniqueId: "U01", campus: Campus.FOUR_KILO, entryAcademicYear: 2025, createdAt: new Date(2026, 0, 1) };
+      const m2 = { id: "m2", name: "Biruk", uniqueId: "U02", campus: Campus.FOUR_KILO, entryAcademicYear: 2025, createdAt: new Date(2026, 0, 1) };
+      const m3 = { id: "m3", name: "Chala", uniqueId: "U03", campus: Campus.FOUR_KILO, entryAcademicYear: 2025, createdAt: new Date(2026, 0, 1) };
+      const members = [m1, m2, m3];
+
+      const s1: AcademicEventLike = {
+        id: "sess1",
+        studyId: "study-all",
+        startTime: new Date(2026, 8, 10, 17, 0),
+        endTime: new Date(2026, 8, 10, 19, 0),
+      };
+
+      // m1 attended as PRESENT
+      const attendances: AcademicAttendanceLike[] = [
+        { memberId: "m1", eventId: "sess1", status: "PRESENT", markedAt: s1.startTime },
+      ];
+
+      const result = getNotParticipatingMembers(study, members, [s1], attendances, [s1], attendances, [], asOf);
+
+      expect(result.totalEligible).toBe(3);
+      expect(result.totalParticipants).toBe(1);
+      expect(result.totalNotParticipating).toBe(2);
+      expect(result.members.map((m) => m.id)).toEqual(["m2", "m3"]);
+    });
+
+    it("2. BATCHES audience excludes other batches", () => {
+      const study = {
+        id: "study-batches",
+        name: "Senior Liturgy",
+        audienceType: "BATCHES" as const,
+        audienceBatches: [Batch.YEAR_3, Batch.YEAR_4],
+        isActive: true,
+      };
+
+      const m_y1 = { id: "m1", name: "Y1", uniqueId: "U1", campus: Campus.FOUR_KILO, entryAcademicYear: 2026, createdAt: new Date(2026, 0, 1) };
+      const m_y2 = { id: "m2", name: "Y2", uniqueId: "U2", campus: Campus.FOUR_KILO, entryAcademicYear: 2025, createdAt: new Date(2026, 0, 1) };
+      const m_y3 = { id: "m3", name: "Y3", uniqueId: "U3", campus: Campus.FOUR_KILO, entryAcademicYear: 2024, createdAt: new Date(2026, 0, 1) };
+      const m_y4 = { id: "m4", name: "Y4", uniqueId: "U4", campus: Campus.FOUR_KILO, entryAcademicYear: 2023, createdAt: new Date(2026, 0, 1) };
+
+      const members = [m_y1, m_y2, m_y3, m_y4];
+
+      const result = getNotParticipatingMembers(study, members, [], [], [], [], [], asOf);
+
+      expect(result.totalEligible).toBe(2);
+      expect(result.members.map((m) => m.id).sort()).toEqual(["m3", "m4"].sort());
+      expect(result.audienceBatches).toEqual([Batch.YEAR_3, Batch.YEAR_4]);
+    });
+
+    it("3. FINAL_YEAR audience respects 5-year (5 Kilo) vs 4-year (other campuses) boundaries", () => {
+      const study = {
+        id: "study-final",
+        name: "Graduation Mezmur",
+        audienceType: "FINAL_YEAR" as const,
+        isActive: true,
+      };
+
+      // 5 Kilo is 5-year: Level 5 (entry 2022) is final year; Level 4 (entry 2023) is NOT final year
+      const m_5k_y4 = { id: "m5k4", name: "5K Year 4", uniqueId: "U54", campus: Campus.FIVE_KILO, entryAcademicYear: 2023, createdAt: new Date(2026, 0, 1) };
+      const m_5k_y5 = { id: "m5k5", name: "5K Year 5", uniqueId: "U55", campus: Campus.FIVE_KILO, entryAcademicYear: 2022, createdAt: new Date(2026, 0, 1) };
+
+      // 4 Kilo is 4-year: Level 4 (entry 2023) IS final year
+      const m_4k_y4 = { id: "m4k4", name: "4K Year 4", uniqueId: "U44", campus: Campus.FOUR_KILO, entryAcademicYear: 2023, createdAt: new Date(2026, 0, 1) };
+
+      const members = [m_5k_y4, m_5k_y5, m_4k_y4];
+
+      const result = getNotParticipatingMembers(study, members, [], [], [], [], [], asOf);
+
+      // m_5k_y4 must NOT be included; only m_5k_y5 and m_4k_y4 are eligible final-year members
+      expect(result.members.map((m) => m.id).sort()).toEqual(["m4k4", "m5k5"].sort());
+      expect(result.totalEligible).toBe(2);
+    });
+
+    it("4. a member with batchOverride appears under the overridden batch", () => {
+      const study = {
+        id: "study-override",
+        name: "Final Year Study",
+        audienceType: "FINAL_YEAR" as const,
+        isActive: true,
+      };
+
+      // Naturally entry 2025 is Year 2, but has override to YEAR_4
+      const m_ovr = {
+        id: "m_ovr",
+        name: "Dawit Override",
+        uniqueId: "U_OVR",
+        campus: Campus.FOUR_KILO,
+        entryAcademicYear: 2025,
+        batchOverride: Batch.YEAR_4,
+        createdAt: new Date(2026, 0, 1),
+      };
+
+      const result = getNotParticipatingMembers(study, [m_ovr], [], [], [], [], [], asOf);
+
+      expect(result.totalEligible).toBe(1);
+      expect(result.members[0].effectiveBatch).toBe(Batch.YEAR_4);
+      expect(result.members[0].id).toBe("m_ovr");
+    });
+
+    it("5. deactivated and not-yet-registered members excluded", () => {
+      const study = {
+        id: "study-active-check",
+        name: "Ongoing Active Study",
+        audienceType: "ALL" as const,
+        isActive: true,
+      };
+
+      const m_active = { id: "m_act", name: "Active", uniqueId: "U_ACT", campus: Campus.FOUR_KILO, entryAcademicYear: 2025, createdAt: new Date(2026, 0, 1) };
+      const m_deact = {
+        id: "m_dea",
+        name: "Deactivated",
+        uniqueId: "U_DEA",
+        campus: Campus.FOUR_KILO,
+        entryAcademicYear: 2025,
+        createdAt: new Date(2026, 0, 1),
+        deactivatedAt: new Date(2026, 5, 1),
+      };
+      const m_future = {
+        id: "m_fut",
+        name: "Future Registered",
+        uniqueId: "U_FUT",
+        campus: Campus.FOUR_KILO,
+        entryAcademicYear: 2025,
+        createdAt: new Date(2026, 11, 1),
+      };
+
+      const result = getNotParticipatingMembers(study, [m_active, m_deact, m_future], [], [], [], [], [], asOf);
+
+      expect(result.members.map((m) => m.id)).toEqual(["m_act"]);
+    });
+
+    it("6. a participant never appears; excused member appears with Excused badge", () => {
+      const study = {
+        id: "study-part-check",
+        name: "Participation Check",
+        audienceType: "ALL" as const,
+        isActive: true,
+      };
+
+      const s1: AcademicEventLike = { id: "s1", studyId: "study-part-check", startTime: new Date(2026, 8, 1), endTime: new Date(2026, 8, 1, 2) };
+      const s2: AcademicEventLike = { id: "s2", studyId: "study-part-check", startTime: new Date(2026, 8, 8), endTime: new Date(2026, 8, 8, 2) };
+
+      const m_pres = { id: "m_pres", name: "Present Member", uniqueId: "U1", campus: Campus.FOUR_KILO, entryAcademicYear: 2025, createdAt: new Date(2026, 0, 1) };
+      const m_late = { id: "m_late", name: "Late Member", uniqueId: "U2", campus: Campus.FOUR_KILO, entryAcademicYear: 2025, createdAt: new Date(2026, 0, 1) };
+      const m_exc = { id: "m_exc", name: "Excused Member", uniqueId: "U3", campus: Campus.FOUR_KILO, entryAcademicYear: 2025, createdAt: new Date(2026, 0, 1) };
+      const m_none = { id: "m_none", name: "None Member", uniqueId: "U4", campus: Campus.FOUR_KILO, entryAcademicYear: 2025, createdAt: new Date(2026, 0, 1) };
+
+      const attendances: AcademicAttendanceLike[] = [
+        { memberId: "m_pres", eventId: "s1", status: "PRESENT", markedAt: s1.startTime },
+        { memberId: "m_late", eventId: "s2", status: "LATE", markedAt: s2.startTime },
+        { memberId: "m_exc", eventId: "s1", status: "EXCUSED", markedAt: s1.startTime },
+      ];
+
+      const result = getNotParticipatingMembers(
+        study,
+        [m_pres, m_late, m_exc, m_none],
+        [s1, s2],
+        attendances,
+        [s1, s2],
+        attendances,
+        [],
+        asOf,
+      );
+
+      const ids = result.members.map((m) => m.id);
+      expect(ids).not.toContain("m_pres");
+      expect(ids).not.toContain("m_late");
+      expect(ids).toContain("m_exc");
+      expect(ids).toContain("m_none");
+
+      const excMember = result.members.find((m) => m.id === "m_exc");
+      expect(excMember?.hasExcusedOnly).toBe(true);
+      expect(excMember?.badges).toContain("Excused");
+
+      const noneMember = result.members.find((m) => m.id === "m_none");
+      expect(noneMember?.hasExcusedOnly).toBe(false);
+      expect(noneMember?.badges).not.toContain("Excused");
+    });
+
+    it("7. attendingOtherStudy badge, sorting, and hide toggle", () => {
+      const studyA = { id: "study-A", name: "Study A", audienceType: "ALL" as const, isActive: true };
+      const studyB = { id: "study-B", name: "Study B", audienceType: "ALL" as const, isActive: true };
+
+      const mA = { id: "mA", name: "Aaron No Other", uniqueId: "U_A", campus: Campus.FOUR_KILO, entryAcademicYear: 2025, createdAt: new Date(2026, 0, 1) };
+      const mB = { id: "mB", name: "Beth Other Study", uniqueId: "U_B", campus: Campus.FOUR_KILO, entryAcademicYear: 2025, createdAt: new Date(2026, 0, 1) };
+
+      const eventB: AcademicEventLike = {
+        id: "evB",
+        studyId: "study-B",
+        startTime: new Date(asOf.getTime() - 7 * 24 * 60 * 60 * 1000),
+        endTime: new Date(asOf.getTime() - 7 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000),
+      };
+
+      const allEvents = [eventB];
+      const allAttendances: AcademicAttendanceLike[] = [
+        { memberId: "mB", eventId: "evB", status: "PRESENT", markedAt: eventB.startTime },
+      ];
+
+      const result = getNotParticipatingMembers(
+        studyA,
+        [mB, mA],
+        [],
+        [],
+        allEvents,
+        allAttendances,
+        ["study-A", "study-B"],
+        asOf,
+      );
+
+      // mA has no badge -> sorted first! mB has attendingOtherStudy -> sorted below!
+      expect(result.members[0].id).toBe("mA");
+      expect(result.members[0].attendingOtherStudy).toBe(false);
+
+      expect(result.members[1].id).toBe("mB");
+      expect(result.members[1].attendingOtherStudy).toBe(true);
+      expect(result.members[1].badges).toContain("Attending Other Study");
+
+      // Hide toggle
+      const filtered = filterNotParticipatingMembers(result.members, { hideAttendingOther: true });
+      expect(filtered.map((m) => m.id)).toEqual(["mA"]);
+    });
+
+    it("8. ended study evaluated as of its last session", () => {
+      const lastSession: AcademicEventLike = {
+        id: "last-s",
+        studyId: "ended-study",
+        startTime: new Date(2026, 7, 30, 14, 0),
+        endTime: new Date(2026, 7, 30, 16, 0),
+      };
+
+      const study = {
+        id: "ended-study",
+        name: "Lent Study",
+        audienceType: "ALL" as const,
+        isActive: false,
+        endDate: new Date(2026, 7, 31),
+      };
+
+      const m1 = { id: "m1", name: "M1 Early", uniqueId: "U1", campus: Campus.FOUR_KILO, entryAcademicYear: 2025, createdAt: new Date(2026, 6, 1) };
+      const m2 = { id: "m2", name: "M2 Late", uniqueId: "U2", campus: Campus.FOUR_KILO, entryAcademicYear: 2025, createdAt: new Date(2026, 8, 5) };
+
+      const result = getNotParticipatingMembers(
+        study,
+        [m1, m2],
+        [lastSession],
+        [],
+        [lastSession],
+        [],
+        [],
+        asOf,
+      );
+
+      expect(result.isOngoing).toBe(false);
+      expect(result.evaluationDate.toISOString()).toBe(lastSession.endTime.toISOString());
+      expect(result.members.map((m) => m.id)).toEqual(["m1"]);
     });
   });
 });
