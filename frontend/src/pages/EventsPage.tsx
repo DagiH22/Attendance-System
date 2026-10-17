@@ -1,14 +1,15 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import api from "../lib/api";
+import api, { getStudies, rescheduleEvent, cancelEvent } from "../lib/api";
 import { toFriendlyError } from "../lib/errors";
 import formatDate from "../lib/formatDate";
-import type { DashboardEvent } from "../types/events";
+import type { DashboardEvent, Study, SessionType } from "../types/events";
 import { useAuth } from "../contexts/AuthContext";
 import { usePersistentState } from "../hooks/usePersistentState";
 
-type StatusOption = "UPCOMING" | "ACTIVE" | "PAST" | "DEACTIVATED";
+type StatusOption = "UPCOMING" | "ACTIVE" | "PAST" | "DEACTIVATED" | "CANCELLED";
 type TypeFilter = "ALL" | "WEEKLY" | "MONTHLY" | "ONE_TIME";
+type SessionTypeFilter = "ALL" | "EVENING" | "OVERNIGHT" | "OTHER";
 type SortOption =
   | "DEFAULT"
   | "NEXT_EVENT"
@@ -16,18 +17,7 @@ type SortOption =
   | "HIGHEST_ATTENDANCE"
   | "LOWEST_ATTENDANCE";
 
-type EditableStatusOption = "UPCOMING" | "DEACTIVATED";
-
-const EDITABLE_STATUS_OPTIONS: Array<{
-  value: EditableStatusOption;
-  label: string;
-}> = [
-  { value: "UPCOMING", label: "Upcoming" },
-  { value: "DEACTIVATED", label: "Deactivated" },
-];
-
-const UI_PAGE_SIZE = 10;
-const BATCH_SIZE = 30;
+const BATCH_SIZE = 50;
 
 const toDateTimeLocalValue = (value: string) => {
   const date = new Date(value);
@@ -36,10 +26,7 @@ const toDateTimeLocalValue = (value: string) => {
   return localDate.toISOString().slice(0, 16);
 };
 
-// Preserve backend ordering for DEFAULT sort; client-side comparator not required.
-
 const mapEventToDashboardEvent = (event: any): DashboardEvent => {
-  // Prefer server-provided normalized ISO timestamps and status when available
   const startIso = event.startTime ?? event.eventDate;
   const eventStart = startIso ? new Date(startIso) : new Date();
   const eventEnd = event.endTime
@@ -60,42 +47,56 @@ const mapEventToDashboardEvent = (event: any): DashboardEvent => {
     attendanceOpen,
     location: event.location || "",
     eventType: event.type as DashboardEvent["eventType"],
+    sessionType: (event.sessionType as SessionType) || "EVENING",
+    studyId: event.studyId || null,
+    study: event.study || null,
+    plannedStartTime: event.plannedStartTime || null,
+    rescheduleReason: event.rescheduleReason || null,
+    rescheduledAt: event.rescheduledAt || null,
+    cancelReason: event.cancelReason || null,
+    cancelledAt: event.cancelledAt || null,
+    lateGraceMinutes: event.lateGraceMinutes ?? null,
     createdBy: {
       id: event.admin?.id || event.createdBy?.id || "unknown-admin",
       name: event.admin?.name || event.createdBy?.name || "Admin User",
     },
-    attendanceCount: event._count?.attendances || 0,
+    attendanceCount: event._count?.attendances || event.attendanceCount || 0,
     createdAt: event.createdAt || eventStart.toISOString(),
     totalMembers: event.totalMembers || 0,
+    stats: event.stats || undefined,
   };
 };
 
 const EventsPage: React.FC = () => {
   const [events, setEvents] = useState<DashboardEvent[]>([]);
+  const [studies, setStudies] = useState<Study[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
   const [totalEvents, setTotalEvents] = useState<number>(0);
-  const [currentPage, setCurrentPage] = useState<number>(1);
   const [initialLoaded, setInitialLoaded] = useState(false);
 
   const loadedBatchOffsetsRef = React.useRef<Set<number>>(new Set());
   const pendingBatchOffsetsRef = React.useRef<Set<number>>(new Set());
 
   // Filters and Sorting State
-  // statusFilterSelected: empty array means no filter (ALL)
   const [statusFilter, setStatusFilter] = usePersistentState<StatusOption[]>(
-    "events-status-filter",
+    "events-status-filter-v2",
     [],
   );
   const [typeFilter, setTypeFilter] = usePersistentState<TypeFilter>(
     "events-type-filter",
     "ALL",
   );
+  const [sessionTypeFilter, setSessionTypeFilter] = useState<SessionTypeFilter>("ALL");
+  const [studyFilter, setStudyFilter] = useState<string>("ALL");
   const [sortBy, setSortBy] = usePersistentState<SortOption>(
     "events-sort-by",
     "NEXT_EVENT",
   );
   const [isSortModalOpen, setIsSortModalOpen] = useState(false);
+
+  // Collapsed study sections (studyId or "STANDALONE")
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   // Search State
   const [searchQuery, setSearchQuery] = usePersistentState<string>(
@@ -105,7 +106,6 @@ const EventsPage: React.FC = () => {
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(searchQuery);
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
 
-  // ref for controlling focus of header search input when expanded
   const searchInputRef = React.useRef<HTMLInputElement | null>(null);
 
   // Debounce effect
@@ -119,23 +119,22 @@ const EventsPage: React.FC = () => {
 
   // Dropdown states for desktop
   const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
-  const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
-  const [isEditStatusDropdownOpen, setIsEditStatusDropdownOpen] =
-    useState(false);
+  const [isSessionTypeDropdownOpen, setIsSessionTypeDropdownOpen] = useState(false);
+  const [isStudyDropdownOpen, setIsStudyDropdownOpen] = useState(false);
 
   // Click outside handlers ref
   const sortDropdownRef = React.useRef<HTMLDivElement>(null);
   const statusDropdownRef = React.useRef<HTMLDivElement>(null);
-  const typeDropdownRef = React.useRef<HTMLDivElement>(null);
-  const editStatusDropdownRef = React.useRef<HTMLDivElement>(null);
+  const sessionTypeDropdownRef = React.useRef<HTMLDivElement>(null);
+  const studyDropdownRef = React.useRef<HTMLDivElement>(null);
 
   const navigate = useNavigate();
   const location = useLocation();
   const { logout, admin } = useAuth();
+
+  // Modals state
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [selectedEvent, setSelectedEvent] = useState<DashboardEvent | null>(
-    null,
-  );
+  const [selectedEvent, setSelectedEvent] = useState<DashboardEvent | null>(null);
   const [editError, setEditError] = useState("");
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [editForm, setEditForm] = useState({
@@ -146,15 +145,35 @@ const EventsPage: React.FC = () => {
     endTime: "",
   });
 
+  // Reschedule Modal
+  const [isRescheduleModalOpen, setIsRescheduleModalOpen] = useState(false);
+  const [rescheduleEventTarget, setRescheduleEventTarget] = useState<DashboardEvent | null>(null);
+  const [rescheduleForm, setRescheduleForm] = useState({
+    startTime: "",
+    endTime: "",
+    reason: "",
+  });
+  const [rescheduleError, setRescheduleError] = useState("");
+  const [isRescheduling, setIsRescheduling] = useState(false);
+
+  // Cancel Modal
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
+  const [cancelEventTarget, setCancelEventTarget] = useState<DashboardEvent | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelError, setCancelError] = useState("");
+  const [isCancelling, setIsCancelling] = useState(false);
+
   const STATUS_OPTIONS: StatusOption[] = [
     "UPCOMING",
     "ACTIVE",
-    "DEACTIVATED",
     "PAST",
+    "DEACTIVATED",
+    "CANCELLED",
   ];
 
   const formatStatusLabel = (s: StatusOption) => {
     if (s === "DEACTIVATED") return "Deactivated";
+    if (s === "CANCELLED") return "Cancelled";
     if (s === "PAST") return "Past";
     return s.charAt(0) + s.slice(1).toLowerCase();
   };
@@ -167,34 +186,41 @@ const EventsPage: React.FC = () => {
     });
   };
 
+  const toggleGroupCollapse = (groupId: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
+  };
+
+  // Fetch studies
+  useEffect(() => {
+    getStudies()
+      .then((data: Study[]) => setStudies(data || []))
+      .catch((err) => console.error("Failed to load studies", err));
+  }, []);
+
   useEffect(() => {
     void fetchEventsBatch(0, { replace: true, showLoader: true });
 
-    // Close dropdowns when clicking outside
     const handleClickOutside = (event: MouseEvent) => {
-      if (
-        sortDropdownRef.current &&
-        !sortDropdownRef.current.contains(event.target as Node)
-      ) {
+      const target = event.target as Node;
+      if (sortDropdownRef.current && !sortDropdownRef.current.contains(target)) {
         setIsSortModalOpen(false);
       }
-      if (
-        statusDropdownRef.current &&
-        !statusDropdownRef.current.contains(event.target as Node)
-      ) {
+      if (statusDropdownRef.current && !statusDropdownRef.current.contains(target)) {
         setIsStatusDropdownOpen(false);
       }
-      if (
-        typeDropdownRef.current &&
-        !typeDropdownRef.current.contains(event.target as Node)
-      ) {
-        setIsTypeDropdownOpen(false);
+      if (sessionTypeDropdownRef.current && !sessionTypeDropdownRef.current.contains(target)) {
+        setIsSessionTypeDropdownOpen(false);
       }
-      if (
-        editStatusDropdownRef.current &&
-        !editStatusDropdownRef.current.contains(event.target as Node)
-      ) {
-        setIsEditStatusDropdownOpen(false);
+      if (studyDropdownRef.current && !studyDropdownRef.current.contains(target)) {
+        setIsStudyDropdownOpen(false);
       }
     };
 
@@ -214,22 +240,14 @@ const EventsPage: React.FC = () => {
   }, [location.pathname, location.state, navigate]);
 
   useEffect(() => {
-    if (!initialLoaded) {
-      return;
-    }
-
+    if (!initialLoaded) return;
     const intervalId = window.setInterval(() => {
       loadedBatchOffsetsRef.current.clear();
       pendingBatchOffsetsRef.current.clear();
       void fetchEventsBatch(0, { replace: true, showLoader: false });
     }, 60_000);
-
     return () => window.clearInterval(intervalId);
   }, [initialLoaded]);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [debouncedSearchQuery, statusFilter, typeFilter, sortBy]);
 
   const fetchEventsBatch = async (
     offset: number,
@@ -275,8 +293,6 @@ const EventsPage: React.FC = () => {
           for (const item of mergedEvents) {
             uniqueEvents.set(item.id, item);
           }
-
-          // Preserve insertion order (server-supplied ordering across batches)
           return Array.from(uniqueEvents.values());
         });
 
@@ -305,46 +321,49 @@ const EventsPage: React.FC = () => {
       statusFilter.length === 0 ||
       statusFilter.includes(e.status as StatusOption);
     const matchType = typeFilter === "ALL" || e.eventType === typeFilter;
+    const matchSessionType =
+      sessionTypeFilter === "ALL" || e.sessionType === sessionTypeFilter;
+    const matchStudy =
+      studyFilter === "ALL"
+        ? true
+        : studyFilter === "STANDALONE"
+          ? !e.studyId
+          : e.studyId === studyFilter;
 
-    // Search matching logic (case-insensitive on title, description, and eventType)
     const normalizedSearch = debouncedSearchQuery.toLowerCase().trim();
     const matchSearch =
       normalizedSearch === "" ||
       e.title.toLowerCase().includes(normalizedSearch) ||
       e.description.toLowerCase().includes(normalizedSearch) ||
+      (e.study?.name && e.study.name.toLowerCase().includes(normalizedSearch)) ||
       e.eventType.toLowerCase().replace("_", " ").includes(normalizedSearch);
 
-    return matchStatus && matchType && matchSearch;
+    return matchStatus && matchType && matchSessionType && matchStudy && matchSearch;
   });
 
-  const sortedAndFilteredEvents =
+  const sortedEvents =
     sortBy === "DEFAULT"
       ? filteredEvents
       : [...filteredEvents].sort((a, b) => {
           switch (sortBy) {
-            case "NEXT_EVENT":
-              // Priority: ACTIVE -> UPCOMING -> PAST -> DEACTIVATED
+            case "NEXT_EVENT": {
               const rank: Record<string, number> = {
                 ACTIVE: 0,
                 UPCOMING: 1,
                 PAST: 2,
                 DEACTIVATED: 3,
+                CANCELLED: 4,
               };
-
-              const rankA = rank[a.status] ?? 4;
-              const rankB = rank[b.status] ?? 4;
-
+              const rankA = rank[a.status] ?? 5;
+              const rankB = rank[b.status] ?? 5;
               if (rankA !== rankB) return rankA - rankB;
-
-              // If same rank, fall back to startTime ascending
               return (
-                new Date(a.startTime).getTime() -
-                new Date(b.startTime).getTime()
+                new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
               );
+            }
             case "RECENTLY_CREATED":
               return (
-                new Date(b.createdAt).getTime() -
-                new Date(a.createdAt).getTime()
+                new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
               );
             case "HIGHEST_ATTENDANCE":
               return b.attendanceCount - a.attendanceCount;
@@ -355,15 +374,41 @@ const EventsPage: React.FC = () => {
           }
         });
 
-  // Helpers
+  // Grouping into Study groups + Standalone group
+  const groupedSections = useMemo(() => {
+    const studyMap = new Map<
+      string,
+      { study: Study | { id: string; name: string }; events: DashboardEvent[] }
+    >();
+    const standaloneEvents: DashboardEvent[] = [];
+
+    // Initialize with known studies if in studies list
+    for (const ev of sortedEvents) {
+      if (ev.studyId) {
+        if (!studyMap.has(ev.studyId)) {
+          const knownStudy =
+            studies.find((s) => s.id === ev.studyId) ||
+            ev.study || { id: ev.studyId, name: "Study Session Group" };
+          studyMap.set(ev.studyId, { study: knownStudy, events: [] });
+        }
+        studyMap.get(ev.studyId)!.events.push(ev);
+      } else {
+        standaloneEvents.push(ev);
+      }
+    }
+
+    return {
+      studies: Array.from(studyMap.values()),
+      standalone: standaloneEvents,
+    };
+  }, [sortedEvents, studies]);
+
   const formatTime = (isoString: string) => {
     return new Date(isoString).toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     });
   };
-
-  // Use dd/mm/yyyy for dates across the app (formatDate is imported)
 
   const getStatusColor = (status: DashboardEvent["status"]) => {
     if (status === "ACTIVE")
@@ -372,6 +417,8 @@ const EventsPage: React.FC = () => {
       return "bg-blue-100 text-blue-800 border-blue-200";
     if (status === "DEACTIVATED")
       return "bg-yellow-50 text-yellow-800 border-yellow-100";
+    if (status === "CANCELLED")
+      return "bg-red-100 text-red-800 border-red-200";
     return "bg-gray-100 text-gray-800 border-gray-200";
   };
 
@@ -394,6 +441,7 @@ const EventsPage: React.FC = () => {
 
   const isSuperAdmin = admin?.role === "SUPER_ADMIN";
 
+  // Actions
   const openEditModal = (event: DashboardEvent) => {
     setSelectedEvent(event);
     setEditError("");
@@ -404,16 +452,12 @@ const EventsPage: React.FC = () => {
       startTime: toDateTimeLocalValue(event.startTime),
       endTime: toDateTimeLocalValue(event.endTime),
     });
-    setIsEditStatusDropdownOpen(false);
     setIsEditModalOpen(true);
   };
 
   const handleEditSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-
-    if (!selectedEvent) {
-      return;
-    }
+    if (!selectedEvent) return;
 
     const parsedStartTime = new Date(editForm.startTime);
     const parsedEndTime = new Date(editForm.endTime);
@@ -456,7 +500,6 @@ const EventsPage: React.FC = () => {
         prev.map((item) => (item.id === updatedEvent.id ? updatedEvent : item)),
       );
       setIsEditModalOpen(false);
-      setIsEditStatusDropdownOpen(false);
       setSelectedEvent(null);
     } catch (err: any) {
       setEditError(
@@ -469,58 +512,306 @@ const EventsPage: React.FC = () => {
     }
   };
 
-  const totalPages = Math.max(
-    1,
-    Math.ceil(sortedAndFilteredEvents.length / UI_PAGE_SIZE),
+  const openRescheduleModal = (event: DashboardEvent) => {
+    setRescheduleEventTarget(event);
+    setRescheduleError("");
+    setRescheduleForm({
+      startTime: toDateTimeLocalValue(event.startTime),
+      endTime: toDateTimeLocalValue(event.endTime),
+      reason: "",
+    });
+    setIsRescheduleModalOpen(true);
+  };
+
+  const handleRescheduleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!rescheduleEventTarget) return;
+
+    if (!rescheduleForm.reason.trim()) {
+      setRescheduleError("Please provide a reason for rescheduling.");
+      return;
+    }
+
+    const start = new Date(rescheduleForm.startTime);
+    const end = new Date(rescheduleForm.endTime);
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end <= start) {
+      setRescheduleError("End time must be after start time.");
+      return;
+    }
+
+    try {
+      setIsRescheduling(true);
+      setRescheduleError("");
+      const result = await rescheduleEvent(rescheduleEventTarget.id, {
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+        reason: rescheduleForm.reason.trim(),
+      });
+
+      const updated = mapEventToDashboardEvent(result.event ?? result);
+      setEvents((prev) =>
+        prev.map((item) => (item.id === updated.id ? updated : item)),
+      );
+      setIsRescheduleModalOpen(false);
+      setRescheduleEventTarget(null);
+    } catch (err: any) {
+      setRescheduleError(
+        err.response?.data?.error ||
+          err.response?.data?.message ||
+          "Failed to reschedule event.",
+      );
+    } finally {
+      setIsRescheduling(false);
+    }
+  };
+
+  const openCancelModal = (event: DashboardEvent) => {
+    setCancelEventTarget(event);
+    setCancelError("");
+    setCancelReason("");
+    setIsCancelModalOpen(true);
+  };
+
+  const handleCancelSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!cancelEventTarget) return;
+
+    if (!cancelReason.trim()) {
+      setCancelError("Please provide a cancellation reason.");
+      return;
+    }
+
+    try {
+      setIsCancelling(true);
+      setCancelError("");
+      const result = await cancelEvent(cancelEventTarget.id, {
+        reason: cancelReason.trim(),
+      });
+
+      const updated = mapEventToDashboardEvent(result.event ?? result);
+      setEvents((prev) =>
+        prev.map((item) => (item.id === updated.id ? updated : item)),
+      );
+      setIsCancelModalOpen(false);
+      setCancelEventTarget(null);
+    } catch (err: any) {
+      setCancelError(
+        err.response?.data?.error ||
+          err.response?.data?.message ||
+          "Failed to cancel event.",
+      );
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
+  const renderEventCard = (event: DashboardEvent) => (
+    <div
+      key={event.id}
+      role="button"
+      tabIndex={0}
+      onClick={() =>
+        navigate(`/events/${event.id}`, {
+          state: { event },
+        })
+      }
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          navigate(`/events/${event.id}`, { state: { event } });
+        }
+      }}
+      className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 transition-all hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+    >
+      <div className="flex justify-between items-start mb-2 gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-base sm:text-lg font-bold text-gray-900 leading-tight">
+              {event.title}
+            </h3>
+            {event.sessionType && (
+              <span
+                className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
+                  event.sessionType === "OVERNIGHT"
+                    ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                    : event.sessionType === "EVENING"
+                      ? "bg-blue-50 text-blue-700 border-blue-200"
+                      : "bg-gray-50 text-gray-600 border-gray-200"
+                }`}
+              >
+                {event.sessionType === "OVERNIGHT"
+                  ? "🌙 Overnight"
+                  : event.sessionType === "EVENING"
+                    ? "🌆 Evening"
+                    : "📅 Other"}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <span
+            className={`px-2.5 py-1 text-xs font-bold rounded-full border whitespace-nowrap ${getStatusColor(
+              event.status,
+            )}`}
+          >
+            {event.status}
+          </span>
+        </div>
+      </div>
+
+      {/* Rescheduled / Cancelled badges */}
+      {event.rescheduledAt && (
+        <div className="mb-2 inline-flex items-center gap-1.5 bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-1 rounded-lg text-xs">
+          <span>⚠️ Rescheduled:</span>
+          <span className="font-medium">{event.rescheduleReason || "Slot updated"}</span>
+          {event.plannedStartTime && (
+            <span className="text-amber-600">
+              (Originally: {formatDate(event.plannedStartTime)})
+            </span>
+          )}
+        </div>
+      )}
+
+      {event.cancelledAt && (
+        <div className="mb-2 inline-flex items-center gap-1.5 bg-red-50 text-red-800 border border-red-200 px-2.5 py-1 rounded-lg text-xs">
+          <span>❌ Cancelled:</span>
+          <span className="font-medium">{event.cancelReason || "Session cancelled"}</span>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200">
+          {event.eventType.replace("_", " ")}
+        </span>
+        {(event.status === "PAST" || event.status === "ACTIVE") && (
+          <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 flex items-center border border-purple-100">
+            <svg
+              className="w-3.5 h-3.5 mr-1"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
+              <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z" />
+            </svg>
+            {event.attendanceCount} attended
+          </span>
+        )}
+      </div>
+
+      <div className="space-y-1.5 text-sm text-gray-600 mb-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
+        <div className="flex items-center">
+          <svg
+            className="w-4 h-4 mr-2 text-gray-400"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="2"
+              d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+            />
+          </svg>
+          {formatDate(event.startTime)}
+        </div>
+        <div className="flex items-center">
+          <svg
+            className="w-4 h-4 mr-2 text-gray-400"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="2"
+              d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          </svg>
+          {formatTime(event.startTime)} - {formatTime(event.endTime)}
+        </div>
+        {event.location && (
+          <div className="flex items-center">
+            <svg
+              className="w-4 h-4 mr-2 text-gray-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M12 2C8.686 2 6 4.686 6 8c0 5.25 6 12 6 12s6-6.75 6-12c0-3.314-2.686-6-6-6zm0 8a2 2 0 110-4 2 2 0 010 4z"
+              />
+            </svg>
+            <span className="truncate font-medium text-gray-800">
+              {event.location}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
+        <button
+          disabled={!event.attendanceOpen && event.status !== "PAST"}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (event.attendanceOpen) {
+              navigate(`/events/${event.id}/attendance`);
+            } else {
+              navigate(`/events/${event.id}`, { state: { event } });
+            }
+          }}
+          className={`flex-1 py-2 px-3 rounded-lg font-semibold text-xs sm:text-sm transition-colors duration-200 ${
+            event.attendanceOpen
+              ? "bg-blue-600 hover:bg-blue-700 text-white shadow-sm"
+              : event.status === "PAST"
+                ? "bg-gray-100 hover:bg-gray-200 text-gray-800"
+                : "bg-gray-100 text-gray-400 cursor-not-allowed"
+          }`}
+        >
+          {event.attendanceOpen
+            ? "Take Attendance"
+            : event.status === "PAST"
+              ? "View Attendance"
+              : "Attendance Unavailable"}
+        </button>
+
+        {isSuperAdmin && event.status !== "CANCELLED" && (
+          <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => openRescheduleModal(event)}
+              className="px-2.5 py-2 text-xs font-semibold rounded-lg bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors"
+              title="Reschedule event"
+            >
+              🔄 Reschedule
+            </button>
+            <button
+              type="button"
+              onClick={() => openCancelModal(event)}
+              className="px-2.5 py-2 text-xs font-semibold rounded-lg bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors"
+              title="Cancel event"
+            >
+              ❌ Cancel
+            </button>
+            {new Date(event.startTime).getTime() > Date.now() && (
+              <button
+                type="button"
+                onClick={() => openEditModal(event)}
+                className="px-2.5 py-2 text-xs font-semibold rounded-lg bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition-colors"
+                title="Edit event"
+              >
+                ✏️ Edit
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
-
-  useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
-    }
-  }, [currentPage, totalPages]);
-
-  const paginatedEvents = sortedAndFilteredEvents.slice(
-    (currentPage - 1) * UI_PAGE_SIZE,
-    currentPage * UI_PAGE_SIZE,
-  );
-
-  useEffect(() => {
-    if (!initialLoaded) {
-      return;
-    }
-
-    const requiredIndex = currentPage * UI_PAGE_SIZE - 1;
-    const needsCurrentPageData =
-      requiredIndex >= events.length && events.length < totalEvents;
-
-    if (needsCurrentPageData) {
-      const nextOffset = Math.floor(requiredIndex / BATCH_SIZE) * BATCH_SIZE;
-      void fetchEventsBatch(nextOffset);
-    }
-  }, [currentPage, events.length, totalEvents, initialLoaded]);
-
-  useEffect(() => {
-    if (!initialLoaded || totalEvents <= events.length) {
-      return;
-    }
-
-    const batchIndex = Math.floor((currentPage - 1) / 3);
-    const pageWithinBatch = ((currentPage - 1) % 3) + 1;
-    const loadedPages = Math.ceil(events.length / UI_PAGE_SIZE);
-    const pagesRemainingInCache = loadedPages - currentPage;
-
-    if (pageWithinBatch < 2 && pagesRemainingInCache > 1) {
-      return;
-    }
-
-    const nextBatchOffset = (batchIndex + 1) * BATCH_SIZE;
-    if (nextBatchOffset >= totalEvents) {
-      return;
-    }
-
-    void fetchEventsBatch(nextBatchOffset);
-  }, [currentPage, totalEvents, events.length, initialLoaded]);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 relative">
@@ -528,7 +819,7 @@ const EventsPage: React.FC = () => {
       <header className="bg-white border-b border-gray-200 fixed top-0 w-full z-30">
         <div className="px-4 pt-6 max-w-4xl mx-auto w-full">
           <div className="flex justify-between items-center mb-4">
-            <h1 className="text-2xl font-bold text-gray-900">Events</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Events & Sessions</h1>
             <div className="flex items-center gap-2">
               <div className="flex items-center">
                 <div className="relative flex items-center">
@@ -561,7 +852,7 @@ const EventsPage: React.FC = () => {
                           strokeLinejoin="round"
                           strokeWidth="2"
                           d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                        ></path>
+                        />
                       </svg>
                     </button>
 
@@ -573,7 +864,7 @@ const EventsPage: React.FC = () => {
                       onBlur={() => {
                         if (!searchQuery) setIsSearchExpanded(false);
                       }}
-                      placeholder="Search..."
+                      placeholder="Search events..."
                       className={`ml-2 w-full border border-transparent text-sm bg-transparent focus:outline-none focus:ring-0 transition-opacity duration-200 ${
                         isSearchExpanded || searchQuery
                           ? "opacity-100 px-2 py-1.5"
@@ -608,6 +899,16 @@ const EventsPage: React.FC = () => {
               Events
             </button>
             <button
+              onClick={() => navigate("/studies")}
+              className={`pb-2 px-1 text-sm font-medium border-b-2 transition-colors ${
+                location.pathname === "/studies"
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              Studies
+            </button>
+            <button
               onClick={() => navigate("/members")}
               className={`pb-2 px-1 text-sm font-medium border-b-2 transition-colors ${
                 location.pathname === "/members"
@@ -635,7 +936,7 @@ const EventsPage: React.FC = () => {
       <div className="max-w-4xl mx-auto w-full px-4 pt-32 sm:pt-40 pb-6 space-y-4">
         {/* Filters Wrapper */}
         <div className="flex flex-col relative w-full mb-4">
-          {/* Mobile view filters (visible only on small screens) */}
+          {/* Mobile view filters */}
           <div className="md:hidden">
             <div className="flex overflow-x-auto no-scrollbar gap-2 mb-3 pb-1">
               <button
@@ -664,30 +965,25 @@ const EventsPage: React.FC = () => {
             </div>
 
             <div className="flex overflow-x-auto no-scrollbar gap-2 mb-3 pb-1">
-              {["ALL", "WEEKLY", "MONTHLY", "ONE_TIME"].map((type) => (
+              {(["ALL", "EVENING", "OVERNIGHT", "OTHER"] as SessionTypeFilter[]).map((st) => (
                 <button
-                  key={type}
-                  onClick={() => setTypeFilter(type as TypeFilter)}
+                  key={st}
+                  onClick={() => setSessionTypeFilter(st)}
                   className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors border ${
-                    typeFilter === type
-                      ? "bg-gray-800 text-white border-gray-800"
+                    sessionTypeFilter === st
+                      ? "bg-indigo-600 text-white border-indigo-600"
                       : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
                   }`}
                 >
-                  {type === "ALL"
-                    ? "All Types"
-                    : type
-                        .replace("_", "-")
-                        .split("_")
-                        .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
-                        .join(" ")}
+                  {st === "ALL" ? "All Times" : st === "OVERNIGHT" ? "🌙 Overnight" : st === "EVENING" ? "🌆 Evening" : "Other"}
                 </button>
               ))}
             </div>
           </div>
 
           {/* Desktop view filters (dropdowns) */}
-          <div className="hidden md:flex items-center gap-3 mb-4">
+          <div className="hidden md:flex flex-wrap items-center gap-3 mb-4">
+            {/* Status Dropdown */}
             <div className="relative" ref={statusDropdownRef}>
               <button
                 onClick={() => setIsStatusDropdownOpen(!isStatusDropdownOpen)}
@@ -709,7 +1005,7 @@ const EventsPage: React.FC = () => {
                     strokeLinejoin="round"
                     strokeWidth="2"
                     d="M19 9l-7 7-7-7"
-                  ></path>
+                  />
                 </svg>
               </button>
 
@@ -728,44 +1024,34 @@ const EventsPage: React.FC = () => {
                       <button
                         key={s}
                         onClick={() => toggleStatus(s)}
-                        className={`w-full text-left px-4 py-2 text-sm ${statusFilter.includes(s) ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-700 hover:bg-gray-50"}`}
+                        className={`w-full text-left px-4 py-2 text-sm ${
+                          statusFilter.includes(s)
+                            ? "bg-blue-50 text-blue-700 font-semibold"
+                            : "text-gray-700 hover:bg-gray-50"
+                        }`}
                       >
                         {formatStatusLabel(s)}
                       </button>
                     ))}
-
-                    <div className="border-t">
-                      <button
-                        onClick={() => {
-                          setStatusFilter([]);
-                          setTypeFilter("ALL");
-                          setSearchQuery("");
-                          setCurrentPage(1);
-                          setSortBy("NEXT_EVENT");
-                        }}
-                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                      >
-                        Clear All Filters
-                      </button>
-                    </div>
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="relative" ref={typeDropdownRef}>
+            {/* Session Type Dropdown */}
+            <div className="relative" ref={sessionTypeDropdownRef}>
               <button
-                onClick={() => setIsTypeDropdownOpen(!isTypeDropdownOpen)}
+                onClick={() => setIsSessionTypeDropdownOpen(!isSessionTypeDropdownOpen)}
                 className="flex items-center justify-between min-w-[140px] px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 <span>
-                  {typeFilter === "ALL"
-                    ? "All Types"
-                    : typeFilter
-                        .replace("_", "-")
-                        .split("_")
-                        .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
-                        .join(" ")}
+                  {sessionTypeFilter === "ALL"
+                    ? "All Sessions"
+                    : sessionTypeFilter === "OVERNIGHT"
+                      ? "🌙 Overnight"
+                      : sessionTypeFilter === "EVENING"
+                        ? "🌆 Evening"
+                        : "Other"}
                 </span>
                 <svg
                   className="w-4 h-4 text-gray-500 ml-2"
@@ -778,40 +1064,130 @@ const EventsPage: React.FC = () => {
                     strokeLinejoin="round"
                     strokeWidth="2"
                     d="M19 9l-7 7-7-7"
-                  ></path>
+                  />
                 </svg>
               </button>
 
-              {isTypeDropdownOpen && (
+              {isSessionTypeDropdownOpen && (
                 <div className="absolute top-full left-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden py-1">
-                  {["ALL", "WEEKLY", "MONTHLY", "ONE_TIME"].map((type) => (
+                  {(["ALL", "EVENING", "OVERNIGHT", "OTHER"] as SessionTypeFilter[]).map((st) => (
                     <button
-                      key={type}
+                      key={st}
                       onClick={() => {
-                        setTypeFilter(type as TypeFilter);
-                        setIsTypeDropdownOpen(false);
+                        setSessionTypeFilter(st);
+                        setIsSessionTypeDropdownOpen(false);
                       }}
-                      className={`w-full text-left px-4 py-2 text-sm ${typeFilter === type ? "bg-gray-100 text-gray-900 font-semibold" : "text-gray-700 hover:bg-gray-50"}`}
+                      className={`w-full text-left px-4 py-2 text-sm ${
+                        sessionTypeFilter === st
+                          ? "bg-gray-100 text-gray-900 font-semibold"
+                          : "text-gray-700 hover:bg-gray-50"
+                      }`}
                     >
-                      {type === "ALL"
-                        ? "All Types"
-                        : type
-                            .replace("_", "-")
-                            .split("_")
-                            .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
-                            .join(" ")}
+                      {st === "ALL"
+                        ? "All Session Types"
+                        : st === "OVERNIGHT"
+                          ? "🌙 Overnight"
+                          : st === "EVENING"
+                            ? "🌆 Evening"
+                            : "Other"}
                     </button>
                   ))}
                 </div>
               )}
             </div>
+
+            {/* Study Dropdown Filter */}
+            <div className="relative" ref={studyDropdownRef}>
+              <button
+                onClick={() => setIsStudyDropdownOpen(!isStudyDropdownOpen)}
+                className="flex items-center justify-between min-w-[150px] px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <span className="truncate max-w-[150px]">
+                  {studyFilter === "ALL"
+                    ? "All Studies"
+                    : studyFilter === "STANDALONE"
+                      ? "Standalone Only"
+                      : studies.find((s) => s.id === studyFilter)?.name || "Study Filter"}
+                </span>
+                <svg
+                  className="w-4 h-4 text-gray-500 ml-2"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M19 9l-7 7-7-7"
+                  />
+                </svg>
+              </button>
+
+              {isStudyDropdownOpen && (
+                <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden py-1 max-h-60 overflow-y-auto">
+                  <button
+                    onClick={() => {
+                      setStudyFilter("ALL");
+                      setIsStudyDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-4 py-2 text-sm ${
+                      studyFilter === "ALL" ? "bg-gray-100 font-semibold text-gray-900" : "text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    All Studies & Standalone
+                  </button>
+                  <button
+                    onClick={() => {
+                      setStudyFilter("STANDALONE");
+                      setIsStudyDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-4 py-2 text-sm ${
+                      studyFilter === "STANDALONE" ? "bg-gray-100 font-semibold text-gray-900" : "text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    Standalone Events Only
+                  </button>
+                  <div className="border-t border-gray-100 my-1" />
+                  {studies.map((st) => (
+                    <button
+                      key={st.id}
+                      onClick={() => {
+                        setStudyFilter(st.id);
+                        setIsStudyDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-4 py-2 text-sm truncate ${
+                        studyFilter === st.id ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-700 hover:bg-gray-50"
+                      }`}
+                    >
+                      {st.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Clear button if any filter active */}
+            {(statusFilter.length > 0 || sessionTypeFilter !== "ALL" || studyFilter !== "ALL" || debouncedSearchQuery) && (
+              <button
+                onClick={() => {
+                  setStatusFilter([]);
+                  setTypeFilter("ALL");
+                  setSessionTypeFilter("ALL");
+                  setStudyFilter("ALL");
+                  setSearchQuery("");
+                }}
+                className="text-xs text-blue-600 hover:underline px-2 py-1"
+              >
+                Clear all filters
+              </button>
+            )}
           </div>
 
           {/* Sort By Toggle & Info */}
           <div className="flex justify-between items-center mt-2 border-t md:border-none pt-3 md:pt-0">
             <span className="text-sm text-gray-500 font-medium">
-              {sortedAndFilteredEvents.length} of {totalEvents || events.length}{" "}
-              events found
+              {sortedEvents.length} of {totalEvents || events.length} events found
             </span>
             <div className="relative" ref={sortDropdownRef}>
               <button
@@ -831,37 +1207,12 @@ const EventsPage: React.FC = () => {
                     d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"
                   />
                 </svg>
-                {/* On desktop show current sort, on mobile just "Sort" */}
                 <span className="hidden md:inline mr-1">Sort by:</span>
                 <span className="md:font-semibold">{getSortLabel(sortBy)}</span>
               </button>
 
-              {/* Dropdown list (replaces the modal) */}
               {isSortModalOpen && (
                 <div className="absolute top-full right-0 mt-2 w-56 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden py-1 animate-in fade-in">
-                  <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 md:hidden flex justify-between items-center">
-                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">
-                      Sort Events
-                    </span>
-                    <button
-                      onClick={() => setIsSortModalOpen(false)}
-                      className="text-gray-400 hover:text-gray-600"
-                    >
-                      <svg
-                        className="w-4 h-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="2"
-                          d="M6 18L18 6M6 6l12 12"
-                        ></path>
-                      </svg>
-                    </button>
-                  </div>
                   <ul>
                     {[
                       { value: "NEXT_EVENT", label: "Next Event" },
@@ -900,7 +1251,7 @@ const EventsPage: React.FC = () => {
                                 strokeLinejoin="round"
                                 strokeWidth="2"
                                 d="M5 13l4 4L19 7"
-                              ></path>
+                              />
                             </svg>
                           )}
                         </button>
@@ -913,27 +1264,29 @@ const EventsPage: React.FC = () => {
           </div>
         </div>
 
-        {/* List of Events */}
+        {/* List of Events Grouped by Study */}
         {loading ? (
           <div className="flex flex-col items-center py-12">
-            <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
             <p className="mt-4 text-gray-500 text-sm font-medium">
-              Loading events...
+              Loading sessions...
             </p>
           </div>
         ) : error ? (
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm text-center">
             {error}
           </div>
-        ) : sortedAndFilteredEvents.length === 0 ? (
+        ) : sortedEvents.length === 0 ? (
           <div className="text-center py-12 bg-white rounded-xl shadow-sm border border-gray-100">
             <p className="text-gray-500 text-sm">
-              No events match your selected filters.
+              No sessions match your selected filters.
             </p>
             <button
               onClick={() => {
                 setStatusFilter([]);
                 setTypeFilter("ALL");
+                setSessionTypeFilter("ALL");
+                setStudyFilter("ALL");
               }}
               className="mt-3 text-blue-600 text-sm font-medium hover:underline"
             >
@@ -941,191 +1294,115 @@ const EventsPage: React.FC = () => {
             </button>
           </div>
         ) : (
-          paginatedEvents.map((event) => (
-            <div
-              key={event.id}
-              role="button"
-              tabIndex={0}
-              onClick={() =>
-                navigate(`/events/${event.id}`, {
-                  state: { event },
-                })
-              }
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  navigate(`/events/${event.id}`, {
-                    state: { event },
-                  });
-                }
-              }}
-              className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-            >
-              <div className="flex justify-between items-start mb-2 gap-3">
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-lg font-bold text-gray-900 leading-tight">
-                    {event.title}
-                  </h3>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span
-                    className={`px-2.5 py-1 text-xs font-bold rounded-full border whitespace-nowrap ${getStatusColor(event.status)}`}
+          <div className="space-y-6">
+            {/* Study Sections */}
+            {groupedSections.studies.map((group) => {
+              const isCollapsed = collapsedGroups.has(group.study.id);
+              return (
+                <section
+                  key={group.study.id}
+                  className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden"
+                >
+                  {/* Study Header */}
+                  <div
+                    onClick={() => toggleGroupCollapse(group.study.id)}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-gradient-to-r from-blue-50/50 via-white to-gray-50/50 border-b border-gray-100 cursor-pointer select-none gap-2 hover:bg-gray-50/80 transition-colors"
                   >
-                    {event.status}
-                  </span>
-                  {isSuperAdmin && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openEditModal(event);
-                      }}
-                      disabled={
-                        new Date(event.startTime).getTime() <= Date.now()
-                      }
-                      className={`inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                        new Date(event.startTime).getTime() > Date.now()
-                          ? "bg-blue-50 text-blue-700 hover:bg-blue-100"
-                          : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                      }`}
-                    >
-                      ✏️ Edit
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <div className="h-8 w-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-sm">
+                        📖
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h2 className="text-base sm:text-lg font-bold text-gray-900">
+                            {group.study.name}
+                          </h2>
+                          {"audienceType" in group.study && (
+                            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                              {group.study.audienceType === "FINAL_YEAR"
+                                ? "🎓 Final Year"
+                                : group.study.audienceType === "BATCHES"
+                                  ? "🏷️ Batches"
+                                  : "👥 Everyone"}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {group.events.length} session{group.events.length === 1 ? "" : "s"} in this view
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 self-end sm:self-auto">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/studies`);
+                        }}
+                        className="text-xs font-semibold text-blue-600 hover:text-blue-800 hover:underline"
+                      >
+                        Study Dashboard →
+                      </button>
+                      <span className="text-gray-400 text-sm">
+                        {isCollapsed ? "▼ Show" : "▲ Hide"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Study Events */}
+                  {!isCollapsed && (
+                    <div className="p-4 space-y-4 bg-gray-50/30">
+                      {group.events.map(renderEventCard)}
+                    </div>
                   )}
-                </div>
-              </div>
+                </section>
+              );
+            })}
 
-              <div className="flex flex-wrap items-center gap-2 mb-3">
-                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200">
-                  {event.eventType.replace("_", " ")}
-                </span>
-                {(event.status === "PAST" || event.status === "ACTIVE") && (
-                  <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 flex items-center border border-purple-100">
-                    <svg
-                      className="w-3.5 h-3.5 mr-1"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z"></path>
-                    </svg>
-                    {event.attendanceCount} attended
-                  </span>
-                )}
-              </div>
+            {/* Standalone Events Section */}
+            {groupedSections.standalone.length > 0 && (
+              <section className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                <div
+                  onClick={() => toggleGroupCollapse("STANDALONE")}
+                  className="flex items-center justify-between p-4 bg-gray-50 border-b border-gray-100 cursor-pointer select-none hover:bg-gray-100/60 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="h-8 w-8 rounded-lg bg-gray-200 text-gray-700 flex items-center justify-center font-bold text-sm">
+                      📌
+                    </div>
+                    <div>
+                      <h2 className="text-base sm:text-lg font-bold text-gray-900">
+                        Standalone Events
+                      </h2>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {groupedSections.standalone.length} session{groupedSections.standalone.length === 1 ? "" : "s"} not tied to a study
+                      </p>
+                    </div>
+                  </div>
 
-              <div className="space-y-1.5 text-sm text-gray-600 mb-4 bg-gray-50 p-3 rounded-lg border border-gray-100">
-                <div className="flex items-center">
-                  <svg
-                    className="w-4 h-4 mr-2 text-gray-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                    ></path>
-                  </svg>
-                  {formatDate(event.startTime)}
-                </div>
-                <div className="flex items-center">
-                  <svg
-                    className="w-4 h-4 mr-2 text-gray-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                    ></path>
-                  </svg>
-                  {formatTime(event.startTime)} - {formatTime(event.endTime)}
-                </div>
-                {event.location && (
-                  <div className="flex items-center">
-                    <svg
-                      className="w-4 h-4 mr-2 text-gray-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                        d="M12 2C8.686 2 6 4.686 6 8c0 5.25 6 12 6 12s6-6.75 6-12c0-3.314-2.686-6-6-6zm0 8a2 2 0 110-4 2 2 0 010 4z"
-                      />
-                    </svg>
-                    <span className="truncate font-medium text-gray-800">
-                      {event.location}
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-400 text-sm">
+                      {collapsedGroups.has("STANDALONE") ? "▼ Show" : "▲ Hide"}
                     </span>
                   </div>
+                </div>
+
+                {!collapsedGroups.has("STANDALONE") && (
+                  <div className="p-4 space-y-4 bg-gray-50/30">
+                    {groupedSections.standalone.map(renderEventCard)}
+                  </div>
                 )}
-              </div>
-
-              <button
-                disabled={!event.attendanceOpen}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate(`/events/${event.id}/attendance`);
-                }}
-                className={`w-full py-2.5 px-4 rounded-lg font-semibold text-sm transition-colors duration-200 active:scale-[0.98] ${
-                  event.attendanceOpen
-                    ? "bg-blue-600 hover:bg-blue-700 text-white shadow-sm"
-                    : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                }`}
-              >
-                {event.attendanceOpen
-                  ? "Take Attendance"
-                  : "Attendance Unavailable"}
-              </button>
-            </div>
-          ))
+              </section>
+            )}
+          </div>
         )}
-
-        {!loading &&
-          totalEvents > UI_PAGE_SIZE &&
-          sortedAndFilteredEvents.length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 flex items-center justify-between gap-3 mt-2">
-              <button
-                type="button"
-                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                disabled={currentPage === 1}
-                className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Previous
-              </button>
-
-              <div className="flex items-center gap-2 text-sm text-gray-600">
-                <span className="font-semibold text-gray-900">
-                  Page {currentPage}
-                </span>
-                <span>of {totalPages}</span>
-              </div>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setCurrentPage((prev) => Math.min(totalPages, prev + 1))
-                }
-                disabled={currentPage === totalPages}
-                className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Next
-              </button>
-            </div>
-          )}
       </div>
 
       {/* Floating Action Button */}
       <button
         onClick={() => navigate("/events/create")}
-        className="fixed bottom-6 right-4 md:bottom-8 md:right-8 bg-blue-600 shadow-lg text-white rounded-full h-14 px-5 flex items-center justify-center z-10 font-medium active:scale-95 transition-transform"
+        className="fixed bottom-6 right-4 md:bottom-8 md:right-8 bg-blue-600 shadow-lg hover:bg-blue-700 text-white rounded-full h-14 px-5 flex items-center justify-center z-10 font-medium active:scale-95 transition-all"
       >
         <svg
           className="w-5 h-5 mr-1.5"
@@ -1138,17 +1415,181 @@ const EventsPage: React.FC = () => {
             strokeLinejoin="round"
             strokeWidth="2"
             d="M12 4v16m8-8H4"
-          ></path>
+          />
         </svg>
         Create Event
       </button>
 
-      {/* Global override for hiding scrollbar visually in pill filters while retaining functionality */}
-      <style>{`
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-      `}</style>
+      {/* Reschedule Modal */}
+      {isRescheduleModalOpen && rescheduleEventTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Reschedule Session</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Move <strong>{rescheduleEventTarget.title}</strong> to a new time slot. Series linkage and planned start time are preserved.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsRescheduleModalOpen(false);
+                  setRescheduleEventTarget(null);
+                }}
+                className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              >
+                ✕
+              </button>
+            </div>
 
+            <form className="mt-6 space-y-4" onSubmit={handleRescheduleSubmit}>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    New Start Time <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={rescheduleForm.startTime}
+                    onChange={(e) =>
+                      setRescheduleForm((prev) => ({ ...prev, startTime: e.target.value }))
+                    }
+                    className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    New End Time <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={rescheduleForm.endTime}
+                    onChange={(e) =>
+                      setRescheduleForm((prev) => ({ ...prev, endTime: e.target.value }))
+                    }
+                    className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Reason for Rescheduling <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={rescheduleForm.reason}
+                  onChange={(e) =>
+                    setRescheduleForm((prev) => ({ ...prev, reason: e.target.value }))
+                  }
+                  rows={3}
+                  placeholder="e.g. Venue occupied on Tuesday, shifted to Wednesday"
+                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  required
+                />
+              </div>
+
+              {rescheduleError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {rescheduleError}
+                </div>
+              )}
+
+              <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsRescheduleModalOpen(false);
+                    setRescheduleEventTarget(null);
+                  }}
+                  className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isRescheduling}
+                  className="rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-700 disabled:opacity-60"
+                >
+                  {isRescheduling ? "Rescheduling..." : "Confirm Reschedule"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Modal */}
+      {isCancelModalOpen && cancelEventTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Cancel Session</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Mark <strong>{cancelEventTarget.title}</strong> as cancelled. Cancelled events are excluded from all rate statistics.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCancelModalOpen(false);
+                  setCancelEventTarget(null);
+                }}
+                className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form className="mt-6 space-y-4" onSubmit={handleCancelSubmit}>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Cancellation Reason <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. University holiday or campus emergency closure"
+                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  required
+                />
+              </div>
+
+              {cancelError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {cancelError}
+                </div>
+              )}
+
+              <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCancelModalOpen(false);
+                    setCancelEventTarget(null);
+                  }}
+                  className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Keep Event
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCancelling}
+                  className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-red-700 disabled:opacity-60"
+                >
+                  {isCancelling ? "Cancelling..." : "Confirm Cancellation"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Modal */}
       {isEditModalOpen && selectedEvent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 px-4 py-6">
           <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
@@ -1156,7 +1597,7 @@ const EventsPage: React.FC = () => {
               <div>
                 <h2 className="text-xl font-bold text-gray-900">Edit Event</h2>
                 <p className="mt-1 text-sm text-gray-500">
-                  Update the event details while it is still upcoming.
+                  Update event details while it is still upcoming.
                 </p>
               </div>
               <button
@@ -1165,10 +1606,8 @@ const EventsPage: React.FC = () => {
                   setIsEditModalOpen(false);
                   setSelectedEvent(null);
                   setEditError("");
-                  setIsEditStatusDropdownOpen(false);
                 }}
                 className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                aria-label="Close edit modal"
               >
                 ✕
               </button>
@@ -1205,87 +1644,6 @@ const EventsPage: React.FC = () => {
                   rows={4}
                   className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
                 />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Status
-                </label>
-                <div className="relative" ref={editStatusDropdownRef}>
-                  <button
-                    type="button"
-                    onClick={() => setIsEditStatusDropdownOpen((prev) => !prev)}
-                    className="flex w-full items-center justify-between rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                  >
-                    <span>
-                      {editForm.status === "DEACTIVATED"
-                        ? "Deactivated"
-                        : "Upcoming"}
-                    </span>
-                    <svg
-                      className={`h-4 w-4 text-gray-500 transition-transform ${
-                        isEditStatusDropdownOpen ? "rotate-180" : ""
-                      }`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                        d="M19 9l-7 7-7-7"
-                      />
-                    </svg>
-                  </button>
-
-                  {isEditStatusDropdownOpen && (
-                    <div className="absolute z-10 mt-2 w-full rounded-xl border border-gray-200 bg-white p-2 shadow-lg">
-                      {EDITABLE_STATUS_OPTIONS.map((option) => {
-                        const isSelected = editForm.status === option.value;
-
-                        return (
-                          <button
-                            key={option.value}
-                            type="button"
-                            onClick={() => {
-                              setEditForm((prev) => ({
-                                ...prev,
-                                status: option.value,
-                              }));
-                              setIsEditStatusDropdownOpen(false);
-                            }}
-                            className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${
-                              isSelected
-                                ? "bg-blue-50 text-blue-700"
-                                : "text-gray-700 hover:bg-gray-50"
-                            }`}
-                          >
-                            <span>{option.label}</span>
-                            {isSelected && (
-                              <svg
-                                className="h-4 w-4"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth="2"
-                                  d="M5 13l4 4L19 7"
-                                />
-                              </svg>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-                <p className="mt-2 text-xs text-gray-500">
-                  Upcoming events can only be changed to deactivated here.
-                </p>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
@@ -1338,7 +1696,6 @@ const EventsPage: React.FC = () => {
                     setIsEditModalOpen(false);
                     setSelectedEvent(null);
                     setEditError("");
-                    setIsEditStatusDropdownOpen(false);
                   }}
                   className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
                 >
@@ -1360,6 +1717,12 @@ const EventsPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Global override for hiding scrollbar visually in pill filters */}
+      <style>{`
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      `}</style>
     </div>
   );
 };

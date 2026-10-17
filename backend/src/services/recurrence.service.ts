@@ -35,6 +35,9 @@ export const createWeeklyEvents = async (
     endDate?: Date; // optional endDate (date-only) to generate occurrences through
     recurrenceLengthWeeks?: number;
     location: string;
+    studyId?: string | null;
+    sessionType?: any;
+    lateGraceMinutes?: number | null;
   },
 ) => {
   const startDateOnly = normalizeToDateOnly(input.startDate);
@@ -74,7 +77,11 @@ export const createWeeklyEvents = async (
       eventDate: week1Date,
       startTime: week1Start,
       endTime: week1End,
+      plannedStartTime: week1Start,
       type: EventType.WEEKLY,
+      sessionType: input.sessionType || "EVENING",
+      lateGraceMinutes: input.lateGraceMinutes,
+      studyId: input.studyId,
       location: input.location,
       parentEventId: null,
       recurrenceIndex: 1,
@@ -97,7 +104,11 @@ export const createWeeklyEvents = async (
           eventDate: occurrenceDate,
           startTime: occurrenceStart,
           endTime: occurrenceEnd,
+          plannedStartTime: occurrenceStart,
           type: EventType.WEEKLY,
+          sessionType: input.sessionType || "EVENING",
+          lateGraceMinutes: input.lateGraceMinutes,
+          studyId: input.studyId,
           location: input.location,
           parentEventId: week1.id,
           recurrenceIndex: i + 1,

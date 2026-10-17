@@ -1,6 +1,11 @@
 import { PrismaClient, type Event } from "@prisma/client";
 
-export type EventStatus = "UPCOMING" | "ACTIVE" | "PAST" | "DEACTIVATED";
+export type EventStatus =
+  | "UPCOMING"
+  | "ACTIVE"
+  | "PAST"
+  | "DEACTIVATED"
+  | "CANCELLED";
 
 const PRE_ACTIVE_WINDOW_MINUTES = 30;
 const AUTO_CLOSE_WINDOW_MINUTES = 90;
@@ -16,10 +21,13 @@ type EventLifecycleInput = Pick<
   "eventDate" | "startTime" | "endTime" | "isActive" | "endedAt"
 > & {
   manuallyClosedAt?: Date | null;
+  cancelledAt?: Date | null;
 };
 
 type SerializableEvent = Event & {
   manuallyClosedAt?: Date | null;
+  cancelledAt?: Date | null;
+  rescheduledAt?: Date | null;
   _count?: { attendances?: number };
   cluster?: {
     id: string;
@@ -28,6 +36,17 @@ type SerializableEvent = Event & {
     endDate: Date;
   } | null;
   clusterLabel?: string | null;
+  study?: {
+    id: string;
+    name: string;
+    startDate: Date;
+    endDate: Date;
+    audienceType: string;
+    audienceBatches: string[];
+    requiredSessions?: number | null;
+    defaultLateGraceMinutes?: number | null;
+    isActive: boolean;
+  } | null;
 };
 
 export type EventLifecycleSnapshot = {
@@ -81,6 +100,18 @@ export const computeEventLifecycle = (
   const autoCloseTime = new Date(
     endTime.getTime() + AUTO_CLOSE_WINDOW_MINUTES * 60 * 1000,
   );
+
+  if (event.cancelledAt) {
+    return {
+      status: "CANCELLED",
+      attendanceOpen: false,
+      startTime,
+      endTime,
+      activationTime,
+      autoCloseTime,
+      manuallyClosedAt,
+    };
+  }
 
   if (!event.isActive) {
     return {
@@ -142,6 +173,14 @@ export const serializeEventForResponse = (
       }
     : (event.cluster ?? null);
 
+  const study = event.study
+    ? {
+        ...event.study,
+        startDate: event.study.startDate.toISOString(),
+        endDate: event.study.endDate.toISOString(),
+      }
+    : (event.study ?? null);
+
   return {
     ...event,
     startTime: lifecycle.startTime.toISOString(),
@@ -152,7 +191,12 @@ export const serializeEventForResponse = (
     manuallyClosedAt: event.manuallyClosedAt
       ? event.manuallyClosedAt.toISOString()
       : null,
+    cancelledAt: event.cancelledAt ? event.cancelledAt.toISOString() : null,
+    rescheduledAt: event.rescheduledAt
+      ? event.rescheduledAt.toISOString()
+      : null,
     cluster,
+    study,
     status: lifecycle.status,
     attendanceOpen: lifecycle.attendanceOpen,
   };
@@ -171,6 +215,7 @@ export const runEventLifecycleSweep = async (prisma: PrismaClient) => {
     where: {
       isActive: true,
       endedAt: null,
+      cancelledAt: null,
       OR: [
         {
           startTime: {

@@ -11,7 +11,10 @@ import {
   getEventAttendance,
   getEventClusterById,
   getEventById,
+  getEventAbsentees,
   getPresentMembersForEvent,
+  rescheduleEvent,
+  cancelEvent,
   updateEvent,
   updateEventCluster,
 } from "../controllers/event.controller";
@@ -24,7 +27,7 @@ router.use(verifyAuth);
 // create event (super admin only)
 router.post("/", requireRole("SUPER_ADMIN"), createEvent);
 
-// get list of all events
+// get list of all events (supports studyId, sessionType, status filters)
 router.get("/", getAllEvents);
 
 // get event cluster by id
@@ -36,11 +39,20 @@ router.get("/:eventId/attendance", getEventAttendance);
 // export attendance list for a specific event
 router.get("/:eventId/attendance/export/excel", exportEventAttendanceExcel);
 
-// get specific evenet by id
+// get present members list
 router.get("/:eventId/present-members", getPresentMembersForEvent);
 
-// get specific event by id
+// get absentees and stats for a specific event
+router.get("/:id/absentees", getEventAbsentees);
+
+// get specific event by id (includes stats and absentees)
 router.get("/:id", getEventById);
+
+// reschedule an event (super admin only)
+router.patch("/:id/reschedule", requireRole("SUPER_ADMIN"), rescheduleEvent);
+
+// cancel an event (super admin only)
+router.patch("/:id/cancel", requireRole("SUPER_ADMIN"), cancelEvent);
 
 // deactivate an event (super admin only)
 router.patch("/:id/deactivate", requireRole("SUPER_ADMIN"), deactivateEvent);

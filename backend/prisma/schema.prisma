@@ -8,38 +8,44 @@ datasource db {
 }
 
 model Member {
-  id          String       @id @default(uuid()) @db.Uuid
-  uniqueId    String       @unique
-  name        String
-  email       String       @unique
-  phoneNumber String       @map("phone")
-  isActive    Boolean      @default(true)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  batch       Batch
-  campus      Campus
-  department  String
-  gender      Gender
-  attendances Attendance[]
-  resendLogs  ResendLog[]
+  id                String       @id @default(uuid()) @db.Uuid
+  uniqueId          String       @unique
+  name              String
+  email             String       @unique
+  phoneNumber       String       @map("phone")
+  isActive          Boolean      @default(true)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  batch             Batch
+  campus            Campus
+  department        String
+  gender            Gender
+  entryAcademicYear Int?
+  batchOverride     Batch?
+  deactivatedAt     DateTime?
+  attendances       Attendance[]
+  resendLogs        ResendLog[]
 
   @@index([uniqueId])
   @@index([email])
+  @@index([campus])
+  @@index([entryAcademicYear])
   @@map("members")
 }
 
 model Admin {
-  id                  String         @id @default(uuid()) @db.Uuid
-  name                String
-  email               String         @unique
-  password            String
-  role                AdminRole      @default(ADMIN)
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
-  attendancesMarked   Attendance[]   @relation("AdminToAttendances")
-  eventsCreated       Event[]        @relation("AdminToEvents")
-  eventClustersCreated EventCluster[] @relation("AdminToEventClusters")
-  refreshSessions     RefreshSession[]
+  id                   String           @id @default(uuid()) @db.Uuid
+  name                 String
+  email                String           @unique
+  password             String
+  role                 AdminRole        @default(ADMIN)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  attendancesMarked    Attendance[]     @relation("AdminToAttendances")
+  attendancesRemoved   Attendance[]     @relation("AdminToRemovedAttendances")
+  eventsCreated        Event[]          @relation("AdminToEvents")
+  eventClustersCreated EventCluster[]   @relation("AdminToEventClusters")
+  refreshSessions      RefreshSession[]
 
   @@index([email])
   @@map("admins")
@@ -62,6 +68,7 @@ model RefreshSession {
   @@map("refresh_sessions")
 }
 
+/// @deprecated Use Study instead. Retained for backwards compatibility.
 model EventCluster {
   id          String   @id @default(uuid()) @db.Uuid
   title       String
@@ -81,53 +88,95 @@ model EventCluster {
   @@map("event_clusters")
 }
 
+model Study {
+  id                      String       @id @default(uuid()) @db.Uuid
+  name                    String
+  description             String?
+  startDate               DateTime     @db.Date
+  endDate                 DateTime     @db.Date
+  audienceType            AudienceType @default(ALL)
+  audienceBatches         Batch[]      @default([])
+  requiredSessions        Int?
+  defaultLateGraceMinutes Int?
+  isActive                Boolean      @default(true)
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
+  events                  Event[]
+
+  @@index([startDate])
+  @@index([endDate])
+  @@index([isActive])
+  @@map("studies")
+}
+
 model Event {
-  id                    String       @id @default(uuid()) @db.Uuid
+  id                    String        @id @default(uuid()) @db.Uuid
   title                 String
   description           String
-  eventDate             DateTime     @db.Date
+  eventDate             DateTime      @db.Date
   startTime             DateTime
   endTime               DateTime
-  type                  EventType    @default(ONE_TIME)
-  isActive              Boolean      @default(true)
+  type                  EventType     @default(ONE_TIME)
+  isActive              Boolean       @default(true)
   endedAt               DateTime?
-  createdAt             DateTime     @default(now())
-  updatedAt             DateTime     @updatedAt
-  createdById           String       @db.Uuid
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  createdById           String        @db.Uuid
   manuallyClosedAt      DateTime?
   location              String
-  parentEventId         String?      @db.Uuid
+  parentEventId         String?       @db.Uuid
   recurrenceIndex       Int?
   recurrenceLengthWeeks Int?
-  clusterId             String?      @db.Uuid
+  /// @deprecated Use studyId instead. Kept for backwards compatibility.
+  clusterId             String?       @db.Uuid
+  /// @deprecated Use study instead. Kept for backwards compatibility.
   clusterLabel          String?
+  studyId               String?       @db.Uuid
+  sessionType           SessionType   @default(EVENING)
+  plannedStartTime      DateTime?
+  rescheduleReason      String?
+  rescheduledAt         DateTime?
+  cancelledAt           DateTime?
+  cancelReason          String?
+  lateGraceMinutes      Int?
   attendances           Attendance[]
-  createdBy             Admin        @relation("AdminToEvents", fields: [createdById], references: [id])
-  parentEvent           Event?       @relation("RecurringEvents", fields: [parentEventId], references: [id])
-  childrenEvents        Event[]      @relation("RecurringEvents")
+  createdBy             Admin         @relation("AdminToEvents", fields: [createdById], references: [id])
+  parentEvent           Event?        @relation("RecurringEvents", fields: [parentEventId], references: [id])
+  childrenEvents        Event[]       @relation("RecurringEvents")
   cluster               EventCluster? @relation(fields: [clusterId], references: [id], onDelete: SetNull)
+  study                 Study?        @relation(fields: [studyId], references: [id], onDelete: SetNull)
 
   @@index([parentEventId])
   @@index([eventDate])
   @@index([createdById])
   @@index([clusterId])
+  @@index([studyId])
+  @@index([cancelledAt])
   @@map("events")
 }
 
 model Attendance {
-  id           String     @id @default(uuid()) @db.Uuid
-  memberId     String     @db.Uuid
-  eventId      String     @db.Uuid
-  markedById   String     @db.Uuid
+  id           String           @id @default(uuid()) @db.Uuid
+  memberId     String           @db.Uuid
+  eventId      String           @db.Uuid
+  markedById   String           @db.Uuid
   markedMethod MarkMethod
-  markedAt     DateTime   @default(now())
-  event        Event      @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  markedBy     Admin      @relation("AdminToAttendances", fields: [markedById], references: [id])
-  member       Member     @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  markedAt     DateTime         @default(now())
+  status       AttendanceStatus @default(PRESENT)
+  excuseReason String?
+  removedAt    DateTime?
+  removedById  String?          @db.Uuid
+  removeReason String?
+  event        Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  markedBy     Admin            @relation("AdminToAttendances", fields: [markedById], references: [id])
+  removedBy    Admin?           @relation("AdminToRemovedAttendances", fields: [removedById], references: [id])
+  member       Member           @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
   @@unique([memberId, eventId], name: "memberId_eventId_unique")
   @@index([eventId])
   @@index([memberId])
+  @@index([status])
+  @@index([removedAt])
   @@map("attendances")
 }
 
@@ -152,6 +201,24 @@ enum EventType {
   ONE_TIME
   WEEKLY
   MONTHLY
+}
+
+enum SessionType {
+  EVENING
+  OVERNIGHT
+  OTHER
+}
+
+enum AudienceType {
+  ALL
+  FINAL_YEAR
+  BATCHES
+}
+
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  EXCUSED
 }
 
 enum MarkMethod {

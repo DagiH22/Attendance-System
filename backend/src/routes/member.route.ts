@@ -11,6 +11,7 @@ import {
   deactivateMember,
   resendMemberQr,
   activateMember,
+  getPromotePreview,
 } from "../controllers/member.controller";
 import requireRole from "../middleware/role.middleware";
 import verifyAuth from "../middleware/auth.middleware";
@@ -29,6 +30,9 @@ router.get("/", getAllMembers);
 // get total member count (lightweight)
 router.get("/count", getMembersCount);
 
+// get graduation & promotion preview (SUPER_ADMIN only)
+router.get("/promote-preview", requireRole("SUPER_ADMIN"), getPromotePreview);
+
 // search and get by name or uniqueId (case-insensitive)
 router.get("/search", searchMembers);
 
@@ -43,6 +47,7 @@ router.get("/:id", getMemberById);
 
 // update member
 router.put("/:id", updateMember);
+router.patch("/:id", updateMember);
 
 // deactivate member (super admin only)
 router.patch("/:id/deactivate", requireRole("SUPER_ADMIN"), deactivateMember);

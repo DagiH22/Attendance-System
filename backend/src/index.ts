@@ -7,10 +7,17 @@ import memberRouter from "./routes/member.route";
 import eventRouter from "./routes/event.route";
 import attendanceRouter from "./routes/attendance.route";
 import dashboardRouter from "./routes/dashboard.route";
+import studyRouter from "./routes/study.route";
 import { PrismaClient } from "@prisma/client";
 import { startEventLifecycleScheduler } from "./services/event-lifecycle.service";
 
-dotenv.config();
+import path from "path";
+
+if (process.env.NODE_ENV === "test") {
+  dotenv.config({ path: path.resolve(__dirname, "../.env.test"), override: true });
+} else {
+  dotenv.config();
+}
 
 const app = express();
 const prisma = new PrismaClient();
@@ -32,6 +39,7 @@ app.use("/members", memberRouter);
 app.use("/events", eventRouter);
 app.use("/attendance", attendanceRouter);
 app.use("/dashboard", dashboardRouter);
+app.use("/studies", studyRouter);
 
 app.get("/", (_req, res) => res.json({ status: "ok" }));
 
@@ -43,10 +51,11 @@ process.on("uncaughtException", (error) => {
   console.error("Uncaught exception:", error);
 });
 
-startEventLifecycleScheduler(prisma);
-
-app.listen(port, host, () => {
-  console.log(`Server listening on http://${host}:${port}`);
-});
+if (process.env.NODE_ENV !== "test") {
+  startEventLifecycleScheduler(prisma);
+  app.listen(port, host, () => {
+    console.log(`Server listening on http://${host}:${port}`);
+  });
+}
 
 export default app;

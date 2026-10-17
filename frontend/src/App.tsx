@@ -13,6 +13,7 @@ import RegisterMemberPage from "./pages/RegisterMemberPage";
 import EditMemberPage from "./pages/EditMemberPage";
 import CreateEvent from "./pages/CreateEvent";
 import EventDetailsPage from "./pages/EventDetailsPage";
+import StudiesPage from "./pages/StudiesPage";
 import TakeAttendancePage from "./pages/TakeAttendancePage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import "./App.css";
@@ -26,6 +27,7 @@ function App() {
         {/* Protected Routes */}
         <Route element={<ProtectedRoute />}>
           <Route path="/events" element={<EventsPage />} />
+          <Route path="/studies" element={<StudiesPage />} />
           <Route path="/members" element={<MembersPage />} />
           <Route path="/members/register" element={<RegisterMemberPage />} />
           <Route path="/members/:memberId/edit" element={<EditMemberPage />} />

@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { PrismaClient, EventType } from "@prisma/client";
+import { PrismaClient, EventType, SessionType } from "@prisma/client";
 import ExcelJS from "exceljs";
 import { setExcelDownloadHeaders } from "../utils/excelExport";
 import {
@@ -7,7 +7,12 @@ import {
   serializeEventForResponse,
   type EventStatus,
 } from "../services/event-lifecycle.service";
-import recurrenceService from "../services/recurrence.service";
+import recurrenceService, { normalizeToDateOnly } from "../services/recurrence.service";
+import {
+  getEligibleMembers,
+  getEventStats,
+  computeBatch,
+} from "../services/academic.service";
 
 const prisma = new PrismaClient() as PrismaClient & { eventCluster: any };
 
@@ -272,6 +277,10 @@ export const createEvent = async (req: Request, res: Response) => {
         .json({ error: "location must be a non-empty string" });
     }
 
+    const studyId = req.body.studyId || null;
+    const sessionType = req.body.sessionType || SessionType.EVENING;
+    const lateGraceMinutes = req.body.lateGraceMinutes ? Number(req.body.lateGraceMinutes) : null;
+
     if (eventType === EventType.WEEKLY) {
       // create a parent recurring event and child occurrences
       const recurrenceLengthWeeks =
@@ -297,6 +306,9 @@ export const createEvent = async (req: Request, res: Response) => {
           endDate: parsedWeeklyEndDate,
           recurrenceLengthWeeks,
           location: validated.location,
+          studyId,
+          sessionType,
+          lateGraceMinutes,
         },
       );
 
@@ -313,12 +325,19 @@ export const createEvent = async (req: Request, res: Response) => {
         eventDate: parsedEventDate,
         startTime: parsedStartTime,
         endTime: parsedEndTime,
+        plannedStartTime: parsedStartTime,
         type: eventType,
+        sessionType,
+        lateGraceMinutes,
+        studyId,
         location: validated.location,
         createdById: adminId,
       },
       include: {
         _count: { select: { attendances: true } },
+        study: {
+          select: { id: true, name: true, startDate: true, endDate: true },
+        },
         cluster: {
           select: { id: true, title: true, startDate: true, endDate: true },
         },
@@ -343,87 +362,116 @@ export const getAllEvents = async (req: Request, res: Response) => {
     const limit =
       Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 30;
 
+    const requestedStudyId =
+      typeof req.query.studyId === "string" ? req.query.studyId.trim() : undefined;
+    const requestedSessionType =
+      typeof req.query.sessionType === "string"
+        ? req.query.sessionType.trim()
+        : undefined;
+    const requestedStatus =
+      typeof req.query.status === "string" ? req.query.status.trim() : undefined;
+
+    const filterWhere: any = {};
+    if (requestedStudyId) {
+      if (requestedStudyId.toLowerCase() === "standalone") {
+        filterWhere.studyId = null;
+      } else {
+        filterWhere.studyId = requestedStudyId;
+      }
+    }
+    if (
+      requestedSessionType &&
+      Object.values(SessionType).includes(requestedSessionType as any)
+    ) {
+      filterWhere.sessionType = requestedSessionType as SessionType;
+    }
+
     const now = new Date();
+
+    const eventInclude = {
+      _count: {
+        select: { attendances: { where: { removedAt: null } } },
+      },
+      study: {
+        select: {
+          id: true,
+          name: true,
+          startDate: true,
+          endDate: true,
+          audienceType: true,
+          requiredSessions: true,
+        },
+      },
+      cluster: {
+        select: { id: true, title: true, startDate: true, endDate: true },
+      },
+    };
 
     const [
       upcomingCandidates,
       activeCandidates,
       deactivatedEvents,
       pastCandidates,
-      totalEvents,
+      cancelledCandidates,
     ] = await Promise.all([
-      // upcoming: future startTime (or eventDate) and active
+      // upcoming: future startTime, active, not cancelled
       prisma.event.findMany({
         where: {
-          // exclude parent recurring-event rows (type=WEEKLY with null recurrenceIndex)
           NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] },
           isActive: true,
-          AND: [{ startTime: { gt: now } }],
+          cancelledAt: null,
+          startTime: { gt: now },
+          ...filterWhere,
         },
         orderBy: [{ startTime: "asc" }, { eventDate: "asc" }],
-        include: {
-          _count: { select: { attendances: true } },
-          cluster: {
-            select: { id: true, title: true, startDate: true, endDate: true },
-          },
-        } as any,
+        include: eventInclude as any,
       }),
-      // active candidates: startTime <= now (or eventDate <= now) and active
+      // active candidates: startTime <= now, active, not cancelled
       prisma.event.findMany({
         where: {
           NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] },
           isActive: true,
+          cancelledAt: null,
           startTime: { lte: now },
+          ...filterWhere,
         },
         orderBy: [{ startTime: "asc" }, { eventDate: "asc" }],
-        include: {
-          _count: { select: { attendances: true } },
-          cluster: {
-            select: { id: true, title: true, startDate: true, endDate: true },
-          },
-        } as any,
+        include: eventInclude as any,
       }),
-      // deactivated: explicit isActive === false
+      // deactivated: explicit isActive === false, not cancelled
       prisma.event.findMany({
         where: {
           NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] },
           isActive: false,
+          cancelledAt: null,
+          ...filterWhere,
         },
         orderBy: [{ eventDate: "asc" }, { startTime: "asc" }],
-        include: {
-          _count: { select: { attendances: true } },
-          cluster: {
-            select: { id: true, title: true, startDate: true, endDate: true },
-          },
-        } as any,
+        include: eventInclude as any,
       }),
-      // past candidates: endTime < now or (no endTime && eventDate < now)
+      // past candidates: endTime < now, active, not cancelled
       prisma.event.findMany({
         where: {
           NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] },
           isActive: true,
+          cancelledAt: null,
           endTime: { lt: now },
+          ...filterWhere,
         },
         orderBy: [{ endTime: "desc" }, { eventDate: "desc" }],
-        include: {
-          _count: { select: { attendances: true } },
-          cluster: {
-            select: { id: true, title: true, startDate: true, endDate: true },
-          },
-        } as any,
+        include: eventInclude as any,
       }),
-      prisma.event.count({
+      // cancelled candidates
+      prisma.event.findMany({
         where: {
           NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] },
+          cancelledAt: { not: null },
+          ...filterWhere,
         },
+        orderBy: [{ cancelledAt: "desc" }, { startTime: "desc" }],
+        include: eventInclude as any,
       }),
     ]);
-
-    // Build ordered list following desired sequence using the candidate buckets:
-    // 1) UPCOMING (start in future and isActive)
-    // 2) ACTIVE (now between start and end and isActive)
-    // 3) DEACTIVATED (isActive === false)
-    // 4) PAST (endTime in past)
 
     const idSeen = new Set<string>();
     const ordered: Array<any> = [];
@@ -442,22 +490,28 @@ export const getAllEvents = async (req: Request, res: Response) => {
       }
     };
 
-    // Priority order: ACTIVE events should appear before UPCOMING ones
-    // First include events that are already ACTIVE (startTime <= now)
     classifyAndPush(activeCandidates, ["ACTIVE"]);
-
-    // upcomingCandidates may include events whose startTime is in the future
-    // but whose activationTime (startTime - PRE_ACTIVE_WINDOW) has already
-    // passed — these should be treated as ACTIVE. Allow upcomingCandidates
-    // to contribute both ACTIVE and UPCOMING statuses so pre-active events
-    // are not accidentally omitted.
     classifyAndPush(upcomingCandidates, ["ACTIVE", "UPCOMING"]);
-    classifyAndPush(deactivatedEvents, ["DEACTIVATED"]);
     classifyAndPush(pastCandidates, ["PAST"]);
+    classifyAndPush(deactivatedEvents, ["DEACTIVATED"]);
+    classifyAndPush(cancelledCandidates, ["CANCELLED"]);
 
-    const events = ordered.slice(offset, offset + limit);
+    let finalEvents = ordered;
+    if (requestedStatus) {
+      finalEvents = ordered.filter(
+        (e) => e.status.toUpperCase() === requestedStatus.toUpperCase(),
+      );
+    }
 
-    return res.status(200).json({ events, totalEvents, offset, limit });
+    const totalEvents = finalEvents.length;
+    const paginatedEvents = finalEvents.slice(offset, offset + limit);
+
+    return res.status(200).json({
+      events: paginatedEvents,
+      totalEvents,
+      offset,
+      limit,
+    });
   } catch (err: any) {
     console.error("Error in getAllEvents:", err?.message ?? err);
     return res.status(500).json({ error: "Internal server error" });
@@ -471,29 +525,273 @@ export const getEventById = async (req: Request, res: Response) => {
     const idStr = Array.isArray(id) ? id[0] : id;
     if (!idStr) return res.status(400).json({ error: "Event id is required" });
 
-    const [event, activeMembers] = await Promise.all([
+    const [event, allMembers] = await Promise.all([
       prisma.event.findUnique({
         where: { id: idStr },
         include: {
-          _count: { select: { attendances: true } },
+          _count: {
+            select: { attendances: { where: { removedAt: null } } },
+          },
+          study: true,
           cluster: {
             select: { id: true, title: true, startDate: true, endDate: true },
           },
         } as any,
       }),
-      prisma.member.count({ where: { isActive: true } }),
+      prisma.member.findMany({
+        select: {
+          id: true,
+          name: true,
+          uniqueId: true,
+          phoneNumber: true,
+          campus: true,
+          batch: true,
+          entryAcademicYear: true,
+          batchOverride: true,
+          createdAt: true,
+          deactivatedAt: true,
+        },
+      }),
     ]);
     if (!event) return res.status(404).json({ error: "Event not found" });
 
+    const attendances = await prisma.attendance.findMany({
+      where: { eventId: idStr, removedAt: null },
+      select: {
+        id: true,
+        memberId: true,
+        eventId: true,
+        status: true,
+        markedAt: true,
+        removedAt: true,
+      },
+    });
+
+    const eligible = getEligibleMembers(
+      event,
+      allMembers.map((m) => ({
+        ...m,
+        entryAcademicYear: m.entryAcademicYear ?? 2025,
+      })),
+      attendances,
+      event.startTime,
+    );
+
+    const stats = getEventStats(event, eligible, attendances);
+
+    const attendedMemberIds = new Set(attendances.map((a) => a.memberId));
+    const absentees = eligible
+      .filter((m) => !attendedMemberIds.has(m.id))
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        uniqueId: m.uniqueId,
+        phoneNumber: m.phoneNumber,
+        campus: m.campus,
+        batch: computeBatch(
+          {
+            campus: m.campus,
+            entryAcademicYear: m.entryAcademicYear ?? 2025,
+            batchOverride: m.batchOverride,
+          },
+          event.startTime,
+        ),
+      }));
+
+    const serialized = serializeEventForResponse(event);
     return res.status(200).json({
       event: {
-        ...serializeEventForResponse(event),
-        totalMembers: activeMembers,
+        ...serialized,
+        totalMembers: eligible.length,
+        stats,
+        absentees,
       },
+      stats,
+      absentees,
     });
   } catch (err: any) {
     console.error("Error in getEventById:", err?.message ?? err);
     return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+// GET /api/events/:id/absentees
+export const getEventAbsentees = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const idStr = Array.isArray(id) ? id[0] : id;
+    if (!idStr) return res.status(400).json({ error: "Event id is required" });
+
+    const event = await prisma.event.findUnique({
+      where: { id: idStr },
+      include: { study: true },
+    });
+    if (!event) return res.status(404).json({ error: "Event not found" });
+
+    const [allMembers, attendances] = await Promise.all([
+      prisma.member.findMany({
+        select: {
+          id: true,
+          name: true,
+          uniqueId: true,
+          phoneNumber: true,
+          campus: true,
+          batch: true,
+          entryAcademicYear: true,
+          batchOverride: true,
+          createdAt: true,
+          deactivatedAt: true,
+        },
+      }),
+      prisma.attendance.findMany({
+        where: { eventId: idStr, removedAt: null },
+        select: {
+          id: true,
+          memberId: true,
+          eventId: true,
+          status: true,
+          markedAt: true,
+          removedAt: true,
+        },
+      }),
+    ]);
+
+    const eligible = getEligibleMembers(
+      event,
+      allMembers.map((m) => ({
+        ...m,
+        entryAcademicYear: m.entryAcademicYear ?? 2025,
+      })),
+      attendances,
+      event.startTime,
+    );
+
+    const stats = getEventStats(event, eligible, attendances);
+    const attendedMemberIds = new Set(attendances.map((a) => a.memberId));
+
+    const absentees = eligible
+      .filter((m) => !attendedMemberIds.has(m.id))
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        uniqueId: m.uniqueId,
+        phoneNumber: m.phoneNumber,
+        campus: m.campus,
+        batch: computeBatch(
+          {
+            campus: m.campus,
+            entryAcademicYear: m.entryAcademicYear ?? 2025,
+            batchOverride: m.batchOverride,
+          },
+          event.startTime,
+        ),
+      }));
+
+    return res.status(200).json({
+      stats,
+      absentees,
+      totalEligible: eligible.length,
+      totalAbsent: absentees.length,
+    });
+  } catch (err: any) {
+    console.error("Error in getEventAbsentees:", err?.message ?? err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+// PATCH /api/events/:id/reschedule (SUPER_ADMIN)
+export const rescheduleEvent = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const idStr = Array.isArray(id) ? id[0] : id;
+    if (!idStr) return res.status(400).json({ error: "Event id is required" });
+    const { startTime, endTime, newStartTime, newEndTime, reason } = req.body ?? {};
+    const finalStart = startTime || newStartTime;
+    const finalEnd = endTime || newEndTime;
+
+    if (!finalStart || !finalEnd) {
+      return res.status(400).json({ error: "startTime and endTime are required" });
+    }
+
+    const event = await prisma.event.findUnique({
+      where: { id: idStr },
+      include: { study: true },
+    });
+    if (!event) return res.status(404).json({ error: "Event not found" });
+
+    const newStart = new Date(finalStart);
+    const newEnd = new Date(finalEnd);
+    if (newEnd <= newStart) {
+      return res.status(400).json({ error: "endTime must be after startTime" });
+    }
+
+    const plannedStartTime = event.plannedStartTime ?? event.startTime;
+    const newEventDate = normalizeToDateOnly(newStart);
+
+    const updated = await prisma.event.update({
+      where: { id: idStr },
+      data: {
+        eventDate: newEventDate,
+        startTime: newStart,
+        endTime: newEnd,
+        plannedStartTime,
+        rescheduledAt: new Date(),
+        rescheduleReason: reason ? String(reason).trim() : null,
+        endedAt: newEnd > new Date() ? null : event.endedAt,
+        manuallyClosedAt: newEnd > new Date() ? null : event.manuallyClosedAt,
+      },
+      include: {
+        study: true,
+        cluster: true,
+        _count: {
+          select: { attendances: { where: { removedAt: null } } },
+        },
+      },
+    });
+
+    return res.status(200).json({
+      message: "Event rescheduled successfully",
+      event: serializeEventForResponse(updated),
+    });
+  } catch (err: any) {
+    console.error("Error in rescheduleEvent:", err?.message ?? err);
+    return res.status(500).json({ error: err.message || "Internal server error" });
+  }
+};
+
+// PATCH /api/events/:id/cancel (SUPER_ADMIN)
+export const cancelEvent = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const idStr = Array.isArray(id) ? id[0] : id;
+    if (!idStr) return res.status(400).json({ error: "Event id is required" });
+    const { reason } = req.body ?? {};
+
+    const event = await prisma.event.findUnique({ where: { id: idStr } });
+    if (!event) return res.status(404).json({ error: "Event not found" });
+
+    const updated = await prisma.event.update({
+      where: { id: idStr },
+      data: {
+        cancelledAt: new Date(),
+        cancelReason: reason ? String(reason).trim() : null,
+      },
+      include: {
+        study: true,
+        cluster: true,
+        _count: {
+          select: { attendances: { where: { removedAt: null } } },
+        },
+      },
+    });
+
+    return res.status(200).json({
+      message: "Event cancelled successfully",
+      event: serializeEventForResponse(updated),
+    });
+  } catch (err: any) {
+    console.error("Error in cancelEvent:", err?.message ?? err);
+    return res.status(500).json({ error: err.message || "Internal server error" });
   }
 };
 
@@ -628,7 +926,7 @@ export const getEventAttendance = async (req: Request, res: Response) => {
 
     const [attendanceRecords, totalCount] = await Promise.all([
       prisma.attendance.findMany({
-        where: { eventId: normalizedEventId },
+        where: { eventId: normalizedEventId, removedAt: null },
         skip,
         take: limit,
         orderBy,
@@ -646,7 +944,7 @@ export const getEventAttendance = async (req: Request, res: Response) => {
         },
       }),
       prisma.attendance.count({
-        where: { eventId: normalizedEventId },
+        where: { eventId: normalizedEventId, removedAt: null },
       }),
     ]);
 
@@ -654,12 +952,16 @@ export const getEventAttendance = async (req: Request, res: Response) => {
 
     return res.status(200).json({
       data: attendanceRecords.map((record) => ({
+        attendanceId: record.id,
         memberId: record.memberId,
         name: record.member.name,
         email: record.member.email,
         phone: record.member.phoneNumber,
         uniqueId: record.member.uniqueId,
         markedAt: record.markedAt,
+        status: record.status,
+        excuseReason: record.excuseReason,
+        markedMethod: record.markedMethod,
         isActive: record.member.isActive,
       })),
       totalCount,
@@ -710,7 +1012,7 @@ export const exportEventAttendanceExcel = async (
           ];
 
     const attendanceRecords = await prisma.attendance.findMany({
-      where: { eventId: normalizedEventId },
+      where: { eventId: normalizedEventId, removedAt: null },
       orderBy,
       include: {
         member: {
@@ -735,6 +1037,8 @@ export const exportEventAttendanceExcel = async (
       { header: "Name", key: "name", width: 28 },
       { header: "Email", key: "email", width: 30 },
       { header: "Phone", key: "phone", width: 18 },
+      { header: "Status", key: "status", width: 14 },
+      { header: "Excuse Reason", key: "excuseReason", width: 24 },
       { header: "Marked On", key: "markedAt", width: 28 },
     ];
     sheet.getRow(1).font = { bold: true };
@@ -756,6 +1060,8 @@ export const exportEventAttendanceExcel = async (
         name: record.member.name,
         email: record.member.email,
         phone: record.member.phoneNumber ?? "",
+        status: record.status,
+        excuseReason: record.excuseReason ?? "",
         markedAt: markedFriendly,
       });
     }
@@ -934,10 +1240,28 @@ export const updateEvent = async (req: Request, res: Response) => {
       }
     }
 
+    const extraData: any = {};
+    if (req.body.studyId !== undefined) {
+      extraData.studyId = req.body.studyId ? String(req.body.studyId) : null;
+    }
+    if (req.body.sessionType !== undefined) {
+      extraData.sessionType = req.body.sessionType;
+    }
+    if (req.body.lateGraceMinutes !== undefined) {
+      extraData.lateGraceMinutes =
+        req.body.lateGraceMinutes !== null && req.body.lateGraceMinutes !== ""
+          ? Number(req.body.lateGraceMinutes)
+          : null;
+    }
+
     const updated = await prisma.event.update({
       where: { id: idStr },
-      data: updateData,
+      data: {
+        ...updateData,
+        ...extraData,
+      },
       include: {
+        study: true,
         _count: { select: { attendances: true } },
         cluster: {
           select: { id: true, title: true, startDate: true, endDate: true },
