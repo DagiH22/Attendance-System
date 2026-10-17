@@ -458,10 +458,11 @@ export default function DashboardPage() {
                       </div>
 
                       <div className="space-y-2">
-                        {studyGroup.topMembers.length === 0 ? (
+                        {(!studyGroup.topMembers || studyGroup.topMembers.length === 0) &&
+                        (!studyGroup.topAttendees || studyGroup.topAttendees.length === 0) ? (
                           <p className="text-xs italic text-slate-400">No attendance data yet.</p>
                         ) : (
-                          studyGroup.topMembers.map((m: any, idx: number) => (
+                          (studyGroup.topMembers || studyGroup.topAttendees || []).map((m: any, idx: number) => (
                             <div
                               key={m.id}
                               onClick={() => navigate(`/members/${m.id}`)}

@@ -335,23 +335,43 @@ export class DashboardService {
       const memberIds = topAttendeesRows.map((r) => r.memberId);
       const topMembers = await prisma.member.findMany({
         where: { id: { in: memberIds } },
-        select: { id: true, name: true, uniqueId: true, campus: true },
+        select: {
+          id: true,
+          name: true,
+          uniqueId: true,
+          campus: true,
+          batch: true,
+          entryAcademicYear: true,
+          batchOverride: true,
+        },
       });
       const topMemberMap = new Map(topMembers.map((m) => [m.id, m]));
+
+      const membersList = topAttendeesRows.map((r) => {
+        const m = topMemberMap.get(r.memberId);
+        return {
+          id: r.memberId,
+          name: m?.name || "Unknown",
+          uniqueId: m?.uniqueId || "",
+          campus: m?.campus || "",
+          effectiveBatch: m
+            ? computeBatch(
+                {
+                  ...m,
+                  entryAcademicYear: m.entryAcademicYear ?? 2025,
+                },
+                now,
+              )
+            : "",
+          attendedCount: r._count.id,
+        };
+      });
 
       topAttendeesPerStudy.push({
         studyId: study.id,
         studyName: study.name,
-        topAttendees: topAttendeesRows.map((r) => {
-          const m = topMemberMap.get(r.memberId);
-          return {
-            id: r.memberId,
-            name: m?.name || "Unknown",
-            uniqueId: m?.uniqueId || "",
-            campus: m?.campus || "",
-            attendedCount: r._count.id,
-          };
-        }),
+        topAttendees: membersList,
+        topMembers: membersList,
       });
     }
 
