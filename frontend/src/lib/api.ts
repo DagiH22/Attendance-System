@@ -135,3 +135,32 @@ export const getMembersCount = async (): Promise<number> => {
   const res = await api.get(`/members/count`);
   return res.data?.count ?? 0;
 };
+
+// Studies
+export const getStudies = async () => (await api.get("/studies")).data.studies;
+export const getStudyById = async (id: string) => (await api.get(`/studies/${id}`)).data;
+export const createStudy = async (data: any) => (await api.post("/studies", data)).data;
+export const updateStudy = async (id: string, data: any) => (await api.patch(`/studies/${id}`, data)).data;
+export const deleteStudy = async (id: string) => (await api.delete(`/studies/${id}`)).data;
+export const addSessionsToStudy = async (id: string, data: any) => (await api.post(`/studies/${id}/sessions`, data)).data;
+export const getStudyStats = async (id: string) => (await api.get(`/studies/${id}/stats`)).data;
+export const getStudyGrid = async (id: string) => (await api.get(`/studies/${id}/grid`)).data;
+
+// Events
+export const rescheduleEvent = async (id: string, data: { startTime: string; endTime: string; reason: string }) =>
+  (await api.patch(`/events/${id}/reschedule`, data)).data;
+export const cancelEvent = async (id: string, data: { reason: string }) =>
+  (await api.patch(`/events/${id}/cancel`, data)).data;
+export const getEventAbsentees = async (id: string) => (await api.get(`/events/${id}/absentees`)).data;
+
+// Attendance
+export const excuseMember = async (data: { eventId: string; memberId: string; reason: string }) =>
+  (await api.post("/attendance/excuse", data)).data;
+export const undoAttendance = async (id: string, reason?: string) =>
+  (await api.patch(`/attendance/${id}/undo`, { reason })).data;
+export const updateAttendanceStatus = async (id: string, status: string, excuseReason?: string) =>
+  (await api.patch(`/attendance/${id}/status`, { status, excuseReason })).data;
+
+// Members
+export const getPromotePreview = async () => (await api.get("/members/promote-preview")).data;
+

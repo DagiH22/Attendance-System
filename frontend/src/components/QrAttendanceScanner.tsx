@@ -4,7 +4,7 @@ import api from "../lib/api";
 
 interface QrAttendanceScannerProps {
   eventId: string;
-  onScanSuccess: (result: { memberId: string; memberName?: string }) => void;
+  onScanSuccess: (result: { memberId: string; memberName?: string; status?: string }) => void;
   onApiError: (error: any) => void;
   /** Optional function to map a scanned code to a UUID before sending to the backend */
   resolveMemberId?: (scannedCode: string) => string;
@@ -32,6 +32,7 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [apiErrorMsg, setApiErrorMsg] = useState<string | null>(null);
   const [lastScannedCode, setLastScannedCode] = useState<string | null>(null);
+  const [lastStatus, setLastStatus] = useState<string | null>(null);
 
   useEffect(() => {
     // Cleanup on unmount
@@ -168,10 +169,13 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
         allowOverride,
       });
 
+      const attendanceStatus = response.data?.attendance?.status ?? "PRESENT";
+      setLastStatus(attendanceStatus);
       setScannerState("SUCCESS");
       onScanSuccess({
         memberId: parentResolvedId,
         memberName: response.data?.member?.name,
+        status: attendanceStatus,
       });
 
       // Auto-resume scanner after brief delay
@@ -266,9 +270,15 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
               )}
               {scannerState === "SUCCESS" && (
                 <div className="text-center">
-                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-green-100 mb-2">
+                  <div
+                    className={`mx-auto flex h-10 w-10 items-center justify-center rounded-full mb-2 ${
+                      lastStatus === "LATE" ? "bg-amber-100" : "bg-green-100"
+                    }`}
+                  >
                     <svg
-                      className="h-5 w-5 text-green-600"
+                      className={`h-5 w-5 ${
+                        lastStatus === "LATE" ? "text-amber-600" : "text-green-600"
+                      }`}
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -281,8 +291,12 @@ const QrAttendanceScanner: React.FC<QrAttendanceScannerProps> = ({
                       />
                     </svg>
                   </div>
-                  <p className="text-sm font-bold text-green-600">
-                    Scan Successful!
+                  <p
+                    className={`text-sm font-bold ${
+                      lastStatus === "LATE" ? "text-amber-600" : "text-green-600"
+                    }`}
+                  >
+                    {lastStatus === "LATE" ? "Late Check-In" : "Scan Successful!"}
                   </p>
                 </div>
               )}

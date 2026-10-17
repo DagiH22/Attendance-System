@@ -173,16 +173,25 @@ const TakeAttendancePage: React.FC = () => {
   const handleQrSuccess = async (result: {
     memberId: string;
     memberName?: string;
+    status?: string;
   }) => {
     // Update local state for immediate feedback
+    const isLate = result.status === "LATE";
     if (result.memberName) {
       setFeedback({
-        ...ATTENDANCE_MESSAGES.SUCCESS,
-        description: `${result.memberName} has been checked in.`,
+        tone: isLate ? "info" : "success",
+        title: isLate ? "Marked Late" : "Attendance Marked",
+        description: isLate
+          ? `${result.memberName} has been marked late.`
+          : `${result.memberName} has been checked in.`,
       });
     } else {
       setFeedback({
-        ...ATTENDANCE_MESSAGES.SUCCESS,
+        tone: isLate ? "info" : "success",
+        title: isLate ? "Marked Late" : "Attendance Marked",
+        description: isLate
+          ? "Member has been marked late."
+          : "Member has been checked in.",
       });
     }
 
@@ -516,10 +525,13 @@ const TakeAttendancePage: React.FC = () => {
         });
       }
 
+      const status = response.data?.attendance?.status ?? "PRESENT";
+      const isLate = status === "LATE";
       setFeedback({
-        ...ATTENDANCE_MESSAGES.SUCCESS,
+        tone: isLate ? "info" : "success",
+        title: isLate ? "Marked Late" : "Attendance Marked",
         description: matchedMember
-          ? `${matchedMember.name} has been marked present.`
+          ? `${matchedMember.name} has been marked ${isLate ? "late" : "present"}.`
           : response.data?.message,
       });
 

@@ -1,42 +1,32 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import api, { getMembersCount } from "../lib/api";
+import api, {
+  getMembersCount,
+  rescheduleEvent,
+  cancelEvent,
+  getEventAbsentees,
+  excuseMember,
+  undoAttendance,
+  updateAttendanceStatus,
+} from "../lib/api";
 import formatDate, { formatDateTime } from "../lib/formatDate";
-import QrAttendanceScanner from "../components/QrAttendanceScanner";
 import type {
   AttendanceSortBy,
   AttendanceSortOrder,
+  AttendanceStatus,
   DashboardEvent,
+  EventAbsentee,
   EventAttendanceRecord,
   EventAttendanceResponse,
+  SessionType,
 } from "../types/events";
-import type { Member } from "../types/members";
 import { useAuth } from "../contexts/AuthContext";
 
 type LocationState = {
   event?: DashboardEvent;
 };
 
-type EditableStatusOption = "UPCOMING" | "DEACTIVATED";
-
-type AddAttendanceTab = "QR" | "MANUAL";
-type AttendanceFeedbackTone = "success" | "error" | "info";
-type AttendanceFeedback = {
-  tone: AttendanceFeedbackTone;
-  title: string;
-  description?: string;
-};
-
-const EDITABLE_STATUS_OPTIONS: Array<{
-  value: EditableStatusOption;
-  label: string;
-}> = [
-  { value: "UPCOMING", label: "Upcoming" },
-  { value: "DEACTIVATED", label: "Deactivated" },
-];
-
 const ATTENDANCE_PAGE_SIZE = 20;
-const RECENT_MARK_THRESHOLD_MS = 15 * 60 * 1000;
 
 const attendanceCache = new Map<string, EventAttendanceResponse>();
 
@@ -46,8 +36,13 @@ const sanitizeDownloadFileName = (value: string) =>
     .replace(/[\\/:*?"<>|]/g, "-")
     .replace(/\s+/g, " ") || "event";
 
-const getFileNameFromContentDisposition = (header?: string, fallback?: string) => {
-  const fileNameMatch = header?.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+const getFileNameFromContentDisposition = (
+  header?: string,
+  fallback?: string,
+) => {
+  const fileNameMatch = header?.match(
+    /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i,
+  );
   const encoded = fileNameMatch?.[1];
   const plain = fileNameMatch?.[2];
   const extracted = encoded ? decodeURIComponent(encoded) : plain;
@@ -76,6 +71,15 @@ const mapEventToDashboardEvent = (rawEvent: any): DashboardEvent => {
     attendanceOpen,
     location: rawEvent.location || "",
     eventType: rawEvent.type,
+    sessionType: (rawEvent.sessionType as SessionType) || "EVENING",
+    studyId: rawEvent.studyId || null,
+    study: rawEvent.study || null,
+    plannedStartTime: rawEvent.plannedStartTime || null,
+    rescheduledAt: rawEvent.rescheduledAt || null,
+    rescheduleReason: rawEvent.rescheduleReason || null,
+    cancelledAt: rawEvent.cancelledAt || null,
+    cancelReason: rawEvent.cancelReason || null,
+    lateGraceMinutes: rawEvent.lateGraceMinutes ?? null,
     createdAt: rawEvent.createdAt || eventStart.toISOString(),
     createdBy: {
       id: rawEvent.admin?.id || rawEvent.createdBy?.id || "unknown-admin",
@@ -84,6 +88,8 @@ const mapEventToDashboardEvent = (rawEvent: any): DashboardEvent => {
     attendanceCount:
       rawEvent._count?.attendances || rawEvent.attendanceCount || 0,
     totalMembers: rawEvent.totalMembers || 0,
+    stats: rawEvent.stats || undefined,
+    absentees: rawEvent.absentees || undefined,
     cluster: rawEvent.cluster
       ? {
           id: rawEvent.cluster.id,
@@ -102,10 +108,6 @@ const toDateTimeLocalValue = (value: string) => {
   const localDate = new Date(date.getTime() - offset * 60_000);
   return localDate.toISOString().slice(0, 16);
 };
-const toLocalDateValue = (value: string) =>
-  toDateTimeLocalValue(value).slice(0, 10);
-const toLocalTimeValue = (value: string) =>
-  toDateTimeLocalValue(value).slice(11, 16);
 
 const EventDetailsPage: React.FC = () => {
   const navigate = useNavigate();
@@ -120,12 +122,33 @@ const EventDetailsPage: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(!state?.event);
   const [error, setError] = useState<string>("");
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [actionSuccess, setActionSuccess] = useState("");
+
+  // Reschedule Modal
+  const [isRescheduleModalOpen, setIsRescheduleModalOpen] = useState(false);
+  const [rescheduleForm, setRescheduleForm] = useState({
+    startTime: "",
+    endTime: "",
+    reason: "",
+  });
+  const [isRescheduling, setIsRescheduling] = useState(false);
+  const [rescheduleError, setRescheduleError] = useState("");
+
+  // Cancel Modal
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState("");
+
+  // Attendance Modal & Tabs
   const [isAttendanceModalOpen, setIsAttendanceModalOpen] = useState(false);
+  const [attendanceModalTab, setAttendanceModalTab] = useState<
+    "ATTENDEES" | "ABSENTEES"
+  >("ATTENDEES");
   const [attendanceRecords, setAttendanceRecords] = useState<
     EventAttendanceRecord[]
   >([]);
@@ -140,40 +163,30 @@ const EventDetailsPage: React.FC = () => {
     useState<AttendanceSortBy>("time");
   const [attendanceOrder, setAttendanceOrder] =
     useState<AttendanceSortOrder>("asc");
-  const [isAttendanceSortOpen, setIsAttendanceSortOpen] = useState(false);
-  const [isAddAttendeeOpen, setIsAddAttendeeOpen] = useState(false);
-  const [isClusterModalOpen, setIsClusterModalOpen] = useState(false);
-  const [clusterLoading, setClusterLoading] = useState(false);
-  const [clusterError, setClusterError] = useState("");
-  const [clusterForm, setClusterForm] = useState({
-    title: "",
-    description: "",
-    location: "",
-  });
-  const [clusterEvents, setClusterEvents] = useState<
-    Array<{
-      id?: string;
-      eventDate: string;
-      startTime: string;
-      endTime: string;
-      label: string;
-    }>
-  >([]);
-  const [addAttendeeTab, setAddAttendeeTab] = useState<AddAttendanceTab>("QR");
-  const [addAttendeeFeedback, setAddAttendeeFeedback] =
-    useState<AttendanceFeedback | null>(null);
-  const [addAttendeeError, setAddAttendeeError] = useState<string>("");
-  const [addAttendeeLoading, setAddAttendeeLoading] = useState(false);
-  const [addMembersLoading, setAddMembersLoading] = useState(false);
-  const [addMembersSearch, setAddMembersSearch] = useState("");
-  const [addMembers, setAddMembers] = useState<Member[]>([]);
-  const [editValidationErrors, setEditValidationErrors] = useState<{
-    title?: string;
-    description?: string;
-    location?: string;
-    startTime?: string;
-    endTime?: string;
-  }>({});
+  // Absentees Tab State
+  const [absenteesList, setAbsenteesList] = useState<EventAbsentee[]>([]);
+  const [absenteesLoading, setAbsenteesLoading] = useState(false);
+  const [absenteesError, setAbsenteesError] = useState("");
+  const [absenteesSearch, setAbsenteesSearch] = useState("");
+
+  // Excuse Modal
+  const [isExcuseModalOpen, setIsExcuseModalOpen] = useState(false);
+  const [excuseTarget, setExcuseTarget] = useState<{
+    memberId: string;
+    memberName: string;
+  } | null>(null);
+  const [excuseReasonInput, setExcuseReasonInput] = useState("");
+  const [isExcusing, setIsExcusing] = useState(false);
+  const [excuseError, setExcuseError] = useState("");
+
+  // Undo Modal
+  const [isUndoModalOpen, setIsUndoModalOpen] = useState(false);
+  const [undoTarget, setUndoTarget] = useState<EventAttendanceRecord | null>(null);
+  const [undoReasonInput, setUndoReasonInput] = useState("");
+  const [isUndoing, setIsUndoing] = useState(false);
+  const [undoError, setUndoError] = useState("");
+
+  // Edit Event Form
   const [editForm, setEditForm] = useState({
     title: "",
     description: "",
@@ -194,9 +207,6 @@ const EventDetailsPage: React.FC = () => {
     });
   };
 
-  const statusDropdownRef = React.useRef<HTMLDivElement>(null);
-  const attendanceSortDropdownRef = React.useRef<HTMLDivElement>(null);
-
   const getAttendanceCacheKey = (
     eventId: string,
     page: number,
@@ -209,9 +219,7 @@ const EventDetailsPage: React.FC = () => {
       page: number,
       options?: { preferCache?: boolean; silent?: boolean },
     ) => {
-      if (!event) {
-        return;
-      }
+      if (!event) return;
 
       const { preferCache = true, silent = false } = options ?? {};
       const cacheKey = getAttendanceCacheKey(
@@ -277,47 +285,66 @@ const EventDetailsPage: React.FC = () => {
     [attendanceOrder, attendanceSortBy, event],
   );
 
-  useEffect(() => {
-    if (!id) {
-      return;
-    }
+  const fetchEvent = async () => {
+    if (!id) return;
+    try {
+      setLoading(true);
+      setError("");
 
-    const fetchEvent = async () => {
-      try {
-        setLoading(true);
-        setError("");
+      const response = await api.get(`/events/${id}`, {
+        params: { includeStats: "true", includeAbsentees: "true" },
+      });
+      const rawEvent = response.data?.event ?? response.data;
 
-        const response = await api.get(`/events/${id}`);
-        const rawEvent = response.data?.event ?? response.data;
-
-        if (!rawEvent) {
-          throw new Error("Event not found");
-        }
-
-        const mapped = mapEventToDashboardEvent(rawEvent);
-        setEvent(mapped);
-
-        if (!mapped.totalMembers) {
-          try {
-            const count = await getMembersCount();
-            setMembersCount(count);
-          } catch {
-            setMembersCount(0);
-          }
-        }
-      } catch (err: any) {
-        console.error("Error loading event details:", err);
-        setError(
-          err.response?.data?.message ||
-            err.response?.data?.error ||
-            err.message ||
-            "Failed to load event details.",
-        );
-      } finally {
-        setLoading(false);
+      if (!rawEvent) {
+        throw new Error("Event not found");
       }
-    };
 
+      const mapped = mapEventToDashboardEvent(rawEvent);
+      setEvent(mapped);
+
+      if (mapped.absentees) {
+        setAbsenteesList(mapped.absentees);
+      }
+
+      if (!mapped.totalMembers) {
+        try {
+          const count = await getMembersCount();
+          setMembersCount(count);
+        } catch {
+          setMembersCount(0);
+        }
+      }
+    } catch (err: any) {
+      console.error("Error loading event details:", err);
+      setError(
+        err.response?.data?.message ||
+          err.response?.data?.error ||
+          err.message ||
+          "Failed to load event details.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAbsentees = async () => {
+    if (!event) return;
+    setAbsenteesLoading(true);
+    setAbsenteesError("");
+    try {
+      const data = await getEventAbsentees(event.id);
+      setAbsenteesList(data.absentees || []);
+    } catch (err: any) {
+      setAbsenteesError(
+        err.response?.data?.error || "Failed to load absentees list.",
+      );
+    } finally {
+      setAbsenteesLoading(false);
+    }
+  };
+
+  useEffect(() => {
     void fetchEvent();
     const intervalId = window.setInterval(() => {
       void fetchEvent();
@@ -339,76 +366,33 @@ const EventDetailsPage: React.FC = () => {
   }, [event]);
 
   useEffect(() => {
-    if (!isEditModalOpen || !isStatusDropdownOpen) {
-      return;
+    if (!isAttendanceModalOpen) return;
+
+    if (attendanceModalTab === "ATTENDEES") {
+      void fetchAttendancePage(1, { preferCache: false });
+    } else if (attendanceModalTab === "ABSENTEES") {
+      void fetchAbsentees();
     }
-
-    const handleClickOutside = (mouseEvent: MouseEvent) => {
-      if (
-        statusDropdownRef.current &&
-        !statusDropdownRef.current.contains(mouseEvent.target as Node)
-      ) {
-        setIsStatusDropdownOpen(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isEditModalOpen, isStatusDropdownOpen]);
-
-  useEffect(() => {
-    if (!isAttendanceModalOpen) {
-      return;
-    }
-
-    const loadAttendance = async () => {
-      try {
-        await fetchAttendancePage(1, { preferCache: false });
-      } catch {
-        // handled in fetchAttendancePage
-      }
-    };
-
-    void loadAttendance();
-  }, [fetchAttendancePage, isAttendanceModalOpen]);
-
-  useEffect(() => {
-    if (
-      !isAttendanceModalOpen ||
-      attendancePage >= attendanceTotalPages ||
-      !event
-    ) {
-      return;
-    }
-
-    void fetchAttendancePage(attendancePage + 1, { silent: true });
-  }, [
-    attendancePage,
-    attendanceTotalPages,
-    event,
-    fetchAttendancePage,
-    isAttendanceModalOpen,
-  ]);
-
-  useEffect(() => {
-    if (!isAttendanceModalOpen || !isAttendanceSortOpen) {
-      return;
-    }
-
-    const handleClickOutside = (mouseEvent: MouseEvent) => {
-      if (
-        attendanceSortDropdownRef.current &&
-        !attendanceSortDropdownRef.current.contains(mouseEvent.target as Node)
-      ) {
-        setIsAttendanceSortOpen(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isAttendanceModalOpen, isAttendanceSortOpen]);
+  }, [attendanceModalTab, fetchAttendancePage, isAttendanceModalOpen]);
 
   const attendanceStats = useMemo(() => {
+    if (event?.stats) {
+      return {
+        totalMembers: event.stats.eligible,
+        attendees: event.stats.present + event.stats.late,
+        present: event.stats.present,
+        late: event.stats.late,
+        excused: event.stats.excused,
+        absentees: event.stats.absent,
+        attendancePercentage:
+          event.stats.attendanceRate !== null &&
+          event.stats.attendanceRate !== undefined
+            ? Math.round(event.stats.attendanceRate * 100)
+            : 0,
+        isCancelled: event.stats.isCancelled,
+      };
+    }
+
     const totalMembers =
       event?.totalMembers && event.totalMembers > 0
         ? event.totalMembers
@@ -424,8 +408,12 @@ const EventDetailsPage: React.FC = () => {
     return {
       totalMembers,
       attendees,
+      present: attendees,
+      late: 0,
+      excused: 0,
       absentees,
       attendancePercentage,
+      isCancelled: event?.status === "CANCELLED",
     };
   }, [event, attendanceTotalCount, membersCount]);
 
@@ -435,7 +423,6 @@ const EventDetailsPage: React.FC = () => {
       minute: "2-digit",
     });
 
-  // show date as dd/mm/yyyy (formatDate is imported)
   const formatCreatedDate = (value: string) => formatDateTime(value);
 
   const getStatusClasses = (status: DashboardEvent["status"]) => {
@@ -446,8 +433,9 @@ const EventDetailsPage: React.FC = () => {
         return "bg-blue-100 text-blue-800 border-blue-200";
       case "DEACTIVATED":
         return "bg-yellow-50 text-yellow-800 border-yellow-100";
+      case "CANCELLED":
+        return "bg-red-100 text-red-800 border-red-200";
       case "PAST":
-        return "bg-gray-100 text-gray-700 border-gray-200";
       default:
         return "bg-gray-100 text-gray-700 border-gray-200";
     }
@@ -458,7 +446,9 @@ const EventDetailsPage: React.FC = () => {
       case "ACTIVE":
         return "Take Attendance";
       case "PAST":
-        return "View Attendance";
+        return "View Attendance & Absentees";
+      case "CANCELLED":
+        return "Session Cancelled";
       case "DEACTIVATED":
         return "Attendance Unavailable";
       default:
@@ -467,23 +457,18 @@ const EventDetailsPage: React.FC = () => {
   };
 
   const handleAction = () => {
-    if (!event) {
-      return;
-    }
+    if (!event) return;
 
-    if (event.status === "PAST") {
+    if (event.status === "PAST" || event.status === "CANCELLED") {
       setAttendanceError("");
       setAttendancePage(1);
       setAttendanceTotalPages(1);
       setAttendanceTotalCount(0);
-      setIsAttendanceSortOpen(false);
       setIsAttendanceModalOpen(true);
       return;
     }
 
-    if (!event.attendanceOpen) {
-      return;
-    }
+    if (!event.attendanceOpen) return;
 
     navigate(`/events/${event.id}/attendance`, {
       state: { event },
@@ -497,11 +482,8 @@ const EventDetailsPage: React.FC = () => {
     setAttendanceSortBy(nextSortBy);
     setAttendanceOrder(nextOrder);
     setAttendancePage(1);
-    setIsAttendanceSortOpen(false);
 
-    if (!event) {
-      return;
-    }
+    if (!event) return;
 
     const cacheKey = getAttendanceCacheKey(event.id, 1, nextSortBy, nextOrder);
     const cached = attendanceCache.get(cacheKey);
@@ -536,9 +518,7 @@ const EventDetailsPage: React.FC = () => {
       setAttendanceError("");
     } catch (err: any) {
       setAttendanceError(
-        err.response?.data?.error ||
-          err.response?.data?.message ||
-          "Failed to load attendance records.",
+        err.response?.data?.error || "Failed to load attendance records.",
       );
     } finally {
       setAttendanceLoading(false);
@@ -547,29 +527,17 @@ const EventDetailsPage: React.FC = () => {
 
   const handleExportAttendanceExcel = async () => {
     if (!event) return;
-
     try {
       setAttendanceExporting(true);
-      setAttendanceError("");
+      const response = await api.get(`/events/${event.id}/export/excel`, {
+        responseType: "blob",
+      });
 
-      const response = await api.get(
-        `/events/${event.id}/attendance/export/excel`,
-        {
-          responseType: "blob",
-          params: {
-            sortBy: attendanceSortBy,
-            order: attendanceOrder,
-          },
-        },
-      );
-
-      const fallbackFileName = `${sanitizeDownloadFileName(event.title)}.xlsx`;
-      const fileName =
-        getFileNameFromContentDisposition(
+      const headerFileName = getFileNameFromContentDisposition(
         response.headers["content-disposition"],
-        fallbackFileName,
-      ) ?? fallbackFileName;
-
+      );
+      const fileName =
+        headerFileName || `${sanitizeDownloadFileName(event.title)}-attendance.xlsx`;
       const blob = new Blob([response.data], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
@@ -582,277 +550,176 @@ const EventDetailsPage: React.FC = () => {
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
     } catch (err: any) {
-      setAttendanceError(
-        err.response?.data?.error ||
-          err.response?.data?.message ||
-          "Failed to export attendance.",
-      );
+      console.error("Export error:", err);
+      setAttendanceError("Failed to export attendance records.");
     } finally {
       setAttendanceExporting(false);
     }
   };
 
-  const attendanceSortLabel =
-    attendanceSortBy === "time"
-      ? attendanceOrder === "asc"
-        ? "Time registered (earliest first)"
-        : "Time registered (latest first)"
-      : attendanceOrder === "asc"
-        ? "Name (A–Z)"
-        : "Name (Z–A)";
-
-  const isAdmin = admin?.role === "ADMIN" || admin?.role === "SUPER_ADMIN";
-
-  const presentMemberIds = useMemo(() => {
-    return new Set(attendanceRecords.map((record) => record.memberId));
-  }, [attendanceRecords]);
-
-  const filteredAddMembers = useMemo(() => {
-    const query = addMembersSearch.trim().toLowerCase();
-    if (!query) return addMembers;
-
-    return addMembers.filter((member) => {
-      return (
-        member.name.toLowerCase().includes(query) ||
-        member.uniqueId.toLowerCase().includes(query) ||
-        (member.email ?? "").toLowerCase().includes(query)
-      );
-    });
-  }, [addMembers, addMembersSearch]);
-
-  const loadAddMembers = React.useCallback(async () => {
+  // Status update
+  const handleChangeStatus = async (
+    recordId: string,
+    nextStatus: AttendanceStatus,
+    excuseReason?: string,
+  ) => {
     try {
-      setAddMembersLoading(true);
-      const response = await api.get("/members");
-      setAddMembers(response.data?.members ?? []);
+      await updateAttendanceStatus(recordId, nextStatus, excuseReason);
+      attendanceCache.clear();
+      await fetchAttendancePage(attendancePage, { preferCache: false });
+      await fetchEvent();
     } catch (err: any) {
-      setAddAttendeeError(
-        err.response?.data?.error ||
-          err.response?.data?.message ||
-          "Failed to load members.",
+      setAttendanceError(
+        err.response?.data?.error || "Failed to update attendance status.",
+      );
+    }
+  };
+
+  // Undo attendance (Soft delete)
+  const handleConfirmUndo = async () => {
+    if (!undoTarget || !undoTarget.id) return;
+    try {
+      setIsUndoing(true);
+      setUndoError("");
+      await undoAttendance(undoTarget.id, undoReasonInput.trim());
+      attendanceCache.clear();
+      setIsUndoModalOpen(false);
+      setUndoTarget(null);
+      setUndoReasonInput("");
+      await fetchAttendancePage(attendancePage, { preferCache: false });
+      await fetchEvent();
+    } catch (err: any) {
+      setUndoError(
+        err.response?.data?.error || "Failed to remove attendance record.",
       );
     } finally {
-      setAddMembersLoading(false);
+      setIsUndoing(false);
     }
-  }, []);
+  };
 
-  useEffect(() => {
-    if (!isAddAttendeeOpen) return;
-    setAddAttendeeError("");
-    setAddAttendeeFeedback(null);
-    void loadAddMembers();
-  }, [isAddAttendeeOpen, loadAddMembers]);
-
-  const handleAddAttendance = async (
-    memberId: string,
-    method: "QR" | "MANUAL",
-  ) => {
-    if (!event) return;
-    setAddAttendeeLoading(true);
-    setAddAttendeeError("");
-    setAddAttendeeFeedback(null);
+  // Excuse absentee
+  const handleConfirmExcuse = async () => {
+    if (!event || !excuseTarget) return;
+    if (!excuseReasonInput.trim()) {
+      setExcuseError("Please provide an excuse reason.");
+      return;
+    }
 
     try {
-      const response = await api.post("/attendance", {
-        memberId,
+      setIsExcusing(true);
+      setExcuseError("");
+      await excuseMember({
         eventId: event.id,
-        method,
-        allowOverride: true,
+        memberId: excuseTarget.memberId,
+        reason: excuseReasonInput.trim(),
       });
 
-      setAddAttendeeFeedback({
-        tone: "success",
-        title: "Attendance recorded",
-        description: response.data?.message,
-      });
-
-      await fetchAttendancePage(1, { preferCache: false });
-      setAttendancePage(1);
+      attendanceCache.clear();
+      setIsExcuseModalOpen(false);
+      setExcuseTarget(null);
+      setExcuseReasonInput("");
+      await fetchAbsentees();
+      await fetchEvent();
     } catch (err: any) {
-      setAddAttendeeError(
-        err.response?.data?.error ||
-          err.response?.data?.message ||
-          "Failed to mark attendance.",
-      );
-      setAddAttendeeFeedback({
-        tone: "error",
-        title: "Unable to add attendee",
-        description:
-          err.response?.data?.error ||
-          err.response?.data?.message ||
-          "Please try again.",
-      });
-    } finally {
-      setAddAttendeeLoading(false);
-    }
-  };
-
-  const isSuperAdmin = admin?.role === "SUPER_ADMIN";
-  const canEdit = Boolean(isSuperAdmin && event);
-  const canDelete = Boolean(isSuperAdmin && event);
-
-  const openClusterModal = async () => {
-    if (!event?.cluster?.id) {
-      return;
-    }
-
-    try {
-      setClusterLoading(true);
-      setClusterError("");
-
-      const response = await api.get(`/events/cluster/${event.cluster.id}`);
-      const cluster = response.data?.cluster;
-      const clusterEventsResponse = response.data?.events ?? [];
-
-      if (!cluster) {
-        setClusterError("Unable to load cluster details.");
-        return;
-      }
-
-      setClusterForm({
-        title: cluster.title ?? "",
-        description: cluster.description ?? "",
-        location: cluster.location ?? "",
-      });
-
-      setClusterEvents(
-        clusterEventsResponse.map((entry: any) => ({
-          id: entry.id,
-          eventDate: toLocalDateValue(entry.startTime),
-          startTime: toLocalTimeValue(entry.startTime),
-          endTime: toLocalTimeValue(entry.endTime),
-          label: entry.clusterLabel ?? "",
-        })),
-      );
-
-      setIsClusterModalOpen(true);
-    } catch (err: any) {
-      setClusterError(
-        err.response?.data?.error ||
-          err.response?.data?.message ||
-          "Failed to load cluster details.",
+      setExcuseError(
+        err.response?.data?.error || "Failed to record excuse.",
       );
     } finally {
-      setClusterLoading(false);
+      setIsExcusing(false);
     }
   };
 
-  const updateClusterEvent = (
-    index: number,
-    field: "eventDate" | "startTime" | "endTime" | "label",
-    value: string,
-  ) => {
-    setClusterEvents((prev) =>
-      prev.map((entry, idx) =>
-        idx === index ? { ...entry, [field]: value } : entry,
-      ),
-    );
+  // Reschedule
+  const openRescheduleModal = () => {
+    if (!event) return;
+    setRescheduleError("");
+    setRescheduleForm({
+      startTime: toDateTimeLocalValue(event.startTime),
+      endTime: toDateTimeLocalValue(event.endTime),
+      reason: "",
+    });
+    setIsRescheduleModalOpen(true);
   };
 
-  const addClusterEventRow = () => {
-    setClusterEvents((prev) => [
-      ...prev,
-      { eventDate: "", startTime: "", endTime: "", label: "" },
-    ]);
-  };
-
-  const removeClusterEventRow = (index: number) => {
-    setClusterEvents((prev) => prev.filter((_, idx) => idx !== index));
-  };
-
-  const handleClusterSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleRescheduleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!event) return;
 
-    if (!event?.cluster?.id) {
+    if (!rescheduleForm.reason.trim()) {
+      setRescheduleError("Please provide a reason for rescheduling.");
       return;
     }
 
-    setClusterError("");
-
-    if (!clusterForm.title.trim()) {
-      setClusterError("Cluster title is required.");
+    const start = new Date(rescheduleForm.startTime);
+    const end = new Date(rescheduleForm.endTime);
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end <= start) {
+      setRescheduleError("End time must be after start time.");
       return;
-    }
-
-    if (!clusterForm.description.trim()) {
-      setClusterError("Cluster description is required.");
-      return;
-    }
-
-    if (!clusterForm.location.trim()) {
-      setClusterError("Cluster location is required.");
-      return;
-    }
-
-    if (clusterEvents.length === 0) {
-      setClusterError("Add at least one event to the cluster.");
-      return;
-    }
-
-    for (let i = 0; i < clusterEvents.length; i += 1) {
-      const entry = clusterEvents[i];
-      if (!entry.eventDate || !entry.startTime || !entry.endTime) {
-        setClusterError(
-          `Cluster event #${i + 1} must have a date, start time, and end time.`,
-        );
-        return;
-      }
-
-      if (entry.endTime <= entry.startTime) {
-        setClusterError(`Cluster event #${i + 1} must end after it starts.`);
-        return;
-      }
     }
 
     try {
-      setIsSaving(true);
-      const payloadEvents = clusterEvents.map((entry) => ({
-        id: entry.id,
-        eventDate: new Date(entry.eventDate).toISOString(),
-        startTime: new Date(
-          `${entry.eventDate}T${entry.startTime}`,
-        ).toISOString(),
-        endTime: new Date(`${entry.eventDate}T${entry.endTime}`).toISOString(),
-        label: entry.label.trim() || undefined,
-      }));
-
-      const response = await api.patch(`/events/cluster/${event.cluster.id}`, {
-        title: clusterForm.title.trim(),
-        description: clusterForm.description.trim(),
-        location: clusterForm.location.trim(),
-        events: payloadEvents,
+      setIsRescheduling(true);
+      setRescheduleError("");
+      const result = await rescheduleEvent(event.id, {
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+        reason: rescheduleForm.reason.trim(),
       });
 
-      const updatedEvents = response.data?.events ?? [];
-      const updatedEvent = updatedEvents.find(
-        (entry: any) => entry.id === event.id,
-      );
-
-      if (updatedEvent) {
-        setEvent(mapEventToDashboardEvent(updatedEvent));
-      }
-
-      setIsClusterModalOpen(false);
+      setEvent(mapEventToDashboardEvent(result.event ?? result));
+      setIsRescheduleModalOpen(false);
+      setActionSuccess("Event successfully rescheduled!");
+      setTimeout(() => setActionSuccess(""), 4000);
     } catch (err: any) {
-      setClusterError(
-        err.response?.data?.error ||
-          err.response?.data?.message ||
-          "Failed to update cluster.",
+      setRescheduleError(
+        err.response?.data?.error || "Failed to reschedule event.",
       );
     } finally {
-      setIsSaving(false);
+      setIsRescheduling(false);
+    }
+  };
+
+  // Cancel
+  const openCancelModal = () => {
+    setCancelError("");
+    setCancelReason("");
+    setIsCancelModalOpen(true);
+  };
+
+  const handleCancelSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!event) return;
+
+    if (!cancelReason.trim()) {
+      setCancelError("Please provide a cancellation reason.");
+      return;
+    }
+
+    try {
+      setIsCancelling(true);
+      setCancelError("");
+      const result = await cancelEvent(event.id, {
+        reason: cancelReason.trim(),
+      });
+
+      setEvent(mapEventToDashboardEvent(result.event ?? result));
+      setIsCancelModalOpen(false);
+      setActionSuccess("Event marked as cancelled.");
+      setTimeout(() => setActionSuccess(""), 4000);
+    } catch (err: any) {
+      setCancelError(
+        err.response?.data?.error || "Failed to cancel event.",
+      );
+    } finally {
+      setIsCancelling(false);
     }
   };
 
   const handleEditSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-
-    if (!event) {
-      return;
-    }
+    if (!event) return;
 
     setActionError("");
-    setEditValidationErrors({});
 
     const nextErrors: {
       title?: string;
@@ -862,41 +729,21 @@ const EventDetailsPage: React.FC = () => {
       endTime?: string;
     } = {};
 
-    if (!editForm.title.trim()) {
-      nextErrors.title = "Event title is required";
-    }
-
-    if (!editForm.description.trim()) {
+    if (!editForm.title.trim()) nextErrors.title = "Event title is required";
+    if (!editForm.description.trim())
       nextErrors.description = "Event description is required";
-    }
-
-    if (!editForm.location.trim()) {
+    if (!editForm.location.trim())
       nextErrors.location = "Event location is required";
-    }
-
-    if (!editForm.startTime) {
-      nextErrors.startTime = "Start time is required";
-    }
-
-    if (!editForm.endTime) {
-      nextErrors.endTime = "End time is required";
-    }
+    if (!editForm.startTime) nextErrors.startTime = "Start time is required";
+    if (!editForm.endTime) nextErrors.endTime = "End time is required";
 
     if (Object.keys(nextErrors).length > 0) {
-      setEditValidationErrors(nextErrors);
+      setActionError(Object.values(nextErrors)[0] || "Please fill in all required fields.");
       return;
     }
 
     const parsedStartTime = new Date(editForm.startTime);
     const parsedEndTime = new Date(editForm.endTime);
-
-    if (
-      Number.isNaN(parsedStartTime.getTime()) ||
-      Number.isNaN(parsedEndTime.getTime())
-    ) {
-      setActionError("Please enter valid start and end times.");
-      return;
-    }
 
     if (parsedEndTime <= parsedStartTime) {
       setActionError("End time must be after start time.");
@@ -914,17 +761,13 @@ const EventDetailsPage: React.FC = () => {
         endTime: parsedEndTime.toISOString(),
       });
 
-      const updatedEvent = mapEventToDashboardEvent(
-        response.data?.event ?? response.data,
+      setEvent(
+        mapEventToDashboardEvent(response.data?.event ?? response.data),
       );
-      setEvent(updatedEvent);
       setIsEditModalOpen(false);
-      setIsStatusDropdownOpen(false);
     } catch (err: any) {
       setActionError(
-        err.response?.data?.error ||
-          err.response?.data?.message ||
-          "Failed to update event.",
+        err.response?.data?.error || "Failed to update event.",
       );
     } finally {
       setIsSaving(false);
@@ -932,10 +775,7 @@ const EventDetailsPage: React.FC = () => {
   };
 
   const handleDelete = async () => {
-    if (!event) {
-      return;
-    }
-
+    if (!event) return;
     try {
       setActionError("");
       setIsDeleting(true);
@@ -947,14 +787,17 @@ const EventDetailsPage: React.FC = () => {
       });
     } catch (err: any) {
       setActionError(
-        err.response?.data?.error ||
-          err.response?.data?.message ||
-          "Failed to delete event.",
+        err.response?.data?.error || "Failed to delete event.",
       );
     } finally {
       setIsDeleting(false);
     }
   };
+
+  const isSuperAdmin = admin?.role === "SUPER_ADMIN";
+  const isAdmin = admin?.role === "ADMIN" || isSuperAdmin;
+  const canEdit = isSuperAdmin && event && new Date(event.startTime).getTime() > Date.now();
+  const canDelete = isSuperAdmin && event?.status !== "ACTIVE";
 
   if (loading) {
     return (
@@ -962,7 +805,7 @@ const EventDetailsPage: React.FC = () => {
         <div className="max-w-3xl mx-auto flex min-h-[60vh] flex-col items-center justify-center">
           <div className="h-10 w-10 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
           <p className="mt-4 text-sm font-medium text-gray-500">
-            Loading event details...
+            Loading session details...
           </p>
         </div>
       </div>
@@ -983,16 +826,28 @@ const EventDetailsPage: React.FC = () => {
           </button>
           <div className="rounded-2xl border border-red-200 bg-white p-6 shadow-sm">
             <h1 className="text-lg font-semibold text-gray-900">
-              Unable to load event
+              Unable to load session
             </h1>
             <p className="mt-2 text-sm text-red-600">
-              {error || "This event could not be found."}
+              {error || "This session could not be found."}
             </p>
           </div>
         </div>
       </div>
     );
   }
+
+  const filteredAbsentees = absenteesList.filter((m) => {
+    const q = absenteesSearch.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      m.name.toLowerCase().includes(q) ||
+      m.uniqueId.toLowerCase().includes(q) ||
+      (m.phoneNumber && m.phoneNumber.toLowerCase().includes(q)) ||
+      m.campus.toLowerCase().includes(q) ||
+      m.batch.toLowerCase().includes(q)
+    );
+  });
 
   return (
     <div className="min-h-screen bg-gray-50 pb-32">
@@ -1006,25 +861,93 @@ const EventDetailsPage: React.FC = () => {
           Back to Events
         </button>
 
+        {/* Success/Error Alerts */}
+        {actionSuccess && (
+          <div className="mb-4 rounded-xl border border-green-200 bg-green-50 p-4 text-sm font-semibold text-green-800">
+            ✓ {actionSuccess}
+          </div>
+        )}
+        {actionError && (
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800">
+            {actionError}
+          </div>
+        )}
+
+        {/* Rescheduled Notice */}
+        {event.rescheduledAt && (
+          <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <p className="font-bold flex items-center gap-2">
+              ⚠️ Session Rescheduled
+            </p>
+            <p className="mt-1">
+              Reason: <span className="font-medium">{event.rescheduleReason || "Slot modified"}</span>
+            </p>
+            {event.plannedStartTime && (
+              <p className="mt-0.5 text-xs text-amber-700">
+                Originally scheduled for: {formatDateTime(event.plannedStartTime)}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Cancelled Notice */}
+        {event.status === "CANCELLED" && (
+          <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+            <p className="font-bold flex items-center gap-2">
+              ❌ Session Cancelled
+            </p>
+            <p className="mt-1">
+              Reason: <span className="font-medium">{event.cancelReason || "Cancelled by admin"}</span>
+            </p>
+            {event.cancelledAt && (
+              <p className="mt-0.5 text-xs text-red-700">
+                Cancelled on: {formatDateTime(event.cancelledAt)} · Excluded from attendance rate calculations
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="space-y-4">
+          {/* Main Info Card */}
           <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-600">
-                  Event Details
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-600">
+                    Session Details
+                  </p>
+                  {event.sessionType && (
+                    <span
+                      className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${
+                        event.sessionType === "OVERNIGHT"
+                          ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                          : event.sessionType === "EVENING"
+                            ? "bg-blue-50 text-blue-700 border-blue-200"
+                            : "bg-gray-50 text-gray-600 border-gray-200"
+                      }`}
+                    >
+                      {event.sessionType === "OVERNIGHT"
+                        ? "🌙 Overnight Session"
+                        : event.sessionType === "EVENING"
+                          ? "🌆 Evening Session"
+                          : "📅 Standard Session"}
+                    </span>
+                  )}
+                </div>
                 <h1 className="mt-2 text-2xl font-bold text-gray-900 sm:text-3xl">
                   {event.title}
                 </h1>
-                {event.clusterLabel && (
-                  <p className="mt-1 text-sm font-semibold text-blue-700">
-                    {event.clusterLabel}
+                {event.study && (
+                  <p className="mt-1 text-sm font-semibold text-blue-700 flex items-center gap-1.5">
+                    📖 Study: {event.study.name}
                   </p>
                 )}
               </div>
               <div className="flex flex-wrap gap-2">
                 <span
-                  className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold ${getStatusClasses(event.status)}`}
+                  className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold ${getStatusClasses(
+                    event.status,
+                  )}`}
                 >
                   {event.status}
                 </span>
@@ -1033,12 +956,6 @@ const EventDetailsPage: React.FC = () => {
                 </span>
               </div>
             </div>
-
-            {actionError && (
-              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {actionError}
-              </div>
-            )}
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <InfoRow
@@ -1077,23 +994,84 @@ const EventDetailsPage: React.FC = () => {
                 label="Time"
                 value={`${formatTime(event.startTime)} - ${formatTime(event.endTime)}`}
               />
-              {event.cluster && (
-                <InfoRow
-                  icon={
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M4 7h16M4 12h16M4 17h16"
-                    />
-                  }
-                  label="Cluster"
-                  value={event.cluster.title}
-                />
-              )}
+              <InfoRow
+                icon={
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                }
+                label="Lateness Grace"
+                value={`${event.lateGraceMinutes ?? event.study?.defaultLateGraceMinutes ?? 15} minutes`}
+              />
             </div>
           </section>
 
+          {/* Attendance Summary: Enriched Stats Row */}
+          <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">
+                  Attendance Statistics
+                </h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Snapshot calculated based on member eligibility as of session date.
+                </p>
+              </div>
+              <div
+                className={`rounded-full px-3 py-1 text-sm font-semibold ${
+                  attendanceStats.isCancelled
+                    ? "bg-red-50 text-red-700"
+                    : "bg-blue-50 text-blue-700"
+                }`}
+              >
+                {attendanceStats.isCancelled
+                  ? "Cancelled"
+                  : `${attendanceStats.attendancePercentage}% attended`}
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-6">
+              <SummaryCard
+                label="Eligible"
+                value={attendanceStats.totalMembers}
+                accent="text-slate-800"
+              />
+              <SummaryCard
+                label="Present"
+                value={attendanceStats.present}
+                accent="text-emerald-700"
+              />
+              <SummaryCard
+                label="Late"
+                value={attendanceStats.late}
+                accent="text-amber-700"
+              />
+              <SummaryCard
+                label="Excused"
+                value={attendanceStats.excused}
+                accent="text-blue-700"
+              />
+              <SummaryCard
+                label="Absent"
+                value={attendanceStats.absentees}
+                accent="text-rose-700"
+              />
+              <SummaryCard
+                label="Turnout %"
+                value={
+                  attendanceStats.isCancelled
+                    ? "—"
+                    : `${attendanceStats.attendancePercentage}%`
+                }
+                accent="text-indigo-700"
+              />
+            </div>
+          </section>
+
+          {/* Description */}
           <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
             <h2 className="text-base font-semibold text-gray-900">
               Description
@@ -1105,6 +1083,7 @@ const EventDetailsPage: React.FC = () => {
             </div>
           </section>
 
+          {/* Metadata */}
           <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
             <h2 className="text-base font-semibold text-gray-900">Metadata</h2>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -1134,81 +1113,42 @@ const EventDetailsPage: React.FC = () => {
               />
             </div>
           </section>
-
-          <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-gray-900">
-                  Attendance Summary
-                </h2>
-                <p className="mt-1 text-sm text-gray-500">
-                  Quick attendance snapshot for this event.
-                </p>
-              </div>
-              <div className="rounded-full bg-blue-50 px-3 py-1 text-sm font-semibold text-blue-700">
-                {attendanceStats.attendancePercentage}% attended
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <SummaryCard
-                label="Total members"
-                value={attendanceStats.totalMembers}
-                accent="text-slate-700"
-              />
-              <SummaryCard
-                label="Attendees"
-                value={attendanceStats.attendees}
-                accent="text-green-700"
-              />
-              <SummaryCard
-                label="Absentees"
-                value={attendanceStats.absentees}
-                accent="text-amber-700"
-              />
-              <SummaryCard
-                label="Attendance %"
-                value={`${attendanceStats.attendancePercentage}%`}
-                accent="text-blue-700"
-              />
-            </div>
-          </section>
         </div>
       </div>
 
-      {/* Non-fixed action row placed at the bottom of the page (not fixed) */}
+      {/* Admin Action Buttons */}
       <div className="mx-auto max-w-3xl px-4 py-4">
         {isSuperAdmin && (
-          <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-start gap-3">
-            <button
-              type="button"
-              onClick={() => {
-                setActionError("");
-                setIsEditModalOpen(true);
-                setIsStatusDropdownOpen(false);
-              }}
-              disabled={!canEdit}
-              className={`rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${
-                canEdit
-                  ? "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200"
-                  : "bg-white text-gray-400 cursor-not-allowed border border-gray-200"
-              }`}
-            >
-              Edit Event
-            </button>
+          <div className="mb-4 flex flex-wrap items-center gap-3">
+            {event.status !== "CANCELLED" && (
+              <>
+                <button
+                  type="button"
+                  onClick={openRescheduleModal}
+                  className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-800 transition hover:bg-amber-100"
+                >
+                  🔄 Reschedule Session
+                </button>
+                <button
+                  type="button"
+                  onClick={openCancelModal}
+                  className="rounded-lg border border-red-300 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-800 transition hover:bg-red-100"
+                >
+                  ❌ Cancel Session
+                </button>
+              </>
+            )}
 
-            {event?.cluster && (
+            {canEdit && (
               <button
                 type="button"
-                onClick={openClusterModal}
-                disabled={!canEdit || clusterLoading}
-                className={`rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${
-                  canEdit && !clusterLoading
-                    ? "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200"
-                    : "bg-white text-gray-400 cursor-not-allowed border border-gray-200"
-                }`}
+                onClick={() => {
+                  setActionError("");
+                  setIsEditModalOpen(true);
+                }}
+                className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-700 transition hover:bg-blue-100"
               >
-                {clusterLoading ? "Loading..." : "Edit Cluster"}
+                ✏️ Edit Session
               </button>
             )}
 
@@ -1219,32 +1159,28 @@ const EventDetailsPage: React.FC = () => {
                 setShowDeleteConfirmModal(true);
               }}
               disabled={!canDelete || isDeleting}
-              className={`rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${
+              className={`rounded-lg px-4 py-2.5 text-sm font-semibold transition ${
                 canDelete && !isDeleting
-                  ? "bg-red-600 text-white hover:bg-red-700"
-                  : "bg-red-50 text-red-300 cursor-not-allowed border border-red-100"
+                  ? "bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300"
+                  : "bg-gray-50 text-gray-400 cursor-not-allowed border border-gray-200"
               }`}
             >
-              {isDeleting ? "Deleting..." : "Delete Event"}
+              {isDeleting ? "Deleting..." : "Delete Session"}
             </button>
           </div>
         )}
       </div>
 
-      {/* Fixed attendance CTA remains fixed at the bottom */}
-      <div className="fixed inset-x-0 bottom-0 border-t border-gray-200 bg-white/95 px-4 py-4 backdrop-blur sm:px-6">
-        <div className="mx-auto max-w-3xl">
+      {/* Fixed bottom CTA */}
+      <div className="fixed inset-x-0 bottom-0 border-t border-gray-200 bg-white/95 px-4 py-4 backdrop-blur sm:px-6 z-20">
+        <div className="mx-auto max-w-3xl flex gap-3">
           <button
             type="button"
             onClick={handleAction}
-            // allow clicking for PAST events (view-only) even when attendanceOpen is false
-            disabled={!(event.attendanceOpen || event.status === "PAST")}
             className={`w-full rounded-xl px-4 py-3.5 text-sm font-semibold shadow-sm transition-colors ${
               event.attendanceOpen
                 ? "bg-blue-600 text-white hover:bg-blue-700"
-                : event.status === "PAST"
-                  ? "bg-gray-900 text-white hover:bg-gray-800"
-                  : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                : "bg-gray-900 text-white hover:bg-gray-800"
             }`}
           >
             {event.attendanceOpen
@@ -1254,30 +1190,627 @@ const EventDetailsPage: React.FC = () => {
         </div>
       </div>
 
-      {isEditModalOpen && event && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 px-4 py-6">
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">Edit Event</h2>
-                <p className="mt-1 text-sm text-gray-500">
-                  Update the event details. Changes are only allowed before the
-                  event starts.
-                </p>
+      {/* Attendance & Absentees Modal */}
+      {isAttendanceModalOpen && event && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/50 px-4 py-4 sm:items-center sm:py-6">
+          <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+            {/* Modal Header */}
+            <div className="border-b border-slate-100 px-4 py-4 sm:px-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-900">
+                    {event.title}
+                  </h2>
+                  <p className="mt-0.5 text-sm text-slate-500">
+                    {formatDate(event.startTime)} · {formatTime(event.startTime)} -{" "}
+                    {formatTime(event.endTime)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAttendanceModalOpen(false);
+                  }}
+                  className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                >
+                  ✕
+                </button>
               </div>
+
+              {/* Tabs: Attendees vs Absentees */}
+              <div className="mt-4 flex rounded-full bg-slate-100 p-1">
+                <button
+                  type="button"
+                  onClick={() => setAttendanceModalTab("ATTENDEES")}
+                  className={`flex-1 rounded-full py-2 text-sm font-semibold transition ${
+                    attendanceModalTab === "ATTENDEES"
+                      ? "bg-white text-slate-900 shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  Attendees ({attendanceTotalCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAttendanceModalTab("ABSENTEES")}
+                  className={`flex-1 rounded-full py-2 text-sm font-semibold transition ${
+                    attendanceModalTab === "ABSENTEES"
+                      ? "bg-white text-slate-900 shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  Absentees ({absenteesList.length})
+                </button>
+              </div>
+
+              {/* Attendees Actions bar */}
+              {attendanceModalTab === "ATTENDEES" && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs text-slate-500 font-medium">
+                    Showing {attendanceRecords.length} of {attendanceTotalCount} records
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={`${attendanceSortBy}-${attendanceOrder}`}
+                      onChange={(e) => {
+                        const parts = e.target.value.split("-") as [AttendanceSortBy, AttendanceSortOrder];
+                        void handleAttendanceSortChange(parts[0], parts[1]);
+                      }}
+                      className="rounded-xl border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="time-asc">Time (Earliest)</option>
+                      <option value="time-desc">Time (Latest)</option>
+                      <option value="name-asc">Name (A-Z)</option>
+                      <option value="name-desc">Name (Z-A)</option>
+                    </select>
+
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (event) {
+                            navigate(`/events/${event.id}/attendance`, {
+                              state: { event },
+                            });
+                          }
+                        }}
+                        className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm hover:bg-blue-100"
+                      >
+                        + Add Attendee
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void handleExportAttendanceExcel()}
+                      disabled={attendanceLoading || attendanceExporting}
+                      className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 shadow-sm hover:bg-emerald-100 disabled:opacity-60"
+                    >
+                      {attendanceExporting ? "Exporting..." : "Excel Export"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Absentees Search bar */}
+              {attendanceModalTab === "ABSENTEES" && (
+                <div className="mt-3">
+                  <input
+                    type="text"
+                    value={absenteesSearch}
+                    onChange={(e) => setAbsenteesSearch(e.target.value)}
+                    placeholder="Search absentees by name, phone, campus, or batch..."
+                    className="w-full rounded-xl border border-gray-200 px-3.5 py-2 text-xs text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+              {/* Attendees Tab Content */}
+              {attendanceModalTab === "ATTENDEES" && (
+                <div>
+                  {attendanceError && (
+                    <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                      {attendanceError}
+                    </div>
+                  )}
+
+                  {attendanceLoading ? (
+                    <div className="space-y-3 animate-pulse">
+                      {[1, 2, 3].map((item) => (
+                        <div
+                          key={item}
+                          className="h-20 rounded-2xl border border-slate-100 bg-slate-50"
+                        />
+                      ))}
+                    </div>
+                  ) : attendanceRecords.length === 0 ? (
+                    <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                      No attendance records found for this session yet.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {attendanceRecords.map((record) => {
+                        const status = record.status || "PRESENT";
+                        return (
+                          <article
+                            key={`${record.memberId}-${record.markedAt}`}
+                            className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm"
+                          >
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h3 className="truncate text-sm font-bold text-slate-900">
+                                    {record.name}
+                                  </h3>
+
+                                  {/* Status Chip */}
+                                  <span
+                                    className={`rounded-full px-2.5 py-0.5 text-xs font-bold border ${
+                                      status === "PRESENT"
+                                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                        : status === "LATE"
+                                          ? "bg-amber-50 text-amber-800 border-amber-200"
+                                          : "bg-blue-50 text-blue-700 border-blue-200"
+                                    }`}
+                                  >
+                                    {status === "LATE"
+                                      ? "⏰ Late"
+                                      : status === "EXCUSED"
+                                        ? "📝 Excused"
+                                        : "✓ Present"}
+                                  </span>
+
+                                  {record.excuseReason && (
+                                    <span className="text-xs text-blue-600 italic">
+                                      ({record.excuseReason})
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  ID: {record.uniqueId} · Phone: {record.phone || "—"}
+                                </p>
+                                <p className="text-xs text-slate-400 mt-0.5">
+                                  Marked at: {formatDateTime(record.markedAt)}
+                                </p>
+                              </div>
+
+                              {/* Admin Actions: Change Status & Undo */}
+                              {isAdmin && (
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  <select
+                                    value={status}
+                                    onChange={(e) =>
+                                      handleChangeStatus(
+                                        record.id!,
+                                        e.target.value as AttendanceStatus,
+                                      )
+                                    }
+                                    className="text-xs rounded-lg border border-gray-200 bg-gray-50 py-1 px-2 text-gray-700 font-medium"
+                                  >
+                                    <option value="PRESENT">Present</option>
+                                    <option value="LATE">Late</option>
+                                    <option value="EXCUSED">Excused</option>
+                                  </select>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setUndoTarget(record);
+                                      setUndoReasonInput("");
+                                      setUndoError("");
+                                      setIsUndoModalOpen(true);
+                                    }}
+                                    className="text-xs text-red-600 hover:text-red-800 px-2 py-1 rounded bg-red-50 hover:bg-red-100"
+                                    title="Undo attendance (soft remove)"
+                                  >
+                                    Undo
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Absentees Tab Content */}
+              {attendanceModalTab === "ABSENTEES" && (
+                <div>
+                  {absenteesError && (
+                    <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                      {absenteesError}
+                    </div>
+                  )}
+
+                  {absenteesLoading ? (
+                    <div className="space-y-3 animate-pulse">
+                      {[1, 2, 3].map((item) => (
+                        <div
+                          key={item}
+                          className="h-20 rounded-2xl border border-slate-100 bg-slate-50"
+                        />
+                      ))}
+                    </div>
+                  ) : filteredAbsentees.length === 0 ? (
+                    <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                      {absenteesSearch
+                        ? "No absentees matched your search."
+                        : "No absentees! 100% attendance."}
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {filteredAbsentees.map((m) => (
+                        <article
+                          key={m.id}
+                          className="rounded-2xl border border-rose-100 bg-white p-4 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+                        >
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-sm font-bold text-slate-900">
+                                {m.name}
+                              </h3>
+                              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100">
+                                Absent
+                              </span>
+                            </div>
+                            <p className="mt-1 text-xs text-slate-500">
+                              ID: {m.uniqueId} · {m.campus} · {m.batch}
+                            </p>
+                            {m.phoneNumber ? (
+                              <a
+                                href={`tel:${m.phoneNumber}`}
+                                className="mt-1 inline-flex items-center text-xs font-semibold text-blue-600 hover:underline"
+                              >
+                                📞 {m.phoneNumber}
+                              </a>
+                            ) : (
+                              <p className="mt-1 text-xs text-slate-400">
+                                No phone recorded
+                              </p>
+                            )}
+                          </div>
+
+                          {isAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setExcuseTarget({ memberId: m.id, memberName: m.name });
+                                setExcuseReasonInput("");
+                                setExcuseError("");
+                                setIsExcuseModalOpen(true);
+                              }}
+                              className="self-start sm:self-auto rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                            >
+                              + Excuse Member
+                            </button>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Pagination for Attendees */}
+            {attendanceModalTab === "ATTENDEES" && attendanceTotalPages > 1 && (
+              <div className="border-t border-slate-100 px-4 py-3 sm:px-6 flex items-center justify-between">
+                <span className="text-xs text-slate-500">
+                  Page {attendancePage} of {attendanceTotalPages}
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void fetchAttendancePage(attendancePage - 1)}
+                    disabled={attendancePage <= 1 || attendanceLoading}
+                    className="rounded-lg border px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void fetchAttendancePage(attendancePage + 1)}
+                    disabled={attendancePage >= attendanceTotalPages || attendanceLoading}
+                    className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Excuse Modal */}
+      {isExcuseModalOpen && excuseTarget && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-gray-900/50 px-4 py-6">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <h3 className="text-lg font-bold text-gray-900">
+              Excuse Member from Session
+            </h3>
+            <p className="mt-1 text-sm text-gray-500">
+              Mark <strong>{excuseTarget.memberName}</strong> as Excused for this session. Excused members do not count as absent and are excluded from the rate denominator.
+            </p>
+
+            <div className="mt-4">
+              <label className="block text-xs font-semibold text-gray-700 mb-1">
+                Reason for Excuse <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={excuseReasonInput}
+                onChange={(e) => setExcuseReasonInput(e.target.value)}
+                rows={3}
+                placeholder="e.g. University exam clash, medical excuse..."
+                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                required
+              />
+            </div>
+
+            {excuseError && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-700">
+                {excuseError}
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => {
-                  setIsEditModalOpen(false);
-                  setActionError("");
-                  syncEditForm(event);
+                  setIsExcuseModalOpen(false);
+                  setExcuseTarget(null);
                 }}
-                className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                aria-label="Close edit modal"
+                className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
               >
-                ✕
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmExcuse}
+                disabled={isExcusing}
+                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+              >
+                {isExcusing ? "Saving..." : "Confirm Excuse"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Undo Modal */}
+      {isUndoModalOpen && undoTarget && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-gray-900/50 px-4 py-6">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <h3 className="text-lg font-bold text-gray-900">
+              Undo Attendance Record
+            </h3>
+            <p className="mt-1 text-sm text-gray-500">
+              Remove attendance record for <strong>{undoTarget.name}</strong>. The record will be soft-deleted and can be safely re-marked if needed.
+            </p>
+
+            <div className="mt-4">
+              <label className="block text-xs font-semibold text-gray-700 mb-1">
+                Reason for Removal (optional)
+              </label>
+              <input
+                type="text"
+                value={undoReasonInput}
+                onChange={(e) => setUndoReasonInput(e.target.value)}
+                placeholder="e.g. Marked by mistake"
+                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
+
+            {undoError && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-700">
+                {undoError}
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsUndoModalOpen(false);
+                  setUndoTarget(null);
+                }}
+                className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmUndo}
+                disabled={isUndoing}
+                className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+              >
+                {isUndoing ? "Removing..." : "Confirm Undo"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reschedule Modal */}
+      {isRescheduleModalOpen && event && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 className="text-xl font-bold text-gray-900">Reschedule Session</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Shift this session to a new date/time slot. Series linkage and original planned start time are preserved.
+            </p>
+
+            <form className="mt-6 space-y-4" onSubmit={handleRescheduleSubmit}>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    New Start Time <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={rescheduleForm.startTime}
+                    onChange={(e) =>
+                      setRescheduleForm((prev) => ({ ...prev, startTime: e.target.value }))
+                    }
+                    className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    New End Time <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={rescheduleForm.endTime}
+                    onChange={(e) =>
+                      setRescheduleForm((prev) => ({ ...prev, endTime: e.target.value }))
+                    }
+                    className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Reason for Rescheduling <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={rescheduleForm.reason}
+                  onChange={(e) =>
+                    setRescheduleForm((prev) => ({ ...prev, reason: e.target.value }))
+                  }
+                  rows={3}
+                  placeholder="e.g. Venue booked for university exams, shifted to next day"
+                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  required
+                />
+              </div>
+
+              {rescheduleError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {rescheduleError}
+                </div>
+              )}
+
+              <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setIsRescheduleModalOpen(false)}
+                  className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isRescheduling}
+                  className="rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-700 disabled:opacity-60"
+                >
+                  {isRescheduling ? "Saving..." : "Confirm Reschedule"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Modal */}
+      {isCancelModalOpen && event && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 className="text-xl font-bold text-gray-900">Cancel Session</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Cancel <strong>{event.title}</strong>. Cancelled sessions are removed from all attendance rate analytics.
+            </p>
+
+            <form className="mt-6 space-y-4" onSubmit={handleCancelSubmit}>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Cancellation Reason <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. University holiday, bad weather, or campus closure"
+                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  required
+                />
+              </div>
+
+              {cancelError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {cancelError}
+                </div>
+              )}
+
+              <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setIsCancelModalOpen(false)}
+                  className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Keep Event
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCancelling}
+                  className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-red-700 disabled:opacity-60"
+                >
+                  {isCancelling ? "Cancelling..." : "Confirm Cancellation"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirmModal && event && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="mb-2 text-center text-lg font-bold text-gray-900">
+              Delete Event
+            </h3>
+            <p className="mb-6 text-center text-sm text-gray-500">
+              Are you sure you want to delete <strong>{event.title}</strong>? This action cannot be undone.
+            </p>
+            <div className="flex space-x-3">
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirmModal(false)}
+                disabled={isDeleting}
+                className="flex-1 rounded-xl border border-gray-300 bg-white px-4 py-2.5 font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="flex-1 rounded-xl bg-red-600 px-4 py-2.5 font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-60"
+              >
+                {isDeleting ? "Deleting..." : "Yes, Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Modal */}
+      {isEditModalOpen && event && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 className="text-xl font-bold text-gray-900">Edit Event</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Update session details before it begins.
+            </p>
 
             <form className="mt-6 space-y-4" onSubmit={handleEditSubmit}>
               <div>
@@ -1287,21 +1820,12 @@ const EventDetailsPage: React.FC = () => {
                 <input
                   type="text"
                   value={editForm.title}
-                  onChange={(e) => {
-                    setEditForm((prev) => ({ ...prev, title: e.target.value }));
-                    setEditValidationErrors((prev) => ({
-                      ...prev,
-                      title: undefined,
-                    }));
-                  }}
-                  className={`w-full rounded-xl border px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${editValidationErrors.title ? "border-red-300 bg-red-50" : "border-gray-200"}`}
+                  onChange={(e) =>
+                    setEditForm((prev) => ({ ...prev, title: e.target.value }))
+                  }
+                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
                   required
                 />
-                {editValidationErrors.title && (
-                  <p className="mt-1 text-xs font-medium text-red-600">
-                    {editValidationErrors.title}
-                  </p>
-                )}
               </div>
 
               <div>
@@ -1310,24 +1834,15 @@ const EventDetailsPage: React.FC = () => {
                 </label>
                 <textarea
                   value={editForm.description}
-                  onChange={(e) => {
+                  onChange={(e) =>
                     setEditForm((prev) => ({
                       ...prev,
                       description: e.target.value,
-                    }));
-                    setEditValidationErrors((prev) => ({
-                      ...prev,
-                      description: undefined,
-                    }));
-                  }}
+                    }))
+                  }
                   rows={4}
-                  className={`w-full rounded-xl border px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${editValidationErrors.description ? "border-red-300 bg-red-50" : "border-gray-200"}`}
+                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
                 />
-                {editValidationErrors.description && (
-                  <p className="mt-1 text-xs font-medium text-red-600">
-                    {editValidationErrors.description}
-                  </p>
-                )}
               </div>
 
               <div>
@@ -1337,105 +1852,15 @@ const EventDetailsPage: React.FC = () => {
                 <input
                   type="text"
                   value={editForm.location}
-                  onChange={(e) => {
+                  onChange={(e) =>
                     setEditForm((prev) => ({
                       ...prev,
                       location: e.target.value,
-                    }));
-                    setEditValidationErrors((prev) => ({
-                      ...prev,
-                      location: undefined,
-                    }));
-                  }}
-                  className={`w-full rounded-xl border px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${editValidationErrors.location ? "border-red-300 bg-red-50" : "border-gray-200"}`}
+                    }))
+                  }
+                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
                   required
                 />
-                {editValidationErrors.location && (
-                  <p className="mt-1 text-xs font-medium text-red-600">
-                    {editValidationErrors.location}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Status
-                </label>
-                <div className="relative" ref={statusDropdownRef}>
-                  <button
-                    type="button"
-                    onClick={() => setIsStatusDropdownOpen((prev) => !prev)}
-                    className="flex w-full items-center justify-between rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                  >
-                    <span>
-                      {editForm.status === "DEACTIVATED"
-                        ? "Deactivated"
-                        : "Upcoming"}
-                    </span>
-                    <svg
-                      className={`h-4 w-4 text-gray-500 transition-transform ${
-                        isStatusDropdownOpen ? "rotate-180" : ""
-                      }`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                        d="M19 9l-7 7-7-7"
-                      />
-                    </svg>
-                  </button>
-
-                  {isStatusDropdownOpen && (
-                    <div className="absolute z-10 mt-2 w-full rounded-xl border border-gray-200 bg-white p-2 shadow-lg">
-                      {EDITABLE_STATUS_OPTIONS.map((option) => {
-                        const isSelected = editForm.status === option.value;
-
-                        return (
-                          <button
-                            key={option.value}
-                            type="button"
-                            onClick={() => {
-                              setEditForm((prev) => ({
-                                ...prev,
-                                status: option.value,
-                              }));
-                              setIsStatusDropdownOpen(false);
-                            }}
-                            className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${
-                              isSelected
-                                ? "bg-blue-50 text-blue-700"
-                                : "text-gray-700 hover:bg-gray-50"
-                            }`}
-                          >
-                            <span>{option.label}</span>
-                            {isSelected && (
-                              <svg
-                                className="h-4 w-4"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth="2"
-                                  d="M5 13l4 4L19 7"
-                                />
-                              </svg>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-                <p className="mt-2 text-xs text-gray-500">
-                  Upcoming events can only be changed to deactivated here.
-                </p>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
@@ -1446,24 +1871,15 @@ const EventDetailsPage: React.FC = () => {
                   <input
                     type="datetime-local"
                     value={editForm.startTime}
-                    onChange={(e) => {
+                    onChange={(e) =>
                       setEditForm((prev) => ({
                         ...prev,
                         startTime: e.target.value,
-                      }));
-                      setEditValidationErrors((prev) => ({
-                        ...prev,
-                        startTime: undefined,
-                      }));
-                    }}
-                    className={`w-full rounded-xl border px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${editValidationErrors.startTime ? "border-red-300 bg-red-50" : "border-gray-200"}`}
+                      }))
+                    }
+                    className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
                     required
                   />
-                  {editValidationErrors.startTime && (
-                    <p className="mt-1 text-xs font-medium text-red-600">
-                      {editValidationErrors.startTime}
-                    </p>
-                  )}
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -1472,42 +1888,22 @@ const EventDetailsPage: React.FC = () => {
                   <input
                     type="datetime-local"
                     value={editForm.endTime}
-                    onChange={(e) => {
+                    onChange={(e) =>
                       setEditForm((prev) => ({
                         ...prev,
                         endTime: e.target.value,
-                      }));
-                      setEditValidationErrors((prev) => ({
-                        ...prev,
-                        endTime: undefined,
-                      }));
-                    }}
-                    className={`w-full rounded-xl border px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${editValidationErrors.endTime ? "border-red-300 bg-red-50" : "border-gray-200"}`}
+                      }))
+                    }
+                    className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
                     required
                   />
-                  {editValidationErrors.endTime && (
-                    <p className="mt-1 text-xs font-medium text-red-600">
-                      {editValidationErrors.endTime}
-                    </p>
-                  )}
                 </div>
               </div>
-
-              {actionError && (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {actionError}
-                </div>
-              )}
 
               <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
                 <button
                   type="button"
-                  onClick={() => {
-                    setIsEditModalOpen(false);
-                    setActionError("");
-                    setIsStatusDropdownOpen(false);
-                    syncEditForm(event);
-                  }}
+                  onClick={() => setIsEditModalOpen(false)}
                   className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
                 >
                   Cancel
@@ -1515,712 +1911,12 @@ const EventDetailsPage: React.FC = () => {
                 <button
                   type="submit"
                   disabled={isSaving}
-                  className={`rounded-xl px-4 py-2.5 text-sm font-semibold text-white ${
-                    isSaving ? "bg-blue-300" : "bg-blue-600 hover:bg-blue-700"
-                  }`}
+                  className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"
                 >
                   {isSaving ? "Saving..." : "Save Changes"}
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {isClusterModalOpen && event?.cluster && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 px-4 py-6">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">
-                  Edit Cluster
-                </h2>
-                <p className="mt-1 text-sm text-gray-500">
-                  Update the cluster details and event schedule.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsClusterModalOpen(false);
-                  setClusterError("");
-                }}
-                className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                aria-label="Close cluster modal"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form className="mt-6 space-y-4" onSubmit={handleClusterSubmit}>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Cluster Title <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={clusterForm.title}
-                  onChange={(e) =>
-                    setClusterForm((prev) => ({
-                      ...prev,
-                      title: e.target.value,
-                    }))
-                  }
-                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Description <span className="text-red-500">*</span>
-                </label>
-                <textarea
-                  value={clusterForm.description}
-                  onChange={(e) =>
-                    setClusterForm((prev) => ({
-                      ...prev,
-                      description: e.target.value,
-                    }))
-                  }
-                  rows={3}
-                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Location <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={clusterForm.location}
-                  onChange={(e) =>
-                    setClusterForm((prev) => ({
-                      ...prev,
-                      location: e.target.value,
-                    }))
-                  }
-                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                  required
-                />
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-gray-800">
-                    Cluster Events
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={addClusterEventRow}
-                    className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"
-                  >
-                    + Add Event
-                  </button>
-                </div>
-
-                {clusterEvents.map((entry, index) => (
-                  <div
-                    key={entry.id ?? `cluster-event-${index}`}
-                    className="rounded-xl border border-gray-200 bg-gray-50 p-3"
-                  >
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="text-xs font-semibold text-gray-600">
-                        Event {index + 1}
-                      </p>
-                      {clusterEvents.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removeClusterEventRow(index)}
-                          className="text-xs font-semibold text-red-600 hover:text-red-700"
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                      <div className="md:col-span-2">
-                        <label className="block text-xs font-medium text-gray-700 mb-1">
-                          Label (optional)
-                        </label>
-                        <input
-                          type="text"
-                          value={entry.label}
-                          onChange={(e) =>
-                            updateClusterEvent(index, "label", e.target.value)
-                          }
-                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">
-                          Date
-                        </label>
-                        <input
-                          type="date"
-                          value={entry.eventDate}
-                          onChange={(e) =>
-                            updateClusterEvent(
-                              index,
-                              "eventDate",
-                              e.target.value,
-                            )
-                          }
-                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">
-                          Start
-                        </label>
-                        <input
-                          type="time"
-                          value={entry.startTime}
-                          onChange={(e) =>
-                            updateClusterEvent(
-                              index,
-                              "startTime",
-                              e.target.value,
-                            )
-                          }
-                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">
-                          End
-                        </label>
-                        <input
-                          type="time"
-                          value={entry.endTime}
-                          onChange={(e) =>
-                            updateClusterEvent(index, "endTime", e.target.value)
-                          }
-                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {clusterError && (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {clusterError}
-                </div>
-              )}
-
-              <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  onClick={() => setIsClusterModalOpen(false)}
-                  className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"
-                >
-                  {isSaving ? "Saving..." : "Save Cluster"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {showDeleteConfirmModal && event && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-100">
-              <svg
-                className="h-6 w-6 text-red-600"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                />
-              </svg>
-            </div>
-            <h3 className="mb-2 text-center text-lg font-medium text-gray-900">
-              Delete Event
-            </h3>
-            <p className="mb-6 text-center text-sm text-gray-500">
-              Are you sure you want to delete <strong>{event.title}</strong>?
-              This action cannot be undone.
-            </p>
-            <div className="flex space-x-3">
-              <button
-                type="button"
-                onClick={() => setShowDeleteConfirmModal(false)}
-                disabled={isDeleting}
-                className="flex-1 rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleDelete}
-                disabled={isDeleting}
-                className="flex-1 rounded-lg border border-transparent bg-red-600 px-4 py-2 font-medium text-white shadow-sm transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-red-300"
-              >
-                {isDeleting ? "Deleting..." : "Yes, Delete"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isAttendanceModalOpen && event && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/50 px-4 py-4 sm:items-center sm:py-6">
-          <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
-            <div className="border-b border-slate-100 px-4 py-4 sm:px-6">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">
-                    View Attendance
-                  </p>
-                  <h2 className="mt-2 text-xl font-bold text-slate-900">
-                    {event.title}
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {formatDate(event.startTime)} ·{" "}
-                    {formatTime(event.startTime)} - {formatTime(event.endTime)}
-                  </p>
-                  {event.location && (
-                    <p className="mt-1 text-sm text-slate-500">
-                      📍 {event.location}
-                    </p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAttendanceModalOpen(false);
-                    setIsAttendanceSortOpen(false);
-                  }}
-                  className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-                  aria-label="Close attendance modal"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
-                <p className="font-medium text-slate-900">Description</p>
-                <p className="mt-1 whitespace-pre-wrap break-words">
-                  {event.description || "No description provided."}
-                </p>
-              </div>
-
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-sm text-slate-500">
-                  {attendanceTotalCount} attendee
-                  {attendanceTotalCount === 1 ? "" : "s"}
-                </div>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-                  {isAdmin && (
-                    <button
-                      type="button"
-                      onClick={() => setIsAddAttendeeOpen(true)}
-                      className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100"
-                    >
-                      Add Attendee
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => void handleExportAttendanceExcel()}
-                    disabled={attendanceLoading || attendanceExporting}
-                    className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {attendanceExporting ? "Exporting..." : "Export Excel"}
-                  </button>
-                  <div className="relative" ref={attendanceSortDropdownRef}>
-                    <button
-                      type="button"
-                      onClick={() => setIsAttendanceSortOpen((prev) => !prev)}
-                      className="flex w-full items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:min-w-[260px]"
-                    >
-                      <span className="truncate">{attendanceSortLabel}</span>
-                      <svg
-                        className={`h-4 w-4 text-slate-500 transition-transform ${isAttendanceSortOpen ? "rotate-180" : ""}`}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="2"
-                          d="M19 9l-7 7-7-7"
-                        />
-                      </svg>
-                    </button>
-
-                    {isAttendanceSortOpen && (
-                      <div className="absolute right-0 z-20 mt-2 w-full min-w-[260px] rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
-                        {[
-                          {
-                            label: "Time registered (earliest first)",
-                            sortBy: "time" as AttendanceSortBy,
-                            order: "asc" as AttendanceSortOrder,
-                          },
-                          {
-                            label: "Time registered (latest first)",
-                            sortBy: "time" as AttendanceSortBy,
-                            order: "desc" as AttendanceSortOrder,
-                          },
-                          {
-                            label: "Name (A–Z)",
-                            sortBy: "name" as AttendanceSortBy,
-                            order: "asc" as AttendanceSortOrder,
-                          },
-                          {
-                            label: "Name (Z–A)",
-                            sortBy: "name" as AttendanceSortBy,
-                            order: "desc" as AttendanceSortOrder,
-                          },
-                        ].map((option) => {
-                          const isSelected =
-                            attendanceSortBy === option.sortBy &&
-                            attendanceOrder === option.order;
-
-                          return (
-                            <button
-                              key={`${option.sortBy}-${option.order}`}
-                              type="button"
-                              onClick={() =>
-                                void handleAttendanceSortChange(
-                                  option.sortBy,
-                                  option.order,
-                                )
-                              }
-                              className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition ${
-                                isSelected
-                                  ? "bg-blue-50 font-semibold text-blue-700"
-                                  : "text-slate-700 hover:bg-slate-50"
-                              }`}
-                            >
-                              <span>{option.label}</span>
-                              {isSelected && (
-                                <svg
-                                  className="h-4 w-4"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  viewBox="0 0 24 24"
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth="2"
-                                    d="M5 13l4 4L19 7"
-                                  />
-                                </svg>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6">
-              {attendanceError && (
-                <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {attendanceError}
-                </div>
-              )}
-
-              {attendanceLoading ? (
-                <div className="space-y-3 animate-pulse">
-                  {[1, 2, 3].map((item) => (
-                    <div
-                      key={item}
-                      className="h-24 rounded-2xl border border-slate-100 bg-slate-50"
-                    />
-                  ))}
-                </div>
-              ) : attendanceRecords.length === 0 ? (
-                <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-                  No attendance records found for this event yet.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {attendanceRecords.map((record) => {
-                    const isRecentlyMarked =
-                      Date.now() - new Date(record.markedAt).getTime() <=
-                      RECENT_MARK_THRESHOLD_MS;
-
-                    return (
-                      <article
-                        key={`${record.memberId}-${record.markedAt}`}
-                        className={`rounded-3xl border p-4 shadow-sm transition ${
-                          !record.isActive
-                            ? "border-slate-200 bg-slate-50 text-slate-500"
-                            : isRecentlyMarked
-                              ? "border-blue-200 bg-blue-50/70"
-                              : "border-slate-100 bg-white"
-                        }`}
-                      >
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="truncate text-sm font-semibold text-slate-900">
-                                {record.name}
-                              </h3>
-                              {!record.isActive && (
-                                <span className="rounded-full bg-slate-200 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-                                  Inactive
-                                </span>
-                              )}
-                              {isRecentlyMarked && record.isActive && (
-                                <span className="rounded-full bg-blue-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-blue-700">
-                                  Recent
-                                </span>
-                              )}
-                            </div>
-                            <p className="mt-1 text-sm text-slate-500">
-                              {record.uniqueId}
-                            </p>
-                            <p className="mt-1 text-sm text-slate-500">
-                              {record.phone || "Phone unavailable"}
-                            </p>
-                          </div>
-
-                          <div className="rounded-2xl bg-slate-100 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600 sm:min-w-[180px] sm:text-right">
-                            <p>Marked present</p>
-                            <p className="mt-1 text-sm normal-case tracking-normal text-slate-900">
-                              {formatDateTime(record.markedAt)}
-                            </p>
-                          </div>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            <div className="border-t border-slate-100 px-4 py-4 sm:px-6">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm text-slate-500">
-                  Page {attendancePage} of {attendanceTotalPages}
-                </p>
-                <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center">
-                  <button
-                    type="button"
-                    onClick={() => void fetchAttendancePage(attendancePage - 1)}
-                    disabled={attendancePage <= 1 || attendanceLoading}
-                    className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Previous
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void fetchAttendancePage(attendancePage + 1)}
-                    disabled={
-                      attendancePage >= attendanceTotalPages ||
-                      attendanceLoading
-                    }
-                    className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isAddAttendeeOpen && event && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/50 px-4 py-4 sm:items-center sm:py-6">
-          <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
-            <div className="border-b border-slate-100 px-4 py-4 sm:px-6">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">
-                    Add Attendee
-                  </p>
-                  <h2 className="mt-2 text-xl font-bold text-slate-900">
-                    {event.title}
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Manually record attendance for this event.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAddAttendeeOpen(false);
-                    setAddAttendeeFeedback(null);
-                    setAddAttendeeError("");
-                  }}
-                  className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-                  aria-label="Close add attendee modal"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <div className="mt-4 flex rounded-full bg-slate-200 p-1">
-                {(["QR", "MANUAL"] as AddAttendanceTab[]).map((tab) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    onClick={() => setAddAttendeeTab(tab)}
-                    className={`w-full rounded-full py-2 text-sm font-semibold transition-colors ${
-                      addAttendeeTab === tab
-                        ? "bg-white text-slate-900"
-                        : "text-slate-500"
-                    }`}
-                  >
-                    {tab === "QR" ? "QR Scan" : "Manual"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6">
-              {addAttendeeError && (
-                <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {addAttendeeError}
-                </div>
-              )}
-
-              {addAttendeeFeedback && (
-                <div
-                  className={`mb-4 rounded-2xl border px-4 py-3 text-sm ${
-                    addAttendeeFeedback.tone === "success"
-                      ? "border-green-200 bg-green-50 text-green-800"
-                      : addAttendeeFeedback.tone === "error"
-                        ? "border-red-200 bg-red-50 text-red-700"
-                        : "border-blue-200 bg-blue-50 text-blue-800"
-                  }`}
-                >
-                  <p className="font-semibold">{addAttendeeFeedback.title}</p>
-                  {addAttendeeFeedback.description && (
-                    <p className="mt-1">{addAttendeeFeedback.description}</p>
-                  )}
-                </div>
-              )}
-
-              {addAttendeeTab === "QR" && (
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="relative mx-auto max-w-sm">
-                    <QrAttendanceScanner
-                      eventId={event.id}
-                      allowOverride
-                      onScanSuccess={async (result) => {
-                        setAddAttendeeFeedback({
-                          tone: "success",
-                          title: "Attendance recorded",
-                          description: result.memberName
-                            ? `${result.memberName} has been added.`
-                            : undefined,
-                        });
-                        await fetchAttendancePage(1, { preferCache: false });
-                        setAttendancePage(1);
-                      }}
-                      onApiError={(err) => {
-                        setAddAttendeeError(
-                          err?.response?.data?.error ||
-                            err?.response?.data?.message ||
-                            "Failed to mark attendance.",
-                        );
-                      }}
-                      resolveMemberId={(code) => {
-                        const match = addMembers.find(
-                          (m) => m.uniqueId === code || m.id === code,
-                        );
-                        return match ? match.id : code;
-                      }}
-                    />
-                  </div>
-                  <p className="mt-4 text-center text-sm text-slate-500">
-                    Point the camera at a member's QR code to mark attendance.
-                  </p>
-                </div>
-              )}
-
-              {addAttendeeTab === "MANUAL" && (
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="mb-4">
-                    <input
-                      type="text"
-                      placeholder="Search members..."
-                      value={addMembersSearch}
-                      onChange={(e) => setAddMembersSearch(e.target.value)}
-                      className="w-full rounded-full border border-slate-200 bg-slate-50 py-2 pl-4 pr-4 text-sm text-slate-800 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200"
-                    />
-                  </div>
-
-                  {addMembersLoading ? (
-                    <div className="text-sm text-slate-500">
-                      Loading members…
-                    </div>
-                  ) : (
-                    <ul className="divide-y divide-slate-100">
-                      {filteredAddMembers.map((member) => {
-                        const isPresent = presentMemberIds.has(member.id);
-                        const isInactive = member.isActive === false;
-                        const canAdd = !isPresent && !isInactive;
-
-                        return (
-                          <li
-                            key={member.id}
-                            className="flex items-center justify-between py-3"
-                          >
-                            <div>
-                              <p
-                                className={`font-medium ${
-                                  isInactive
-                                    ? "text-slate-400"
-                                    : "text-slate-800"
-                                }`}
-                              >
-                                {member.name}
-                              </p>
-                              <p className="text-sm text-slate-500">
-                                {member.uniqueId}
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleAddAttendance(member.id, "MANUAL")
-                              }
-                              disabled={!canAdd || addAttendeeLoading}
-                              className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
-                                isPresent
-                                  ? "bg-green-100 text-green-700"
-                                  : isInactive
-                                    ? "cursor-not-allowed bg-slate-100 text-slate-400"
-                                    : "bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-                              }`}
-                            >
-                              {isPresent ? "Present" : "Add"}
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </div>
           </div>
         </div>
       )}
