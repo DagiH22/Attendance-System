@@ -1,6 +1,15 @@
+import dotenv from "dotenv";
+import path from "path";
+
+if (process.env.NODE_ENV === "test") {
+  dotenv.config({ path: path.resolve(__dirname, "../.env.test"), override: true });
+} else {
+  dotenv.config({ path: path.resolve(__dirname, "../.env.local"), override: true });
+  dotenv.config();
+}
+
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 import authRouter from "./routes/auth.route";
 import memberRouter from "./routes/member.route";
@@ -10,14 +19,6 @@ import dashboardRouter from "./routes/dashboard.route";
 import studyRouter from "./routes/study.route";
 import { PrismaClient } from "@prisma/client";
 import { startEventLifecycleScheduler } from "./services/event-lifecycle.service";
-
-import path from "path";
-
-if (process.env.NODE_ENV === "test") {
-  dotenv.config({ path: path.resolve(__dirname, "../.env.test"), override: true });
-} else {
-  dotenv.config();
-}
 
 const app = express();
 const prisma = new PrismaClient();
