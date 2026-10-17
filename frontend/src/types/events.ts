@@ -35,11 +35,15 @@ export interface Study {
 export interface EventStats {
   isCancelled: boolean;
   eligible: number;
+  participants: number;
   present: number;
   late: number;
   excused: number;
-  absent: number;
+  absentAmongParticipants: number;
+  turnoutAmongParticipants: number | null;
+  eligibleAttendanceRate: number | null;
   attendanceRate: number | null;
+  absent: number;
 }
 
 export interface EventAbsentee {
@@ -129,6 +133,8 @@ export interface MemberStudyRow {
   eligibleSessionCount: number;
   requiredSessions: number | null;
   isCompleted: boolean;
+  droppedOff?: boolean;
+  droppedOffAfterSession?: number | null;
 }
 
 export interface StudyTurnoutSession {
@@ -139,11 +145,15 @@ export interface StudyTurnoutSession {
   sessionType: SessionType;
   isCancelled: boolean;
   eligible: number;
+  participants: number;
   present: number;
   late: number;
   excused: number;
-  absent: number;
+  absentAmongParticipants: number;
+  turnoutAmongParticipants: number | null;
+  eligibleAttendanceRate: number | null;
   attendanceRate: number | null;
+  absent: number;
 }
 
 export interface StudyStatsResponse {
@@ -163,6 +173,14 @@ export interface StudyStatsResponse {
     uniqueId: string;
     campus: string;
     effectiveBatch: string;
+  }>;
+  droppedOffMembers?: Array<{
+    id: string;
+    name: string;
+    uniqueId: string;
+    campus: string;
+    effectiveBatch: string;
+    droppedOffAfterSession: number | null;
   }>;
   grid: MemberStudyRow[];
 }

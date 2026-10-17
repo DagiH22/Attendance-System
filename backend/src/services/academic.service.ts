@@ -19,20 +19,30 @@ export interface AcademicMemberLike {
 
 export interface AcademicStudyLike {
   id?: string;
+  name?: string;
+  isActive?: boolean;
+  endDate?: Date | string | null;
   audienceType?: AudienceType | string | null;
   audienceBatches?: Batch[] | string[] | null;
   defaultLateGraceMinutes?: number | null;
   requiredSessions?: number | null;
+  [key: string]: any;
 }
 
 export interface AcademicEventLike {
   id: string;
+  title?: string;
+  eventDate?: Date | string | null;
   startTime: Date;
   endTime: Date;
+  endedAt?: Date | null;
+  type?: any;
+  recurrenceIndex?: number | null;
   studyId?: string | null;
   study?: AcademicStudyLike | null;
   cancelledAt?: Date | null;
   lateGraceMinutes?: number | null;
+  [key: string]: any;
 }
 
 export interface AcademicAttendanceLike {
@@ -47,11 +57,15 @@ export interface AcademicAttendanceLike {
 export interface EventStatsResult {
   isCancelled: boolean;
   eligible: number;
+  participants: number;
   present: number;
   late: number;
   excused: number;
-  absent: number;
+  absentAmongParticipants: number;
+  turnoutAmongParticipants: number | null;
+  eligibleAttendanceRate: number | null;
   attendanceRate: number | null;
+  absent: number;
 }
 
 /**
@@ -192,23 +206,32 @@ export function getEligibleMembers<T extends AcademicMemberLike>(
  * Calculates event attendance stats:
  * - Cancelled events are excluded from analytics (isCancelled: true, counts 0 / null rate)
  * - Present, Late, Excused counts from non-removed attendances
- * - Absent = eligible - (present + late + excused) (minimum 0)
- * - Attendance Rate = (present + late) / (eligible - excused), null if denominator <= 0
+ * - participants: participants of the event's study as of event's end
+ * - absentAmongParticipants = participants - (present + late + excusedAmongParticipants)
+ * - turnoutAmongParticipants = (present + late) / (participants - excusedAmongParticipants)
+ * - eligibleAttendanceRate = (present + late) / (eligible - excused)
+ * - attendanceRate = turnoutAmongParticipants ?? eligibleAttendanceRate (headline turnout)
  */
 export function getEventStats(
   event: AcademicEventLike,
   eligibleMembers: AcademicMemberLike[],
   attendances: AcademicAttendanceLike[],
+  studyParticipantsCount?: number,
+  studyParticipantIds?: Set<string>,
 ): EventStatsResult {
   if (event.cancelledAt) {
     return {
       isCancelled: true,
       eligible: 0,
+      participants: 0,
       present: 0,
       late: 0,
       excused: 0,
-      absent: 0,
+      absentAmongParticipants: 0,
+      turnoutAmongParticipants: null,
+      eligibleAttendanceRate: null,
       attendanceRate: null,
+      absent: 0,
     };
   }
 
@@ -219,30 +242,56 @@ export function getEventStats(
   let present = 0;
   let late = 0;
   let excused = 0;
+  let excusedAmongParticipants = 0;
 
   for (const record of activeRecords) {
     if (record.status === "PRESENT") present++;
     else if (record.status === "LATE") late++;
-    else if (record.status === "EXCUSED") excused++;
+    else if (record.status === "EXCUSED") {
+      excused++;
+      if (!studyParticipantIds || studyParticipantIds.has(record.memberId)) {
+        excusedAmongParticipants++;
+      }
+    }
   }
 
   const eligible = eligibleMembers.length;
-  const absent = Math.max(0, eligible - (present + late + excused));
-  const denominator = eligible - excused;
+  const participants =
+    typeof studyParticipantsCount === "number"
+      ? studyParticipantsCount
+      : eligible;
 
-  const attendanceRate =
-    denominator > 0
-      ? Math.round(((present + late) / denominator) * 1000) / 1000
+  const absentAmongParticipants = Math.max(
+    0,
+    participants - (present + late + excusedAmongParticipants),
+  );
+  const turnoutDenominator = participants - excusedAmongParticipants;
+  const turnoutAmongParticipants =
+    turnoutDenominator > 0
+      ? Math.round(((present + late) / turnoutDenominator) * 1000) / 1000
       : null;
+
+  const eligibleDenominator = eligible - excused;
+  const eligibleAttendanceRate =
+    eligibleDenominator > 0
+      ? Math.round(((present + late) / eligibleDenominator) * 1000) / 1000
+      : null;
+
+  const attendanceRate = turnoutAmongParticipants ?? eligibleAttendanceRate;
+  const absent = Math.max(0, eligible - (present + late + excused));
 
   return {
     isCancelled: false,
     eligible,
+    participants,
     present,
     late,
     excused,
-    absent,
+    absentAmongParticipants,
+    turnoutAmongParticipants,
+    eligibleAttendanceRate,
     attendanceRate,
+    absent,
   };
 }
 
@@ -332,4 +381,236 @@ export function deriveEntryAcademicYearForBackfill(
     entryAcademicYear,
     isInconsistent: false,
   };
+}
+
+export const REGULAR_STUDY_ID = "REGULAR";
+export const REGULAR_STUDY_NAME = "Regular";
+export const STUDY_TURNOUT_DIFF_THRESHOLD = 0.20;
+
+export function getEffectiveStudyId(studyId?: string | null): string {
+  return studyId || REGULAR_STUDY_ID;
+}
+
+export function isStudyOngoing(
+  study: { isActive?: boolean; endDate?: Date | null } | null | undefined,
+  asOf: Date,
+): boolean {
+  if (!study) return true; // Regular pseudo-study is always ongoing
+  if (study.isActive === false) return false;
+  if (!study.endDate) return true;
+  return new Date(study.endDate).getTime() >= new Date(asOf).getTime();
+}
+
+/**
+ * Filter held sessions of a study: non-cancelled sessions that ended by asOf.
+ * Sorted chronologically by startTime ascending.
+ */
+export function getHeldSessions(
+  events: AcademicEventLike[],
+  asOf: Date,
+): AcademicEventLike[] {
+  const asOfMs = new Date(asOf).getTime();
+  return events
+    .filter((e) => {
+      if (e.cancelledAt) return false;
+      const endMs = new Date(e.endTime).getTime();
+      return endMs <= asOfMs;
+    })
+    .sort(
+      (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
+    );
+}
+
+/**
+ * Identifies participants of a study as of a reference date.
+ * A participant is a member with at least one non-removed attendance of status PRESENT or LATE
+ * in a non-cancelled session of that study held on or before asOf.
+ */
+export function getStudyParticipants(
+  studyId: string,
+  events: AcademicEventLike[],
+  attendances: AcademicAttendanceLike[],
+  asOf: Date,
+): string[] {
+  const heldSessions = getHeldSessions(
+    events.filter((e) => getEffectiveStudyId(e.studyId) === studyId),
+    asOf,
+  );
+  const heldSessionIdSet = new Set(heldSessions.map((s) => s.id));
+
+  const participantIds = new Set<string>();
+
+  for (const a of attendances) {
+    if (a.removedAt) continue;
+    if (a.status !== "PRESENT" && a.status !== "LATE") continue;
+    if (heldSessionIdSet.has(a.eventId)) {
+      participantIds.add(a.memberId);
+    }
+  }
+
+  return Array.from(participantIds);
+}
+
+export interface ParticipantTrailingMissesResult {
+  isParticipant: boolean;
+  firstAttendedSessionIndex: number | null; // 1-indexed
+  lastAttendedSessionIndex: number | null; // 1-indexed
+  trailingMisses: number;
+  droppedOff: boolean;
+  droppedOffAfterSession: number | null; // 1-indexed
+  alertLevel: "CRITICAL" | "WARNING" | null;
+}
+
+/**
+ * For each participant, trailingMisses = number of held sessions after the member's LAST
+ * PRESENT/LATE session in that study, excluding sessions where the member is EXCUSED,
+ * and excluding sessions that started before the member's first attendance (never count sessions before they joined).
+ *
+ * Alert rules:
+ * - Shown ONLY for studies that are still ongoing (study has not ended and is active).
+ * - trailingMisses >= 3 -> CRITICAL
+ * - trailingMisses >= 2 -> WARNING
+ * - Never flag a member for a study they have not participated in (alertLevel = null).
+ *
+ * Ended studies:
+ * - No alerts (alertLevel = null).
+ * - Expose droppedOff (trailingMisses > 0) and droppedOffAfterSession (lastAttendedSessionIndex).
+ */
+export function computeParticipantTrailingMisses(
+  memberId: string,
+  heldSessions: AcademicEventLike[], // chronological
+  attendancesForStudy: AcademicAttendanceLike[],
+  isOngoing: boolean,
+): ParticipantTrailingMissesResult {
+  if (heldSessions.length === 0) {
+    return {
+      isParticipant: false,
+      firstAttendedSessionIndex: null,
+      lastAttendedSessionIndex: null,
+      trailingMisses: 0,
+      droppedOff: false,
+      droppedOffAfterSession: null,
+      alertLevel: null,
+    };
+  }
+
+  // Map session id to 1-indexed position
+  const sessionIndexMap = new Map<string, number>();
+  heldSessions.forEach((s, idx) => {
+    sessionIndexMap.set(s.id, idx + 1);
+  });
+
+  // Attendances of this member in held sessions
+  const memberAttendancesByEvent = new Map<string, AcademicAttendanceLike>();
+  for (const att of attendancesForStudy) {
+    if (
+      att.memberId === memberId &&
+      !att.removedAt &&
+      sessionIndexMap.has(att.eventId)
+    ) {
+      memberAttendancesByEvent.set(att.eventId, att);
+    }
+  }
+
+  const attendedIndices: number[] = [];
+  for (let i = 0; i < heldSessions.length; i++) {
+    const session = heldSessions[i];
+    const att = memberAttendancesByEvent.get(session.id);
+    if (att && (att.status === "PRESENT" || att.status === "LATE")) {
+      attendedIndices.push(i + 1);
+    }
+  }
+
+  if (attendedIndices.length === 0) {
+    // Not a participant of this study!
+    return {
+      isParticipant: false,
+      firstAttendedSessionIndex: null,
+      lastAttendedSessionIndex: null,
+      trailingMisses: 0,
+      droppedOff: false,
+      droppedOffAfterSession: null,
+      alertLevel: null,
+    };
+  }
+
+  const firstAttendedIdx = attendedIndices[0];
+  const lastAttendedIdx = attendedIndices[attendedIndices.length - 1];
+
+  // Count unexcused held sessions strictly after lastAttendedIdx
+  let misses = 0;
+  for (let i = lastAttendedIdx; i < heldSessions.length; i++) {
+    const session = heldSessions[i];
+    const att = memberAttendancesByEvent.get(session.id);
+    if (att && att.status === "EXCUSED") {
+      // Excused session is excluded
+      continue;
+    }
+    // Any session after lastAttended where they are not excused counts as a trailing miss
+    misses++;
+  }
+
+  const droppedOff = misses > 0;
+  const droppedOffAfterSession = droppedOff ? lastAttendedIdx : null;
+
+  let alertLevel: "CRITICAL" | "WARNING" | null = null;
+  if (isOngoing) {
+    if (misses >= 3) {
+      alertLevel = "CRITICAL";
+    } else if (misses >= 2) {
+      alertLevel = "WARNING";
+    }
+  }
+
+  return {
+    isParticipant: true,
+    firstAttendedSessionIndex: firstAttendedIdx,
+    lastAttendedSessionIndex: lastAttendedIdx,
+    trailingMisses: misses,
+    droppedOff,
+    droppedOffAfterSession,
+    alertLevel,
+  };
+}
+
+/**
+ * Checks whether a member attended any session of another ongoing study in the last 3 weeks.
+ */
+export function checkAttendingOtherStudy(
+  memberId: string,
+  currentStudyId: string,
+  allEvents: AcademicEventLike[],
+  allAttendances: AcademicAttendanceLike[],
+  ongoingStudyIds: Set<string> | string[],
+  asOf: Date,
+): boolean {
+  const ongoingSet = ongoingStudyIds instanceof Set ? ongoingStudyIds : new Set(ongoingStudyIds);
+  const asOfMs = new Date(asOf).getTime();
+  const threeWeeksAgoMs = asOfMs - 21 * 24 * 60 * 60 * 1000;
+
+  const eventMap = new Map<string, AcademicEventLike>();
+  for (const e of allEvents) {
+    if (!e.cancelledAt) {
+      eventMap.set(e.id, e);
+    }
+  }
+
+  for (const att of allAttendances) {
+    if (att.memberId !== memberId || att.removedAt) continue;
+    if (att.status !== "PRESENT" && att.status !== "LATE") continue;
+
+    const event = eventMap.get(att.eventId);
+    if (!event) continue;
+
+    const effectiveStudy = getEffectiveStudyId(event.studyId);
+    if (effectiveStudy === currentStudyId) continue;
+    if (!ongoingSet.has(effectiveStudy)) continue;
+
+    const eventTime = new Date(event.startTime).getTime();
+    if (eventTime >= threeWeeksAgoMs && eventTime <= asOfMs) {
+      return true;
+    }
+  }
+
+  return false;
 }

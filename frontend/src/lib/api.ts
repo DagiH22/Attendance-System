@@ -151,7 +151,8 @@ export const rescheduleEvent = async (id: string, data: { startTime: string; end
   (await api.patch(`/events/${id}/reschedule`, data)).data;
 export const cancelEvent = async (id: string, data: { reason: string }) =>
   (await api.patch(`/events/${id}/cancel`, data)).data;
-export const getEventAbsentees = async (id: string) => (await api.get(`/events/${id}/absentees`)).data;
+export const getEventAbsentees = async (id: string, all?: boolean) =>
+  (await api.get(`/events/${id}/absentees`, { params: all ? { all: "true" } : {} })).data;
 
 // Attendance
 export const excuseMember = async (data: { eventId: string; memberId: string; reason: string }) =>

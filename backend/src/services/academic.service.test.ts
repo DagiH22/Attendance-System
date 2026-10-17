@@ -8,6 +8,13 @@ import {
   getEventStats,
   computeLatenessStatus,
   deriveEntryAcademicYearForBackfill,
+  getEffectiveStudyId,
+  isStudyOngoing,
+  getHeldSessions,
+  getStudyParticipants,
+  computeParticipantTrailingMisses,
+  checkAttendingOtherStudy,
+  REGULAR_STUDY_ID,
   AcademicMemberLike,
   AcademicEventLike,
   AcademicAttendanceLike,
@@ -399,6 +406,326 @@ describe("academic.service unit tests", () => {
       expect(rescheduledEvent.plannedStartTime.toISOString()).toBe(originalStartTime.toISOString());
       expect(rescheduledEvent.startTime.toISOString()).toBe(newStart.toISOString());
       expect(rescheduledEvent.rescheduleReason).toBe("Venue conflict on Tuesday");
+    });
+  });
+
+  describe("Studies Amendment: Participants, Trailing Misses, Alerts, and Turnout", () => {
+    const makeSession = (
+      id: string,
+      studyId: string | null,
+      day: number,
+      cancelled: boolean = false,
+    ): AcademicEventLike => ({
+      id,
+      studyId,
+      startTime: new Date(`2026-10-0${day}T18:00:00Z`),
+      endTime: new Date(`2026-10-0${day}T20:00:00Z`),
+      cancelledAt: cancelled ? new Date(`2026-10-0${day}T10:00:00Z`) : null,
+    });
+
+    it("1. member who joins at session 5 (earlier sessions not counted)", () => {
+      // 7 held sessions
+      const sessions = [
+        makeSession("s1", "mary", 1),
+        makeSession("s2", "mary", 2),
+        makeSession("s3", "mary", 3),
+        makeSession("s4", "mary", 4),
+        makeSession("s5", "mary", 5),
+        makeSession("s6", "mary", 6),
+        makeSession("s7", "mary", 7),
+      ];
+
+      // Member attends s5 and s6. Misses s7.
+      const attendances: AcademicAttendanceLike[] = [
+        { memberId: "m1", eventId: "s5", status: "PRESENT", markedAt: new Date() },
+        { memberId: "m1", eventId: "s6", status: "LATE", markedAt: new Date() },
+      ];
+
+      const result = computeParticipantTrailingMisses("m1", sessions, attendances, true);
+
+      expect(result.isParticipant).toBe(true);
+      expect(result.firstAttendedSessionIndex).toBe(5);
+      expect(result.lastAttendedSessionIndex).toBe(6);
+      // Only s7 is counted as trailing miss (sessions 1-4 are NOT counted!)
+      expect(result.trailingMisses).toBe(1);
+      expect(result.alertLevel).toBeNull(); // 1 miss is below warning threshold (>= 2)
+    });
+
+    it("2. participant of Mary study not flagged in Epiphany", () => {
+      const epiphanySessions = [
+        makeSession("ep1", "epiphany", 1),
+        makeSession("ep2", "epiphany", 2),
+        makeSession("ep3", "epiphany", 3),
+      ];
+
+      // Member attended Mary sessions, but ZERO attendances in Epiphany
+      const attendances: AcademicAttendanceLike[] = [
+        { memberId: "m1", eventId: "mary1", status: "PRESENT", markedAt: new Date() },
+      ];
+
+      const result = computeParticipantTrailingMisses("m1", epiphanySessions, attendances, true);
+
+      expect(result.isParticipant).toBe(false);
+      expect(result.trailingMisses).toBe(0);
+      expect(result.alertLevel).toBeNull();
+    });
+
+    it("3. graduate with no attendance not flagged", () => {
+      const sessions = [
+        makeSession("s1", "study-1", 1),
+        makeSession("s2", "study-1", 2),
+        makeSession("s3", "study-1", 3),
+      ];
+
+      // No attendance in this study
+      const result = computeParticipantTrailingMisses("m-grad", sessions, [], true);
+
+      expect(result.isParticipant).toBe(false);
+      expect(result.trailingMisses).toBe(0);
+      expect(result.alertLevel).toBeNull();
+    });
+
+    it("4. excused session not counted towards trailing misses", () => {
+      const sessions = [
+        makeSession("s1", "study-1", 1),
+        makeSession("s2", "study-1", 2),
+        makeSession("s3", "study-1", 3),
+        makeSession("s4", "study-1", 4),
+        makeSession("s5", "study-1", 5),
+      ];
+
+      // Attended s1, s2. Missed s3. Excused at s4. Missed s5.
+      const attendances: AcademicAttendanceLike[] = [
+        { memberId: "m1", eventId: "s1", status: "PRESENT", markedAt: new Date() },
+        { memberId: "m1", eventId: "s2", status: "PRESENT", markedAt: new Date() },
+        { memberId: "m1", eventId: "s4", status: "EXCUSED", markedAt: new Date() },
+      ];
+
+      const result = computeParticipantTrailingMisses("m1", sessions, attendances, true);
+
+      expect(result.isParticipant).toBe(true);
+      expect(result.lastAttendedSessionIndex).toBe(2);
+      // After s2: s3 (miss), s4 (EXCUSED -> excluded), s5 (miss) = 2 misses
+      expect(result.trailingMisses).toBe(2);
+      expect(result.alertLevel).toBe("WARNING");
+    });
+
+    it("5. cancelled session not counted as held session", () => {
+      const allSessions = [
+        makeSession("s1", "study-1", 1),
+        makeSession("s2", "study-1", 2, true), // CANCELLED
+        makeSession("s3", "study-1", 3),
+      ];
+
+      const asOf = new Date("2026-10-10T00:00:00Z");
+      const held = getHeldSessions(allSessions, asOf);
+
+      // Cancelled session s2 is filtered out
+      expect(held.map((s) => s.id)).toEqual(["s1", "s3"]);
+
+      // Attended s1, missed s3
+      const attendances: AcademicAttendanceLike[] = [
+        { memberId: "m1", eventId: "s1", status: "PRESENT", markedAt: new Date() },
+      ];
+
+      const result = computeParticipantTrailingMisses("m1", held, attendances, true);
+      expect(result.trailingMisses).toBe(1);
+    });
+
+    it("6. ended study produces no alert but a dropped-off record", () => {
+      const sessions = [
+        makeSession("s1", "study-ended", 1),
+        makeSession("s2", "study-ended", 2),
+        makeSession("s3", "study-ended", 3),
+      ];
+
+      // Attended s1, missed s2 and s3
+      const attendances: AcademicAttendanceLike[] = [
+        { memberId: "m1", eventId: "s1", status: "PRESENT", markedAt: new Date() },
+      ];
+
+      // Study has ended: isOngoing = false
+      const result = computeParticipantTrailingMisses("m1", sessions, attendances, false);
+
+      expect(result.isParticipant).toBe(true);
+      expect(result.trailingMisses).toBe(2);
+      // Ended study must NOT produce alerts on dashboard!
+      expect(result.alertLevel).toBeNull();
+      // But exposes dropped-off record in study report
+      expect(result.droppedOff).toBe(true);
+      expect(result.droppedOffAfterSession).toBe(1);
+    });
+
+    it("7. member flagged in one study with attendingOtherStudy true", () => {
+      const studyASessions = [
+        makeSession("a1", "study-a", 1),
+        makeSession("a2", "study-a", 2),
+        makeSession("a3", "study-a", 3),
+      ];
+
+      // Attended a1, missed a2 and a3 -> trailingMisses = 2 (WARNING)
+      const attendances: AcademicAttendanceLike[] = [
+        { memberId: "m1", eventId: "a1", status: "PRESENT", markedAt: new Date() },
+      ];
+
+      const result = computeParticipantTrailingMisses("m1", studyASessions, attendances, true);
+      expect(result.alertLevel).toBe("WARNING");
+
+      // Other study event held within 3 weeks (say 10 days ago from asOf)
+      const asOf = new Date("2026-10-25T00:00:00Z");
+      const otherStudyEvent: AcademicEventLike = {
+        id: "b-recent",
+        studyId: "study-b",
+        startTime: new Date("2026-10-15T18:00:00Z"), // 10 days before asOf
+        endTime: new Date("2026-10-15T20:00:00Z"),
+      };
+
+      const allEvents = [...studyASessions, otherStudyEvent];
+      const allAttendances: AcademicAttendanceLike[] = [
+        ...attendances,
+        { memberId: "m1", eventId: "b-recent", status: "PRESENT", markedAt: new Date() },
+      ];
+
+      const ongoingStudyIds = new Set(["study-a", "study-b"]);
+
+      const attendingOther = checkAttendingOtherStudy(
+        "m1",
+        "study-a",
+        allEvents,
+        allAttendances,
+        ongoingStudyIds,
+        asOf,
+      );
+
+      expect(attendingOther).toBe(true);
+    });
+
+    it("8. trailingMisses boundaries (0, 1 -> null, 2 -> WARNING, 3+ -> CRITICAL)", () => {
+      const sessions = [
+        makeSession("s1", "study-1", 1),
+        makeSession("s2", "study-1", 2),
+        makeSession("s3", "study-1", 3),
+        makeSession("s4", "study-1", 4),
+        makeSession("s5", "study-1", 5),
+      ];
+
+      // 0 misses: attended s5
+      const att0: AcademicAttendanceLike[] = [
+        { memberId: "m1", eventId: "s5", status: "PRESENT", markedAt: new Date() },
+      ];
+      expect(computeParticipantTrailingMisses("m1", sessions, att0, true).alertLevel).toBeNull();
+
+      // 1 miss: attended s4, missed s5
+      const att1: AcademicAttendanceLike[] = [
+        { memberId: "m1", eventId: "s4", status: "PRESENT", markedAt: new Date() },
+      ];
+      expect(computeParticipantTrailingMisses("m1", sessions, att1, true).alertLevel).toBeNull();
+
+      // 2 misses: attended s3, missed s4, s5 -> WARNING
+      const att2: AcademicAttendanceLike[] = [
+        { memberId: "m1", eventId: "s3", status: "PRESENT", markedAt: new Date() },
+      ];
+      const res2 = computeParticipantTrailingMisses("m1", sessions, att2, true);
+      expect(res2.trailingMisses).toBe(2);
+      expect(res2.alertLevel).toBe("WARNING");
+
+      // 3 misses: attended s2, missed s3, s4, s5 -> CRITICAL
+      const att3: AcademicAttendanceLike[] = [
+        { memberId: "m1", eventId: "s2", status: "PRESENT", markedAt: new Date() },
+      ];
+      const res3 = computeParticipantTrailingMisses("m1", sessions, att3, true);
+      expect(res3.trailingMisses).toBe(3);
+      expect(res3.alertLevel).toBe("CRITICAL");
+
+      // 4 misses: attended s1, missed s2, s3, s4, s5 -> CRITICAL
+      const att4: AcademicAttendanceLike[] = [
+        { memberId: "m1", eventId: "s1", status: "PRESENT", markedAt: new Date() },
+      ];
+      const res4 = computeParticipantTrailingMisses("m1", sessions, att4, true);
+      expect(res4.trailingMisses).toBe(4);
+      expect(res4.alertLevel).toBe("CRITICAL");
+    });
+
+    it("9. participants growing over time changes later sessions' turnout correctly", () => {
+      const eligibleMembers: AcademicMemberLike[] = [
+        { id: "mA", campus: Campus.FOUR_KILO, entryAcademicYear: 2026, createdAt: new Date() },
+        { id: "mB", campus: Campus.FOUR_KILO, entryAcademicYear: 2026, createdAt: new Date() },
+        { id: "mC", campus: Campus.FOUR_KILO, entryAcademicYear: 2026, createdAt: new Date() },
+        { id: "mD", campus: Campus.FOUR_KILO, entryAcademicYear: 2026, createdAt: new Date() },
+      ];
+
+      const s1 = makeSession("s1", "study-grow", 1);
+      const s2 = makeSession("s2", "study-grow", 2);
+      const s3 = makeSession("s3", "study-grow", 3);
+      const allStudyEvents = [s1, s2, s3];
+
+      // Session 1: only mA attends
+      const attS1: AcademicAttendanceLike[] = [
+        { memberId: "mA", eventId: "s1", status: "PRESENT", markedAt: s1.startTime },
+      ];
+      const participantsS1 = getStudyParticipants("study-grow", allStudyEvents, attS1, s1.endTime);
+      expect(participantsS1).toEqual(["mA"]);
+
+      const stats1 = getEventStats(s1, eligibleMembers, attS1, participantsS1.length, new Set(participantsS1));
+      // 1 present out of 1 participant = 100%
+      expect(stats1.participants).toBe(1);
+      expect(stats1.turnoutAmongParticipants).toBe(1);
+      // Secondary: 1 present out of 4 eligible = 25%
+      expect(stats1.eligibleAttendanceRate).toBe(0.25);
+
+      // Session 2: mA and mB attend
+      const attS2: AcademicAttendanceLike[] = [
+        ...attS1,
+        { memberId: "mA", eventId: "s2", status: "PRESENT", markedAt: s2.startTime },
+        { memberId: "mB", eventId: "s2", status: "PRESENT", markedAt: s2.startTime },
+      ];
+      const participantsS2 = getStudyParticipants("study-grow", allStudyEvents, attS2, s2.endTime);
+      expect(participantsS2.sort()).toEqual(["mA", "mB"].sort());
+
+      const stats2 = getEventStats(s2, eligibleMembers, attS2, participantsS2.length, new Set(participantsS2));
+      // 2 present out of 2 participants = 100%
+      expect(stats2.participants).toBe(2);
+      expect(stats2.turnoutAmongParticipants).toBe(1);
+      expect(stats2.eligibleAttendanceRate).toBe(0.5);
+
+      // Session 3: mA attends, but mB misses!
+      const attS3: AcademicAttendanceLike[] = [
+        ...attS2,
+        { memberId: "mA", eventId: "s3", status: "PRESENT", markedAt: s3.startTime },
+      ];
+      const participantsS3 = getStudyParticipants("study-grow", allStudyEvents, attS3, s3.endTime);
+      expect(participantsS3.length).toBe(2);
+
+      const stats3 = getEventStats(s3, eligibleMembers, attS3, participantsS3.length, new Set(participantsS3));
+      // 1 present out of 2 participants = 50%
+      expect(stats3.participants).toBe(2);
+      expect(stats3.absentAmongParticipants).toBe(1);
+      expect(stats3.turnoutAmongParticipants).toBe(0.5);
+      expect(stats3.eligibleAttendanceRate).toBe(0.25);
+    });
+
+    it("10. Regular pseudo-study behaves the same", () => {
+      // Events with studyId = null (or undefined)
+      const reg1 = makeSession("r1", null, 1);
+      const reg2 = makeSession("r2", null, 2);
+      const reg3 = makeSession("r3", null, 3);
+      const regSessions = [reg1, reg2, reg3];
+
+      expect(getEffectiveStudyId(reg1.studyId)).toBe(REGULAR_STUDY_ID);
+      expect(isStudyOngoing(null, new Date())).toBe(true);
+
+      // Member attends r1, misses r2 and r3
+      const attendances: AcademicAttendanceLike[] = [
+        { memberId: "m1", eventId: "r1", status: "PRESENT", markedAt: reg1.startTime },
+      ];
+
+      const participants = getStudyParticipants(REGULAR_STUDY_ID, regSessions, attendances, reg3.endTime);
+      expect(participants).toEqual(["m1"]);
+
+      const result = computeParticipantTrailingMisses("m1", regSessions, attendances, true);
+      expect(result.isParticipant).toBe(true);
+      expect(result.trailingMisses).toBe(2);
+      expect(result.alertLevel).toBe("WARNING");
     });
   });
 });

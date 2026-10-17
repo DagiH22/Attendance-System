@@ -470,7 +470,19 @@ const StudiesPage: React.FC = () => {
                 <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 md:grid-cols-8">
                   {statsData.sessionSeries.map((s, idx) => {
                     const isUpcoming = new Date(s.startTime) > new Date();
-                    const rate = s.attendanceRate !== null ? Math.round(s.attendanceRate * 100) : null;
+                    const participantRate =
+                      s.turnoutAmongParticipants !== null &&
+                      s.turnoutAmongParticipants !== undefined
+                        ? Math.round(s.turnoutAmongParticipants * 100)
+                        : s.attendanceRate !== null &&
+                          s.attendanceRate !== undefined
+                          ? Math.round(s.attendanceRate * 100)
+                          : null;
+                    const eligibleRate =
+                      s.eligibleAttendanceRate !== null &&
+                      s.eligibleAttendanceRate !== undefined
+                        ? Math.round(s.eligibleAttendanceRate * 100)
+                        : null;
                     return (
                       <div key={s.eventId} className="flex flex-col items-center">
                         <div className="relative flex h-36 w-full flex-col justify-end rounded-2xl bg-slate-50 p-2 border border-slate-100">
@@ -484,10 +496,16 @@ const StudiesPage: React.FC = () => {
                             </div>
                           ) : (
                             <div
-                              className="w-full rounded-xl bg-gradient-to-t from-blue-600 to-indigo-500 transition-all duration-500 flex items-center justify-center text-xs font-bold text-white"
-                              style={{ height: `${Math.max(15, rate ?? 0)}%` }}
+                              className="w-full rounded-xl bg-gradient-to-t from-blue-600 to-indigo-500 transition-all duration-500 flex flex-col items-center justify-center text-xs font-bold text-white p-1 text-center"
+                              style={{ height: `${Math.max(22, participantRate ?? 0)}%` }}
+                              title={`Participant turnout: ${participantRate !== null ? `${participantRate}%` : "—"}${eligibleRate !== null ? ` (${eligibleRate}% of all eligible)` : ""}`}
                             >
-                              {rate !== null ? `${rate}%` : "—"}
+                              <span>{participantRate !== null ? `${participantRate}%` : "—"}</span>
+                              {eligibleRate !== null && (
+                                <span className="text-[9px] opacity-80 font-normal">
+                                  ({eligibleRate}%)
+                                </span>
+                              )}
                             </div>
                           )}
                         </div>
@@ -580,6 +598,42 @@ const StudiesPage: React.FC = () => {
               </div>
             </div>
 
+            {/* Dropped Off Report for Ended Studies */}
+            {statsData.droppedOffMembers && statsData.droppedOffMembers.length > 0 && (
+              <div className="rounded-3xl border border-amber-200 bg-amber-50/50 p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-amber-900 flex items-center gap-2">
+                    <span>⚠️ Dropped Off Participants ({statsData.droppedOffMembers.length})</span>
+                  </h3>
+                  <span className="rounded-full bg-amber-100 border border-amber-200 px-2.5 py-0.5 text-xs font-bold text-amber-800">
+                    Ended Study Cohort Report
+                  </span>
+                </div>
+                <p className="text-xs text-amber-800/80 mb-3">
+                  Participants who joined and attended early sessions, but dropped off before the study concluded.
+                </p>
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 md:grid-cols-3 max-h-56 overflow-y-auto pr-1">
+                  {statsData.droppedOffMembers.map((m) => (
+                    <div
+                      key={m.id}
+                      onClick={() => navigate(`/members/${m.id}`)}
+                      className="flex cursor-pointer items-center justify-between rounded-xl bg-white p-2.5 shadow-2xs border border-amber-100 hover:border-amber-300 transition"
+                    >
+                      <div>
+                        <p className="text-xs font-bold text-slate-900">{m.name}</p>
+                        <p className="text-[10px] text-slate-500">
+                          {m.uniqueId} • {m.campus} • {m.effectiveBatch}
+                        </p>
+                      </div>
+                      <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-0.5">
+                        Dropped after S{m.droppedOffAfterSession}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Member x Session Grid Section */}
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-4">
@@ -658,12 +712,22 @@ const StudiesPage: React.FC = () => {
                       filteredGridRows.map((row) => (
                         <tr key={row.memberId} className="hover:bg-slate-50/70 transition">
                           <td className="sticky left-0 bg-white hover:bg-slate-50 z-10 p-3 font-semibold text-slate-900 whitespace-nowrap">
-                            <span
-                              onClick={() => navigate(`/members/${row.memberId}`)}
-                              className="cursor-pointer text-blue-600 hover:underline"
-                            >
-                              {row.name}
-                            </span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span
+                                onClick={() => navigate(`/members/${row.memberId}`)}
+                                className="cursor-pointer text-blue-600 hover:underline"
+                              >
+                                {row.name}
+                              </span>
+                              {row.droppedOff && (
+                                <span
+                                  className="rounded bg-amber-100 border border-amber-200 px-1.5 py-0.5 text-[9px] font-bold text-amber-800"
+                                  title={`Dropped off after session ${row.droppedOffAfterSession}`}
+                                >
+                                  Dropped after S{row.droppedOffAfterSession}
+                                </span>
+                              )}
+                            </div>
                             <span className="block text-[10px] font-normal text-slate-400">
                               {row.uniqueId}
                             </span>

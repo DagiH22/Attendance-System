@@ -165,6 +165,7 @@ const EventDetailsPage: React.FC = () => {
     useState<AttendanceSortOrder>("asc");
   // Absentees Tab State
   const [absenteesList, setAbsenteesList] = useState<EventAbsentee[]>([]);
+  const [showAllEligibleAbsentees, setShowAllEligibleAbsentees] = useState(false);
   const [absenteesLoading, setAbsenteesLoading] = useState(false);
   const [absenteesError, setAbsenteesError] = useState("");
   const [absenteesSearch, setAbsenteesSearch] = useState("");
@@ -328,13 +329,17 @@ const EventDetailsPage: React.FC = () => {
     }
   };
 
-  const fetchAbsentees = async () => {
+  const fetchAbsentees = async (showAll = showAllEligibleAbsentees) => {
     if (!event) return;
     setAbsenteesLoading(true);
     setAbsenteesError("");
     try {
-      const data = await getEventAbsentees(event.id);
-      setAbsenteesList(data.absentees || []);
+      const data = await getEventAbsentees(event.id, showAll);
+      setAbsenteesList(
+        showAll
+          ? (data.allEligibleAbsentees || data.absentees || [])
+          : (data.participantAbsentees || data.absentees || []),
+      );
     } catch (err: any) {
       setAbsenteesError(
         err.response?.data?.error || "Failed to load absentees list.",
@@ -377,18 +382,31 @@ const EventDetailsPage: React.FC = () => {
 
   const attendanceStats = useMemo(() => {
     if (event?.stats) {
+      const headlineRate =
+        event.stats.turnoutAmongParticipants !== null &&
+        event.stats.turnoutAmongParticipants !== undefined
+          ? Math.round(event.stats.turnoutAmongParticipants * 100)
+          : event.stats.attendanceRate !== null &&
+            event.stats.attendanceRate !== undefined
+            ? Math.round(event.stats.attendanceRate * 100)
+            : 0;
+
+      const eligibleRate =
+        event.stats.eligibleAttendanceRate !== null &&
+        event.stats.eligibleAttendanceRate !== undefined
+          ? Math.round(event.stats.eligibleAttendanceRate * 100)
+          : null;
+
       return {
         totalMembers: event.stats.eligible,
+        participants: event.stats.participants,
         attendees: event.stats.present + event.stats.late,
         present: event.stats.present,
         late: event.stats.late,
         excused: event.stats.excused,
-        absentees: event.stats.absent,
-        attendancePercentage:
-          event.stats.attendanceRate !== null &&
-          event.stats.attendanceRate !== undefined
-            ? Math.round(event.stats.attendanceRate * 100)
-            : 0,
+        absentees: event.stats.absentAmongParticipants ?? event.stats.absent,
+        attendancePercentage: headlineRate,
+        eligiblePercentage: eligibleRate,
         isCancelled: event.stats.isCancelled,
       };
     }
@@ -407,12 +425,14 @@ const EventDetailsPage: React.FC = () => {
 
     return {
       totalMembers,
+      participants: totalMembers,
       attendees,
       present: attendees,
       late: 0,
       excused: 0,
       absentees,
       attendancePercentage,
+      eligiblePercentage: null,
       isCancelled: event?.status === "CANCELLED",
     };
   }, [event, attendanceTotalCount, membersCount]);
@@ -1021,19 +1041,33 @@ const EventDetailsPage: React.FC = () => {
                 </p>
               </div>
               <div
-                className={`rounded-full px-3 py-1 text-sm font-semibold ${
+                className={`rounded-full px-3 py-1 text-sm font-semibold flex items-center gap-1.5 ${
                   attendanceStats.isCancelled
                     ? "bg-red-50 text-red-700"
                     : "bg-blue-50 text-blue-700"
                 }`}
               >
-                {attendanceStats.isCancelled
-                  ? "Cancelled"
-                  : `${attendanceStats.attendancePercentage}% attended`}
+                {attendanceStats.isCancelled ? (
+                  "Cancelled"
+                ) : (
+                  <>
+                    <span>{attendanceStats.attendancePercentage}% turnout</span>
+                    {attendanceStats.eligiblePercentage !== null && (
+                      <span className="text-xs text-blue-600/80 font-normal">
+                        ({attendanceStats.eligiblePercentage}% of eligible)
+                      </span>
+                    )}
+                  </>
+                )}
               </div>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-6">
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-7">
+              <SummaryCard
+                label="Participants"
+                value={attendanceStats.participants ?? "—"}
+                accent="text-indigo-700"
+              />
               <SummaryCard
                 label="Eligible"
                 value={attendanceStats.totalMembers}
@@ -1291,9 +1325,37 @@ const EventDetailsPage: React.FC = () => {
                 </div>
               )}
 
-              {/* Absentees Search bar */}
+              {/* Absentees Controls bar: Search + Toggle */}
               {attendanceModalTab === "ABSENTEES" && (
-                <div className="mt-3">
+                <div className="mt-3 space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-xl bg-slate-50 border border-slate-200 p-2">
+                    <div className="text-xs font-semibold text-slate-700">
+                      Showing:{" "}
+                      <span className="font-bold text-blue-700">
+                        {showAllEligibleAbsentees
+                          ? "All Eligible Members Absent"
+                          : "Study Cohort Absentees (Default)"}
+                      </span>
+                      <span className="ml-1 text-slate-400 font-normal">
+                        ({filteredAbsentees.length} members)
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !showAllEligibleAbsentees;
+                        setShowAllEligibleAbsentees(next);
+                        void fetchAbsentees(next);
+                      }}
+                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-100 transition self-start sm:self-auto"
+                    >
+                      {showAllEligibleAbsentees
+                        ? "← Show Participants Only"
+                        : "Show All Eligible Members →"}
+                    </button>
+                  </div>
+
                   <input
                     type="text"
                     value={absenteesSearch}

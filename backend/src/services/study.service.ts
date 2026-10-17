@@ -5,6 +5,10 @@ import {
   getEventStats,
   resolveLateGraceMinutes,
   EventStatsResult,
+  getStudyParticipants,
+  getHeldSessions,
+  isStudyOngoing,
+  computeParticipantTrailingMisses,
 } from "./academic.service";
 import {
   setTimeOnDate,
@@ -78,6 +82,8 @@ export interface MemberStudyRow {
   eligibleSessionCount: number;
   requiredSessions: number | null;
   isCompleted: boolean;
+  droppedOff?: boolean;
+  droppedOffAfterSession?: number | null;
 }
 
 export class StudyService {
@@ -445,6 +451,9 @@ export class StudyService {
     });
 
     const activeEvents = study.events.filter((e) => !e.cancelledAt);
+    const now = new Date();
+    const isOngoing = isStudyOngoing(study, now);
+    const heldSessions = getHeldSessions(study.events, now);
 
     // Compute stats per session
     const sessionSeries = activeEvents.map((event) => {
@@ -458,10 +467,19 @@ export class StudyService {
         event.startTime,
       );
 
+      const participants = getStudyParticipants(
+        study.id,
+        activeEvents,
+        attendances,
+        event.endTime,
+      );
+
       const stats = getEventStats(
         { ...event, study },
         eligible,
         attendances,
+        participants.length,
+        new Set(participants),
       );
 
       return {
@@ -476,14 +494,19 @@ export class StudyService {
 
     // Average turnout across completed non-cancelled sessions
     const completedSessions = sessionSeries.filter(
-      (s) => new Date(s.endTime) <= new Date() && s.attendanceRate !== null,
+      (s) => new Date(s.endTime) <= now && s.attendanceRate !== null,
     );
-    const averageTurnout = completedSessions.length > 0
-      ? Math.round(
-          (completedSessions.reduce((sum, s) => sum + (s.attendanceRate || 0), 0) /
-            completedSessions.length) * 1000,
-        ) / 1000
-      : null;
+    const averageTurnout =
+      completedSessions.length > 0
+        ? Math.round(
+            (completedSessions.reduce(
+              (sum, s) => sum + (s.attendanceRate || 0),
+              0,
+            ) /
+              completedSessions.length) *
+              1000,
+          ) / 1000
+        : null;
 
     // Member x Session Grid
     const attendanceMap = new Map<string, Map<string, (typeof attendances)[0]>>();
@@ -495,13 +518,37 @@ export class StudyService {
     }
 
     const memberRows: MemberStudyRow[] = [];
-    const attendedAllMembers: Array<{ id: string; name: string; uniqueId: string; campus: Campus; effectiveBatch: Batch }> = [];
-    const attendedNoneMembers: Array<{ id: string; name: string; uniqueId: string; campus: Campus; effectiveBatch: Batch }> = [];
+    const attendedAllMembers: Array<{
+      id: string;
+      name: string;
+      uniqueId: string;
+      campus: Campus;
+      effectiveBatch: Batch;
+    }> = [];
+    const attendedNoneMembers: Array<{
+      id: string;
+      name: string;
+      uniqueId: string;
+      campus: Campus;
+      effectiveBatch: Batch;
+    }> = [];
+    const droppedOffMembers: Array<{
+      id: string;
+      name: string;
+      uniqueId: string;
+      campus: Campus;
+      effectiveBatch: Batch;
+      droppedOffAfterSession: number | null;
+    }> = [];
 
     for (const member of allMembers) {
       const memberEntryYear = member.entryAcademicYear ?? 2025;
       const effectiveBatch = computeBatch(
-        { campus: member.campus, entryAcademicYear: memberEntryYear, batchOverride: member.batchOverride },
+        {
+          campus: member.campus,
+          entryAcademicYear: memberEntryYear,
+          batchOverride: member.batchOverride,
+        },
         study.startDate,
       );
 
@@ -594,7 +641,18 @@ export class StudyService {
       // Only include member in the study grid if they were eligible for at least one session
       if (eligibleCount > 0) {
         const required = study.requiredSessions ?? null;
-        const isCompleted = required !== null ? attendedCount >= required : attendedCount === activeEvents.length;
+        const isCompleted =
+          required !== null
+            ? attendedCount >= required
+            : attendedCount === activeEvents.length;
+
+        // Trailing misses & dropped off status
+        const trailingRes = computeParticipantTrailingMisses(
+          member.id,
+          heldSessions,
+          attendances,
+          isOngoing,
+        );
 
         const row: MemberStudyRow = {
           memberId: member.id,
@@ -610,6 +668,8 @@ export class StudyService {
           eligibleSessionCount: eligibleCount,
           requiredSessions: required,
           isCompleted,
+          droppedOff: !isOngoing && trailingRes.droppedOff,
+          droppedOffAfterSession: !isOngoing ? trailingRes.droppedOffAfterSession : null,
         };
         memberRows.push(row);
 
@@ -623,13 +683,23 @@ export class StudyService {
               effectiveBatch,
             });
           }
-          if (attendedCount === 0 && excusedCount === 0) {
+          if (attendedCount === 0) {
             attendedNoneMembers.push({
               id: member.id,
               name: member.name,
               uniqueId: member.uniqueId,
               campus: member.campus,
               effectiveBatch,
+            });
+          }
+          if (!isOngoing && trailingRes.droppedOff) {
+            droppedOffMembers.push({
+              id: member.id,
+              name: member.name,
+              uniqueId: member.uniqueId,
+              campus: member.campus,
+              effectiveBatch,
+              droppedOffAfterSession: trailingRes.droppedOffAfterSession,
             });
           }
         }
@@ -654,6 +724,7 @@ export class StudyService {
       averageTurnout,
       attendedAllMembers,
       attendedNoneMembers,
+      droppedOffMembers,
       grid: memberRows,
     };
   }

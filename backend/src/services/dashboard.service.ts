@@ -3,6 +3,15 @@ import {
   computeBatch,
   getEligibleMembers,
   getEventStats,
+  REGULAR_STUDY_ID,
+  REGULAR_STUDY_NAME,
+  STUDY_TURNOUT_DIFF_THRESHOLD,
+  getEffectiveStudyId,
+  isStudyOngoing,
+  getHeldSessions,
+  getStudyParticipants,
+  computeParticipantTrailingMisses,
+  checkAttendingOtherStudy,
 } from "./academic.service";
 
 const prisma = new PrismaClient();
@@ -13,83 +22,67 @@ export class DashboardService {
     const activeStartThreshold = new Date(now.getTime() + 30 * 60000); // 30 mins before
     const activeEndThreshold = new Date(now.getTime() - 90 * 60000); // 1.5h after
 
-    // 1. Summary Metrics
-    const [totalMembers, activeMembers, totalEvents, activeEvents, allMembersList] =
-      await Promise.all([
-        prisma.member.count(),
-        prisma.member.count({ where: { isActive: true } }),
-        prisma.event.count({ where: { isActive: true, cancelledAt: null } }),
-        prisma.event.findMany({
-          where: {
-            isActive: true,
-            cancelledAt: null,
-            startTime: { lte: activeStartThreshold },
-            endTime: { gte: activeEndThreshold },
-          },
-          include: {
-            study: { select: { id: true, name: true } },
-            _count: {
-              select: { attendances: { where: { removedAt: null } } },
-            },
-          },
-        }),
-        prisma.member.findMany({
-          where: { isActive: true },
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phoneNumber: true,
-            campus: true,
-            batch: true,
-            entryAcademicYear: true,
-            batchOverride: true,
-            createdAt: true,
-            deactivatedAt: true,
-          },
-        }),
-      ]);
-
-    const mappedMembers = allMembersList.map((m) => ({
-      ...m,
-      entryAcademicYear: m.entryAcademicYear ?? 2025,
-    }));
-
-    // Recent completed events (non-cancelled)
-    const recentEventsForAverage = await prisma.event.findMany({
-      where: {
-        cancelledAt: null,
-        OR: [{ endedAt: { lte: now } }, { endTime: { lt: now } }],
-        NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] },
-      },
-      orderBy: { startTime: "desc" },
-      take: 10,
-      include: {
-        study: true,
-        _count: {
-          select: { attendances: { where: { removedAt: null } } },
+    // 1. Load foundational data in parallel
+    const [
+      totalMembers,
+      activeMembers,
+      totalEvents,
+      activeEvents,
+      allMembersList,
+      allStudies,
+      allEvents,
+      allAttendances,
+    ] = await Promise.all([
+      prisma.member.count(),
+      prisma.member.count({ where: { isActive: true } }),
+      prisma.event.count({ where: { isActive: true, cancelledAt: null } }),
+      prisma.event.findMany({
+        where: {
+          isActive: true,
+          cancelledAt: null,
+          startTime: { lte: activeStartThreshold },
+          endTime: { gte: activeEndThreshold },
         },
-      },
-    });
-
-    const avgAttendeesPerEvent = recentEventsForAverage.length
-      ? recentEventsForAverage.reduce(
-          (sum, e) => sum + e._count.attendances,
-          0,
-        ) / recentEventsForAverage.length
-      : 0;
-
-    const attendanceRate = activeMembers
-      ? avgAttendeesPerEvent / activeMembers
-      : 0;
-
-    // 2. Latest Completed Session with turnout and absentee count
-    const latestEvent = recentEventsForAverage[0] || null;
-    let latestCompletedSession: any = null;
-
-    if (latestEvent) {
-      const attendances = await prisma.attendance.findMany({
-        where: { eventId: latestEvent.id, removedAt: null },
+        include: {
+          study: { select: { id: true, name: true } },
+          _count: {
+            select: { attendances: { where: { removedAt: null } } },
+          },
+        },
+      }),
+      prisma.member.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          name: true,
+          uniqueId: true,
+          email: true,
+          phoneNumber: true,
+          campus: true,
+          batch: true,
+          entryAcademicYear: true,
+          batchOverride: true,
+          createdAt: true,
+          deactivatedAt: true,
+        },
+      }),
+      prisma.study.findMany({
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.event.findMany({
+        where: { cancelledAt: null },
+        include: {
+          study: {
+            select: { id: true, name: true, isActive: true, endDate: true },
+          },
+          _count: {
+            select: { attendances: { where: { removedAt: null } } },
+          },
+        },
+        orderBy: { startTime: "asc" },
+      }),
+      prisma.attendance.findMany({
+        where: { removedAt: null },
         select: {
           id: true,
           memberId: true,
@@ -98,226 +91,299 @@ export class DashboardService {
           markedAt: true,
           removedAt: true,
         },
-      });
+      }),
+    ]);
 
+    const mappedMembers = allMembersList.map((m) => ({
+      ...m,
+      entryAcademicYear: m.entryAcademicYear ?? 2025,
+    }));
+    const memberMap = new Map(mappedMembers.map((m) => [m.id, m]));
+
+    // Study setup including built-in "Regular" pseudo-study
+    const regularStudy = {
+      id: REGULAR_STUDY_ID,
+      name: REGULAR_STUDY_NAME,
+      isActive: true,
+      endDate: null,
+      description: "Regular gatherings and standalone events",
+      createdAt: new Date(0),
+    };
+
+    const studiesList = [regularStudy, ...allStudies];
+    const ongoingStudies = studiesList.filter((s) => isStudyOngoing(s, now));
+    const ongoingStudyIds = ongoingStudies.map((s) => s.id);
+
+    // Group attendances by eventId and by studyId
+    const attendancesByEvent = new Map<string, typeof allAttendances>();
+    const attendancesByStudy = new Map<string, typeof allAttendances>();
+
+    for (const att of allAttendances) {
+      const evList = attendancesByEvent.get(att.eventId) || [];
+      evList.push(att);
+      attendancesByEvent.set(att.eventId, evList);
+    }
+
+    // Group events by effective studyId
+    const eventsByStudy = new Map<string, typeof allEvents>();
+    for (const ev of allEvents) {
+      const effStudyId = getEffectiveStudyId(ev.studyId);
+      const sEvents = eventsByStudy.get(effStudyId) || [];
+      sEvents.push(ev);
+      eventsByStudy.set(effStudyId, sEvents);
+
+      const evAtts = attendancesByEvent.get(ev.id) || [];
+      const sAtts = attendancesByStudy.get(effStudyId) || [];
+      sAtts.push(...evAtts);
+      attendancesByStudy.set(effStudyId, sAtts);
+    }
+
+    // 2. Held sessions and Recent completed events
+    const allHeldSessions = getHeldSessions(allEvents, now);
+    const recentHeldSessions = [...allHeldSessions]
+      .reverse()
+      .filter((e) => !(e.type === EventType.WEEKLY && e.recurrenceIndex === null))
+      .slice(0, 10);
+
+    // Latest Completed Session Hero
+    const latestEvent = recentHeldSessions[0] || null;
+    let latestCompletedSession: any = null;
+
+    if (latestEvent) {
+      const effStudyId = getEffectiveStudyId(latestEvent.studyId);
+      const studyEvents = eventsByStudy.get(effStudyId) || [];
+      const studyAtts = attendancesByStudy.get(effStudyId) || [];
+      const eventEnd = latestEvent.endedAt || latestEvent.endTime;
+
+      const participantsAsOfEnd = getStudyParticipants(
+        effStudyId,
+        studyEvents,
+        studyAtts,
+        eventEnd,
+      );
+
+      const eventAtts = attendancesByEvent.get(latestEvent.id) || [];
       const eligible = getEligibleMembers(
         latestEvent,
         mappedMembers,
-        attendances,
+        eventAtts,
         latestEvent.startTime,
       );
 
-      const stats = getEventStats(latestEvent, eligible, attendances);
+      const stats = getEventStats(
+        latestEvent,
+        eligible,
+        eventAtts,
+        participantsAsOfEnd.length,
+      );
 
       latestCompletedSession = {
+        event: {
+          id: latestEvent.id,
+          title: latestEvent.title,
+          startTime: latestEvent.startTime,
+          endTime: latestEvent.endTime,
+          studyId: effStudyId,
+          studyName: latestEvent.study?.name || (effStudyId === REGULAR_STUDY_ID ? REGULAR_STUDY_NAME : "Standalone"),
+        },
+        stats: {
+          ...stats,
+          attendanceRate: stats.turnoutAmongParticipants ?? stats.eligibleAttendanceRate ?? 0,
+        },
         id: latestEvent.id,
         title: latestEvent.title,
         startTime: latestEvent.startTime,
         endTime: latestEvent.endTime,
-        studyId: latestEvent.studyId,
-        studyName: latestEvent.study?.name || "Standalone",
+        studyId: effStudyId,
+        studyName: latestEvent.study?.name || (effStudyId === REGULAR_STUDY_ID ? REGULAR_STUDY_NAME : "Standalone"),
         turnout: stats.present + stats.late,
-        absenteeCount: stats.absent,
-        attendanceRate: stats.attendanceRate,
+        absenteeCount: stats.absentAmongParticipants,
+        attendanceRate: stats.turnoutAmongParticipants ?? stats.eligibleAttendanceRate ?? 0,
+        turnoutAmongParticipants: stats.turnoutAmongParticipants,
+        eligibleAttendanceRate: stats.eligibleAttendanceRate,
         eligibleCount: stats.eligible,
+        participantsCount: stats.participants,
       };
     }
 
-    // 3. Studies, their average turnout, and "Needs Attention" sessions
-    const activeStudies = await prisma.study.findMany({
-      where: { isActive: true },
-      include: {
-        events: {
-          where: {
-            cancelledAt: null,
-            OR: [{ endedAt: { lte: now } }, { endTime: { lt: now } }],
-          },
-          orderBy: { startTime: "desc" },
-          include: {
-            _count: {
-              select: { attendances: { where: { removedAt: null } } },
-            },
-          },
-        },
-      },
-    });
-
-    // Compute average turnout per study
+    // 3. Compute Study Turnouts and "Needs Attention" Sessions (turnout > 20% below study average)
+    const lowAttendanceEvents: any[] = [];
     const studyAverages = new Map<string, number>();
-    const studySessionsTurnout = new Map<
-      string,
-      Array<{
-        id: string;
-        title: string;
-        eventDate: Date;
-        startTime: Date;
-        rate: number;
-        studyName: string;
-        studyAvg: number;
-      }>
-    >();
 
-    for (const study of activeStudies) {
-      if (study.events.length === 0) continue;
+    for (const study of studiesList) {
+      const studyEvents = eventsByStudy.get(study.id) || [];
+      const studyAtts = attendancesByStudy.get(study.id) || [];
+      const heldSessions = getHeldSessions(studyEvents, now);
 
-      const eventRates: number[] = [];
-      const sessionList: any[] = [];
+      if (heldSessions.length === 0) continue;
 
-      for (const ev of study.events) {
-        const attCount = ev._count.attendances;
-        const eligible = getEligibleMembers(
-          { ...ev, study },
-          mappedMembers,
-          [],
-          ev.startTime,
+      const sessionTurnouts: Array<{
+        session: (typeof heldSessions)[0];
+        turnout: number;
+        eligibleRate: number | null;
+      }> = [];
+
+      for (const sess of heldSessions) {
+        const sessEnd = sess.endedAt || sess.endTime;
+        const partsAsOf = getStudyParticipants(
+          study.id,
+          studyEvents,
+          studyAtts,
+          sessEnd,
         );
-        const rate = eligible.length > 0 ? attCount / eligible.length : 0;
-        eventRates.push(rate);
-        sessionList.push({
-          id: ev.id,
-          title: ev.title,
-          eventDate: ev.eventDate,
-          startTime: ev.startTime,
-          rate,
-          studyName: study.name,
-        });
+        const sessAtts = attendancesByEvent.get(sess.id) || [];
+        const eligible = getEligibleMembers(
+          sess,
+          mappedMembers,
+          sessAtts,
+          sess.startTime,
+        );
+        const sessStats = getEventStats(
+          sess,
+          eligible,
+          sessAtts,
+          partsAsOf.length,
+        );
+
+        if (sessStats.turnoutAmongParticipants !== null) {
+          sessionTurnouts.push({
+            session: sess,
+            turnout: sessStats.turnoutAmongParticipants,
+            eligibleRate: sessStats.eligibleAttendanceRate,
+          });
+        }
       }
 
+      if (sessionTurnouts.length === 0) continue;
+
       const studyAvg =
-        eventRates.reduce((a, b) => a + b, 0) / eventRates.length;
+        sessionTurnouts.reduce((sum, s) => sum + s.turnout, 0) /
+        sessionTurnouts.length;
       studyAverages.set(study.id, studyAvg);
 
-      studySessionsTurnout.set(
-        study.id,
-        sessionList.map((s) => ({ ...s, studyAvg })),
-      );
-    }
-
-    // "Needs Attention" = sessions whose turnout is well below that study's average (or <50% for standalone)
-    const lowAttendanceEvents: any[] = [];
-
-    // Study sessions well below study average
-    for (const [, sessions] of studySessionsTurnout) {
-      for (const s of sessions) {
-        // Condition: rate is at least 15% below study average OR rate < 70% of study average
-        if (s.rate < s.studyAvg - 0.15 || s.rate < 0.7 * s.studyAvg) {
+      // Flag sessions whose turnout is well below study average (diff > STUDY_TURNOUT_DIFF_THRESHOLD)
+      for (const item of sessionTurnouts) {
+        if (item.turnout < studyAvg - STUDY_TURNOUT_DIFF_THRESHOLD) {
           lowAttendanceEvents.push({
-            id: s.id,
-            title: s.title,
-            eventDate: s.eventDate,
-            rate: Math.round(s.rate * 1000) / 1000,
-            studyName: s.studyName,
-            studyAverage: Math.round(s.studyAvg * 1000) / 1000,
-            reason: `Turnout (${(s.rate * 100).toFixed(1)}%) is below study average (${(s.studyAvg * 100).toFixed(1)}%)`,
+            id: item.session.id,
+            eventId: item.session.id,
+            title: item.session.title,
+            eventDate: item.session.eventDate,
+            startTime: item.session.startTime,
+            studyId: study.id,
+            studyName: study.name,
+            turnout: item.turnout,
+            rate: item.turnout,
+            turnoutAmongParticipants: item.turnout,
+            eligibleAttendanceRate: item.eligibleRate,
+            studyAverage: Math.round(studyAvg * 1000) / 1000,
+            studyAverageTurnout: Math.round(studyAvg * 1000) / 1000,
+            diff: Math.round((studyAvg - item.turnout) * 1000) / 1000,
+            reason: `Turnout among participants (${Math.round(item.turnout * 100)}%) is ${Math.round((studyAvg - item.turnout) * 100)}% below study average (${Math.round(studyAvg * 100)}%)`,
           });
         }
       }
     }
 
-    // Standalone past events < 50%
-    const standalonePastEvents = await prisma.event.findMany({
-      where: {
-        studyId: null,
-        cancelledAt: null,
-        OR: [{ endedAt: { lte: now } }, { endTime: { lt: now } }],
-        NOT: { AND: [{ type: EventType.WEEKLY }, { recurrenceIndex: null }] },
-      },
-      include: {
-        _count: {
-          select: { attendances: { where: { removedAt: null } } },
-        },
-      },
-      orderBy: { startTime: "desc" },
-      take: 10,
-    });
+    // Sort low attendance events by start time descending
+    lowAttendanceEvents.sort(
+      (a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime(),
+    );
 
-    for (const ev of standalonePastEvents) {
-      const rate = activeMembers ? ev._count.attendances / activeMembers : 0;
-      if (rate < 0.5) {
-        lowAttendanceEvents.push({
-          id: ev.id,
-          title: ev.title,
-          eventDate: ev.eventDate,
-          rate: Math.round(rate * 1000) / 1000,
-          studyName: "Standalone",
-          studyAverage: 0.5,
-          reason: `Turnout (${(rate * 100).toFixed(1)}%) is below 50% threshold`,
-        });
-      }
-    }
-
-    // 4. Members at Risk: Missed the last 2 sessions of a given study (scoped per study)
+    // 4. Members at Risk: Participants with trailingMisses >= 2 (WARNING) or >= 3 (CRITICAL)
+    // ONLY for studies that are still ongoing. Never flag non-participants.
     const membersAtRisk: any[] = [];
     const absentAlerts: any[] = [];
 
-    for (const study of activeStudies) {
-      // Last 2 completed sessions of this study
-      const last2Sessions = study.events.slice(0, 2);
-      if (last2Sessions.length < 2) continue;
+    for (const study of ongoingStudies) {
+      const studyEvents = eventsByStudy.get(study.id) || [];
+      const studyAtts = attendancesByStudy.get(study.id) || [];
+      const heldSessions = getHeldSessions(studyEvents, now);
 
-      const session1 = last2Sessions[0];
-      const session2 = last2Sessions[1];
+      if (heldSessions.length === 0) continue;
 
-      const [att1, att2] = await Promise.all([
-        prisma.attendance.findMany({
-          where: { eventId: session1.id, removedAt: null },
-          select: { memberId: true },
-        }),
-        prisma.attendance.findMany({
-          where: { eventId: session2.id, removedAt: null },
-          select: { memberId: true },
-        }),
-      ]);
+      const participantIds = getStudyParticipants(
+        study.id,
+        studyEvents,
+        studyAtts,
+        now,
+      );
 
-      const attended1 = new Set(att1.map((a) => a.memberId));
-      const attended2 = new Set(att2.map((a) => a.memberId));
+      for (const mId of participantIds) {
+        const m = memberMap.get(mId);
+        if (!m) continue;
 
-      const eligibleForStudy = mappedMembers.filter((m) => {
-        const el1 = getEligibleMembers(
-          { ...session1, study },
-          [m],
-          [],
-          session1.startTime,
+        const memberAtts = studyAtts.filter((a) => a.memberId === mId);
+        const analysis = computeParticipantTrailingMisses(
+          mId,
+          heldSessions,
+          memberAtts,
+          true,
         );
-        const el2 = getEligibleMembers(
-          { ...session2, study },
-          [m],
-          [],
-          session2.startTime,
-        );
-        return el1.length > 0 && el2.length > 0;
-      });
 
-      for (const m of eligibleForStudy) {
-        if (!attended1.has(m.id) && !attended2.has(m.id)) {
-          membersAtRisk.push({
+        if (analysis.alertLevel !== null) {
+          const attendingOtherStudy = checkAttendingOtherStudy(
+            mId,
+            study.id,
+            allEvents,
+            allAttendances,
+            ongoingStudyIds,
+            now,
+          );
+
+          const lastSession =
+            analysis.lastAttendedSessionIndex && analysis.lastAttendedSessionIndex > 0
+              ? heldSessions[analysis.lastAttendedSessionIndex - 1]
+              : null;
+
+          const alertObj = {
             id: m.id,
+            memberId: m.id,
             name: m.name,
+            memberName: m.name,
+            uniqueId: m.uniqueId,
             email: m.email,
             phoneNumber: m.phoneNumber,
             campus: m.campus,
+            batch: computeBatch(m, now),
             studyId: study.id,
             studyName: study.name,
-            missedSessions: 2,
-            sessionTitles: [session1.title, session2.title],
-          });
+            trailingMisses: analysis.trailingMisses,
+            missedSessions: analysis.trailingMisses,
+            alertLevel: analysis.alertLevel, // "WARNING" | "CRITICAL"
+            attendingOtherStudy,
+            lastAttendedSessionTitle: lastSession?.title || null,
+            lastAttendedSessionNumber: analysis.lastAttendedSessionIndex,
+          };
+
+          membersAtRisk.push(alertObj);
 
           absentAlerts.push({
             id: m.id,
             name: m.name,
             email: m.email,
-            consecutiveAbsences: 2,
-            status: "Warning",
+            consecutiveAbsences: analysis.trailingMisses,
+            status: analysis.alertLevel === "CRITICAL" ? "Critical" : "Warning",
+            alertLevel: analysis.alertLevel,
             studyName: study.name,
+            attendingOtherStudy,
           });
         }
       }
     }
 
-    // 5. Top Attendees Per Study
+    // Sort members at risk: CRITICAL first, then by trailingMisses desc
+    membersAtRisk.sort((a, b) => {
+      if (a.alertLevel === "CRITICAL" && b.alertLevel !== "CRITICAL") return -1;
+      if (b.alertLevel === "CRITICAL" && a.alertLevel !== "CRITICAL") return 1;
+      return b.trailingMisses - a.trailingMisses;
+    });
+
+    // 5. Top Attendees Per Registered Study
     const topAttendeesPerStudy: any[] = [];
-    for (const study of activeStudies) {
-      const studyEventIds = study.events.map((e) => e.id);
+    for (const study of allStudies.filter((s) => s.isActive)) {
+      const studyEvents = eventsByStudy.get(study.id) || [];
+      const studyEventIds = studyEvents.map((e) => e.id);
       if (studyEventIds.length === 0) continue;
 
       const topAttendeesRows = await prisma.attendance.groupBy({
@@ -375,6 +441,35 @@ export class DashboardService {
       });
     }
 
+    // Overall average turnout among participants across recent sessions
+    let recentTurnoutSum = 0;
+    let recentTurnoutCount = 0;
+    for (const sess of recentHeldSessions) {
+      const effStudyId = getEffectiveStudyId(sess.studyId);
+      const studyEvents = eventsByStudy.get(effStudyId) || [];
+      const studyAtts = attendancesByStudy.get(effStudyId) || [];
+      const partsAsOf = getStudyParticipants(
+        effStudyId,
+        studyEvents,
+        studyAtts,
+        sess.endedAt || sess.endTime,
+      );
+      const sessAtts = attendancesByEvent.get(sess.id) || [];
+      const eligible = getEligibleMembers(
+        sess,
+        mappedMembers,
+        sessAtts,
+        sess.startTime,
+      );
+      const stats = getEventStats(sess, eligible, sessAtts, partsAsOf.length);
+      if (stats.turnoutAmongParticipants !== null) {
+        recentTurnoutSum += stats.turnoutAmongParticipants;
+        recentTurnoutCount++;
+      }
+    }
+    const overallTurnoutRate =
+      recentTurnoutCount > 0 ? recentTurnoutSum / recentTurnoutCount : null;
+
     // Overall Top Attendees (across all events)
     const overallTopAttendees = await prisma.member.findMany({
       select: {
@@ -399,7 +494,9 @@ export class DashboardService {
         activeMembers,
         totalEvents,
         activeEventsCount: activeEvents.length,
-        attendanceRate,
+        totalStudies: allStudies.length,
+        activeStudiesCount: allStudies.filter((s) => s.isActive).length,
+        attendanceRate: overallTurnoutRate,
       },
       latestCompletedSession,
       needsAttention: lowAttendanceEvents,
@@ -423,3 +520,4 @@ export class DashboardService {
 }
 
 export const dashboardService = new DashboardService();
+

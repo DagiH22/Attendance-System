@@ -12,6 +12,8 @@ import {
   getEligibleMembers,
   getEventStats,
   computeBatch,
+  getEffectiveStudyId,
+  getStudyParticipants,
 } from "../services/academic.service";
 
 const prisma = new PrismaClient() as PrismaClient & { eventCluster: any };
@@ -567,6 +569,46 @@ export const getEventById = async (req: Request, res: Response) => {
       },
     });
 
+    const effectiveStudyId = getEffectiveStudyId(event.studyId);
+    const studyEvents = await prisma.event.findMany({
+      where: {
+        cancelledAt: null,
+        ...(event.studyId ? { studyId: event.studyId } : { studyId: null }),
+        endTime: { lte: event.endTime },
+      },
+      select: {
+        id: true,
+        startTime: true,
+        endTime: true,
+        studyId: true,
+        cancelledAt: true,
+      },
+    });
+
+    const studyAttendances = await prisma.attendance.findMany({
+      where: {
+        eventId: { in: studyEvents.map((e) => e.id) },
+        removedAt: null,
+        status: { in: ["PRESENT", "LATE"] },
+      },
+      select: {
+        memberId: true,
+        eventId: true,
+        status: true,
+        markedAt: true,
+        removedAt: true,
+      },
+    });
+
+    const participantIds = new Set(
+      getStudyParticipants(
+        effectiveStudyId,
+        studyEvents,
+        studyAttendances,
+        event.endTime,
+      ),
+    );
+
     const eligible = getEligibleMembers(
       event,
       allMembers.map((m) => ({
@@ -577,11 +619,50 @@ export const getEventById = async (req: Request, res: Response) => {
       event.startTime,
     );
 
-    const stats = getEventStats(event, eligible, attendances);
+    const stats = getEventStats(
+      event,
+      eligible,
+      attendances,
+      participantIds.size,
+      participantIds,
+    );
 
-    const attendedMemberIds = new Set(attendances.map((a) => a.memberId));
-    const absentees = eligible
-      .filter((m) => !attendedMemberIds.has(m.id))
+    const attendedOrExcusedMemberIds = new Set(
+      attendances
+        .filter(
+          (a) =>
+            a.status === "PRESENT" ||
+            a.status === "LATE" ||
+            a.status === "EXCUSED",
+        )
+        .map((a) => a.memberId),
+    );
+
+    // Default absentees = study participants who missed this event and are not excused
+    const absentees = allMembers
+      .filter(
+        (m) =>
+          participantIds.has(m.id) && !attendedOrExcusedMemberIds.has(m.id),
+      )
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        uniqueId: m.uniqueId,
+        phoneNumber: m.phoneNumber,
+        campus: m.campus,
+        batch: computeBatch(
+          {
+            campus: m.campus,
+            entryAcademicYear: m.entryAcademicYear ?? 2025,
+            batchOverride: m.batchOverride,
+          },
+          event.startTime,
+        ),
+      }));
+
+    // All eligible absentees
+    const allEligibleAbsentees = eligible
+      .filter((m) => !attendedOrExcusedMemberIds.has(m.id))
       .map((m) => ({
         id: m.id,
         name: m.name,
@@ -603,11 +684,14 @@ export const getEventById = async (req: Request, res: Response) => {
       event: {
         ...serialized,
         totalMembers: eligible.length,
+        totalParticipants: participantIds.size,
         stats,
         absentees,
+        allEligibleAbsentees,
       },
       stats,
       absentees,
+      allEligibleAbsentees,
     });
   } catch (err: any) {
     console.error("Error in getEventById:", err?.message ?? err);
@@ -615,7 +699,7 @@ export const getEventById = async (req: Request, res: Response) => {
   }
 };
 
-// GET /api/events/:id/absentees
+// GET /api/events/:id/absentees?type=participants|all (or all=true)
 export const getEventAbsentees = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -656,6 +740,46 @@ export const getEventAbsentees = async (req: Request, res: Response) => {
       }),
     ]);
 
+    const effectiveStudyId = getEffectiveStudyId(event.studyId);
+    const studyEvents = await prisma.event.findMany({
+      where: {
+        cancelledAt: null,
+        ...(event.studyId ? { studyId: event.studyId } : { studyId: null }),
+        endTime: { lte: event.endTime },
+      },
+      select: {
+        id: true,
+        startTime: true,
+        endTime: true,
+        studyId: true,
+        cancelledAt: true,
+      },
+    });
+
+    const studyAttendances = await prisma.attendance.findMany({
+      where: {
+        eventId: { in: studyEvents.map((e) => e.id) },
+        removedAt: null,
+        status: { in: ["PRESENT", "LATE"] },
+      },
+      select: {
+        memberId: true,
+        eventId: true,
+        status: true,
+        markedAt: true,
+        removedAt: true,
+      },
+    });
+
+    const participantIds = new Set(
+      getStudyParticipants(
+        effectiveStudyId,
+        studyEvents,
+        studyAttendances,
+        event.endTime,
+      ),
+    );
+
     const eligible = getEligibleMembers(
       event,
       allMembers.map((m) => ({
@@ -666,11 +790,30 @@ export const getEventAbsentees = async (req: Request, res: Response) => {
       event.startTime,
     );
 
-    const stats = getEventStats(event, eligible, attendances);
-    const attendedMemberIds = new Set(attendances.map((a) => a.memberId));
+    const stats = getEventStats(
+      event,
+      eligible,
+      attendances,
+      participantIds.size,
+      participantIds,
+    );
 
-    const absentees = eligible
-      .filter((m) => !attendedMemberIds.has(m.id))
+    const attendedOrExcusedMemberIds = new Set(
+      attendances
+        .filter(
+          (a) =>
+            a.status === "PRESENT" ||
+            a.status === "LATE" ||
+            a.status === "EXCUSED",
+        )
+        .map((a) => a.memberId),
+    );
+
+    const participantAbsentees = allMembers
+      .filter(
+        (m) =>
+          participantIds.has(m.id) && !attendedOrExcusedMemberIds.has(m.id),
+      )
       .map((m) => ({
         id: m.id,
         name: m.name,
@@ -687,11 +830,37 @@ export const getEventAbsentees = async (req: Request, res: Response) => {
         ),
       }));
 
+    const allEligibleAbsentees = eligible
+      .filter((m) => !attendedOrExcusedMemberIds.has(m.id))
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        uniqueId: m.uniqueId,
+        phoneNumber: m.phoneNumber,
+        campus: m.campus,
+        batch: computeBatch(
+          {
+            campus: m.campus,
+            entryAcademicYear: m.entryAcademicYear ?? 2025,
+            batchOverride: m.batchOverride,
+          },
+          event.startTime,
+        ),
+      }));
+
+    const showAll = req.query.all === "true" || req.query.type === "all";
+    const selectedAbsentees = showAll
+      ? allEligibleAbsentees
+      : participantAbsentees;
+
     return res.status(200).json({
       stats,
-      absentees,
+      absentees: selectedAbsentees,
+      participantAbsentees,
+      allEligibleAbsentees,
+      totalParticipants: participantIds.size,
       totalEligible: eligible.length,
-      totalAbsent: absentees.length,
+      totalAbsent: selectedAbsentees.length,
     });
   } catch (err: any) {
     console.error("Error in getEventAbsentees:", err?.message ?? err);
