@@ -8,7 +8,11 @@
     "start": "node dist/index.js",
     "dev": "nodemon src/index.ts",
     "test": "vitest run",
-    "seed:dev": "ts-node prisma/seed.dev.ts"
+    "seed:dev": "ts-node prisma/seed.dev.ts",
+    "studio": "prisma studio",
+    "prisma:safe": "node scripts/prisma-safe.js",
+    "backfill": "ts-node scripts/run-backfill.ts",
+    "rehearse:migration": "node scripts/rehearse-migration.js"
   },
   "keywords": [],
   "author": "",

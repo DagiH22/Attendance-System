@@ -6,6 +6,30 @@ An enterprise-grade **Attendance & Event Management System** designed for academ
 
 ---
 
+## 🏷️ Versions & Release Branches
+
+| Release | Status | Git Branch / Tag | Description | Deployment Guide |
+| :--- | :--- | :--- | :--- | :--- |
+| **v1** | **Live Production** | Branch: `master`<br>Hotfixes: `release/v1`<br>Tag: `v1` | Production release before studies & lateness. Deployable and frozen until v2 cutover. | Deploy from tag `v1` or branch `release/v1`. Uses production database. |
+| **v2** | **In Development** | Integration: `v2`<br>Working: `fix/ui-consistency-and-studies` | Introduces liturgical studies, lateness tracking, excuses, soft-deletion, and unified UI consistency. | Development & rehearsal use local throwaway databases ONLY (`.env.local`, `.env.v2.dev`). Production migration runbook: [docs/MIGRATION_V1_TO_V2.md](docs/MIGRATION_V1_TO_V2.md). |
+
+### Deploying v1
+To deploy or hotfix v1:
+```bash
+git checkout release/v1
+# Deploy frontend & backend against production DATABASE_URL
+```
+
+### Deploying v2 (When Ready for Cutover)
+At scheduled cutover time:
+1. Rehearse migration and review backfills: [docs/MIGRATION_V1_TO_V2.md](docs/MIGRATION_V1_TO_V2.md).
+2. Merge `v2` into `master` and tag `v2.0.0`.
+3. Apply additive migrations: `npm run prisma:safe migrate deploy`.
+4. Run backfill: `npm run backfill -- --apply`.
+5. Deploy v2 application servers.
+
+---
+
 ## 🔄 System Overview / Workflow
 
 The system is designed to reduce manual effort and streamline attendance operations:
