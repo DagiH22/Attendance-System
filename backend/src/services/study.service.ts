@@ -223,12 +223,26 @@ export class StudyService {
     });
   }
 
-  async deleteStudy(id: string) {
-    // Unlink events from study, keep events as Standalone
-    await this.prisma.event.updateMany({
+  async deleteStudy(id: string, moveSessionsToStandalone: boolean = false) {
+    const sessionCount = await this.prisma.event.count({
       where: { studyId: id },
-      data: { studyId: null },
     });
+
+    if (sessionCount > 0 && !moveSessionsToStandalone) {
+      const error: any = new Error(
+        "Cannot delete a study that contains sessions. Please archive it instead, or confirm moving its sessions to Standalone.",
+      );
+      error.statusCode = 400;
+      error.sessionCount = sessionCount;
+      throw error;
+    }
+
+    if (sessionCount > 0 && moveSessionsToStandalone) {
+      await this.prisma.event.updateMany({
+        where: { studyId: id },
+        data: { studyId: null },
+      });
+    }
 
     return this.prisma.study.delete({
       where: { id },

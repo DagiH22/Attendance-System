@@ -125,11 +125,17 @@ export const deleteStudy = async (req: Request, res: Response) => {
     const idStr = Array.isArray(id) ? id[0] : id;
     if (!idStr) return res.status(400).json({ error: "Study id is required" });
 
-    await studyService.deleteStudy(idStr);
+    const moveSessions =
+      req.query.moveSessionsToStandalone === "true" ||
+      req.body?.moveSessionsToStandalone === true;
+
+    await studyService.deleteStudy(idStr, moveSessions);
     return res.status(200).json({ message: "Study deleted successfully" });
   } catch (err: any) {
     console.error("Error in deleteStudy:", err?.message ?? err);
-    return res.status(500).json({ error: err.message || "Internal server error" });
+    return res
+      .status(err.statusCode || 500)
+      .json({ error: err.message || "Internal server error", sessionCount: err.sessionCount });
   }
 };
 
