@@ -37,7 +37,15 @@ app.use(express.json());
 
 app.use("/auth", authRouter);
 app.use("/members", memberRouter);
+
+/**
+ * DOMAIN GLOSSARY:
+ * UI / Client / Docs: "Session" is used (Study contains Sessions; standalone sessions are without a study).
+ * Backend DB / Prisma: Model is named "Event".
+ * /sessions is registered as an alias to /events to support clean REST paths without breaking v1.
+ */
 app.use("/events", eventRouter);
+app.use("/sessions", eventRouter);
 app.use("/attendance", attendanceRouter);
 app.use("/dashboard", dashboardRouter);
 app.use("/studies", studyRouter);

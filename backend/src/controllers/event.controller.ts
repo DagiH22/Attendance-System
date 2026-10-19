@@ -1200,7 +1200,7 @@ export const exportEventAttendanceExcel = async (
     workbook.creator = "Attendance System";
     workbook.created = new Date();
 
-    const sheet = workbook.addWorksheet("Attended Members");
+    const sheet = workbook.addWorksheet("Session Attendance");
     sheet.columns = [
       { header: "Member ID", key: "uniqueId", width: 20 },
       { header: "Name", key: "name", width: 28 },
@@ -1236,7 +1236,7 @@ export const exportEventAttendanceExcel = async (
     }
 
     const buffer = await workbook.xlsx.writeBuffer();
-    setExcelDownloadHeaders(res, event.title, "event-attendance");
+    setExcelDownloadHeaders(res, event.title, "session-attendance");
     return res.status(200).send(Buffer.from(buffer));
   } catch (err: any) {
     console.error("Error in exportEventAttendanceExcel:", err?.message ?? err);

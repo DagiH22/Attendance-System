@@ -1,3 +1,11 @@
+/**
+ * DOMAIN GLOSSARY:
+ * In all user interfaces, routes, buttons, toasts, empty states, and exports:
+ * "Session" is used instead of "Event".
+ * - A Study contains Sessions.
+ * - A session not in a study is "Standalone".
+ * In backend models & database: "Event" is preserved for backwards compatibility.
+ */
 export type EventStatus = "UPCOMING" | "ACTIVE" | "PAST" | "DEACTIVATED" | "CANCELLED";
 export type EventType = "WEEKLY" | "MONTHLY" | "ONE_TIME";
 export type SessionType = "EVENING" | "OVERNIGHT" | "OTHER";
@@ -27,7 +35,9 @@ export interface Study {
   requiredSessions?: number | null;
   defaultLateGraceMinutes?: number | null;
   isActive: boolean;
+  createdAt?: string;
   sessionCount?: number;
+  totalSessions?: number;
   activeSessions?: number;
   events?: DashboardEvent[];
 }
@@ -192,8 +202,11 @@ export interface NotParticipatingMember {
   phoneNumber: string | null;
   campus: string;
   effectiveBatch: string;
+  batch?: string;
   department: string | null;
-  attendingOtherStudy: boolean;
+  attendingOtherStudy?: boolean;
+  attendedOtherStudies?: boolean;
+  otherStudies?: Array<{ id: string; name: string }>;
   isExcusedOnly: boolean;
   badges: string[];
 }
