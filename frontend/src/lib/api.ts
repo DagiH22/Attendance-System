@@ -141,7 +141,10 @@ export const getStudies = async () => (await api.get("/studies")).data.studies;
 export const getStudyById = async (id: string) => (await api.get(`/studies/${id}`)).data;
 export const createStudy = async (data: any) => (await api.post("/studies", data)).data;
 export const updateStudy = async (id: string, data: any) => (await api.patch(`/studies/${id}`, data)).data;
-export const deleteStudy = async (id: string) => (await api.delete(`/studies/${id}`)).data;
+export const deleteStudy = async (id: string, moveSessionsToStandalone?: boolean) =>
+  (await api.delete(`/studies/${id}`, {
+    params: moveSessionsToStandalone ? { moveSessionsToStandalone: "true" } : {},
+  })).data;
 export const addSessionsToStudy = async (id: string, data: any) => (await api.post(`/studies/${id}/sessions`, data)).data;
 export const getStudyStats = async (id: string) => (await api.get(`/studies/${id}/stats`)).data;
 export const getStudyGrid = async (id: string) => (await api.get(`/studies/${id}/grid`)).data;

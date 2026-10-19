@@ -1,26 +1,33 @@
-import React, { useEffect, useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import api, { getPromotePreview } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
 import type { Member, PromotePreviewResponse } from "../types/members";
-import { usePersistentState } from "../hooks/usePersistentState";
+import { usePersistedViewState } from "../hooks/usePersistedViewState";
 
-type StatusFilter = "ALL" | "ACTIVE" | "INACTIVE";
-type GenderFilter = "ALL" | "MALE" | "FEMALE" | "UNSPECIFIED";
-type BatchFilter =
-  | "ALL"
-  | "FRESHMAN"
-  | "YEAR_2"
-  | "YEAR_3"
-  | "YEAR_4"
-  | "YEAR_5"
-  | "GRADUATE";
-type SortOption =
-  | "ALPHA_ASC"
-  | "ALPHA_DESC"
-  | "MOST_ATTENDANCE"
-  | "LEAST_ATTENDANCE"
-  | "RECENTLY_REGISTERED";
+import PageLayout from "../components/layout/PageLayout";
+import PageHeader from "../components/layout/PageHeader";
+import FilterBar from "../components/shared/FilterBar";
+import EmptyState from "../components/shared/EmptyState";
+import CopyPhoneButton from "../components/shared/CopyPhoneButton";
+import CopyAllPhonesDropdown from "../components/shared/CopyAllPhonesDropdown";
+import MemberFormDrawer from "../components/members/MemberFormDrawer";
+
+import {
+  Users,
+  UserPlus,
+  Download,
+  GraduationCap,
+  Edit,
+  ChevronLeft,
+  ChevronRight,
+  AlertCircle,
+} from "lucide-react";
+
+export interface DashboardMember extends Member {
+  attendanceCount: number;
+}
 
 const UI_PAGE_SIZE = 15;
 
@@ -43,10 +50,6 @@ const getFileNameFromContentDisposition = (
   return extracted || fallback || "members.xlsx";
 };
 
-export interface DashboardMember extends Member {
-  attendanceCount: number;
-}
-
 const formatBatchLabel = (b?: string | null) => {
   if (!b) return "—";
   if (b === "FRESHMAN") return "Freshman";
@@ -67,117 +70,75 @@ const formatCampusLabel = (c?: string | null) => {
     .join(" ");
 };
 
-const MembersPage: React.FC = () => {
-  const [members, setMembers] = useState<DashboardMember[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>("");
-  const [successMessage, setSuccessMessage] = useState<string>("");
-  const [isExporting, setIsExporting] = useState<boolean>(false);
-  const [currentPage, setCurrentPage] = useState<number>(1);
+export const MembersPage: React.FC = () => {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { admin } = useAuth();
+  const isSuperAdmin = admin?.role === "SUPER_ADMIN";
 
-  // Filters and Sorting State
-  const [statusFilter, setStatusFilter] = usePersistentState<StatusFilter>(
-    "members-status-filter",
-    "ALL",
-  );
-  const [genderFilter, setGenderFilter] = usePersistentState<GenderFilter>(
-    "members-gender-filter",
-    "ALL",
-  );
-  const [batchFilter, setBatchFilter] = usePersistentState<BatchFilter>(
-    "members-batch-filter",
-    "ALL",
-  );
-  const [sortBy, setSortBy] = usePersistentState<SortOption>(
-    "members-sort-by",
-    "ALPHA_ASC",
-  );
-  // Search State
-  const [searchQuery, setSearchQuery] = usePersistentState<string>(
-    "members-search-query",
-    "",
-  );
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(searchQuery);
-  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+  // URL-persisted view state (Item 4)
+  const { viewState, setViewState } = usePersistedViewState("members", {
+    defaults: {
+      q: "",
+      status: "ALL",
+      gender: "ALL",
+      batch: "ALL",
+      sortBy: "ALPHA_ASC",
+      page: 1,
+    },
+  });
 
-  const searchInputRef = React.useRef<HTMLInputElement | null>(null);
+  // Drawer state for Register / Edit (Item 10)
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [memberToEdit, setMemberToEdit] = useState<Member | null>(null);
 
-  // Promote Preview State (SUPER_ADMIN)
+  // Promote Preview Modal state (SUPER_ADMIN)
   const [isPromoteModalOpen, setIsPromoteModalOpen] = useState(false);
   const [promoteLoading, setPromoteLoading] = useState(false);
   const [promoteData, setPromoteData] = useState<PromotePreviewResponse | null>(null);
   const [promoteError, setPromoteError] = useState("");
   const [promoteSearch, setPromoteSearch] = useState("");
 
-  const navigate = useNavigate();
-  const location = useLocation();
-  const { logout, admin } = useAuth();
-  const isSuperAdmin = admin?.role === "SUPER_ADMIN";
+  // Toast feedback
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
 
-  // Debounce effect
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearchQuery(searchQuery);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
+  const [isExporting, setIsExporting] = useState<boolean>(false);
 
-  useEffect(() => {
-    fetchMembers();
-  }, []);
-
-  useEffect(() => {
-    if (
-      location.state &&
-      (location.state as { registered?: boolean }).registered
-    ) {
-      setSuccessMessage("Member registered successfully.");
-      navigate(location.pathname, { replace: true, state: null });
-    }
-  }, [location.pathname, location.state, navigate]);
-
-  useEffect(() => {
-    if (!successMessage) return;
-    const timer = window.setTimeout(() => setSuccessMessage(""), 3500);
-    return () => window.clearTimeout(timer);
-  }, [successMessage]);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [debouncedSearchQuery, statusFilter, genderFilter, batchFilter, sortBy]);
-
-  const fetchMembers = async () => {
-    setLoading(true);
-    try {
+  // Data fetching with TanStack Query (cached, zero flicker)
+  const {
+    data: members = [],
+    isLoading,
+    isError,
+    error: fetchError,
+    refetch,
+  } = useQuery<DashboardMember[]>({
+    queryKey: ["members"],
+    queryFn: async () => {
       const response = await api.get("/members");
-      const fetchedMembers = response.data?.members || response.data || [];
-
-      const mappedMembers: DashboardMember[] = fetchedMembers.map((m: any) => ({
+      const fetched = response.data?.members || response.data || [];
+      return fetched.map((m: any) => ({
         ...m,
         effectiveBatch: m.effectiveBatch || m.batch,
         attendanceCount: m._count?.attendances || m.attendanceCount || 0,
       }));
-      setMembers(mappedMembers);
-    } catch (err: any) {
-      console.error("Error fetching members:", err);
-      setError("Failed to load members.");
-    } finally {
-      setLoading(false);
-    }
-  };
+    },
+    staleTime: 60 * 1000,
+  });
 
   const handleExportExcel = async () => {
     try {
       setIsExporting(true);
-      setError("");
-
       const response = await api.get("/members/export/excel", {
         responseType: "blob",
         params: {
-          status: statusFilter,
-          gender: genderFilter,
-          sortBy,
-          q: debouncedSearchQuery,
+          status: viewState.status,
+          gender: viewState.gender,
+          sortBy: viewState.sortBy,
+          q: viewState.q,
         },
       });
 
@@ -197,9 +158,9 @@ const MembersPage: React.FC = () => {
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
+      showToast("Excel exported successfully");
     } catch (err: any) {
-      console.error("Error exporting members excel:", err);
-      setError(
+      showToast(
         err?.response?.data?.error ||
           err?.response?.data?.message ||
           "Failed to export members.",
@@ -225,33 +186,35 @@ const MembersPage: React.FC = () => {
     }
   };
 
-  // Filter and Sort Logic
-  const filteredMembers = members.filter((m) => {
-    const matchStatus =
-      statusFilter === "ALL" ||
-      (statusFilter === "ACTIVE" && m.isActive) ||
-      (statusFilter === "INACTIVE" && !m.isActive);
+  // Filter & Search Logic
+  const filteredMembers = React.useMemo(() => {
+    return members.filter((m) => {
+      const matchStatus =
+        viewState.status === "ALL" ||
+        (viewState.status === "ACTIVE" && m.isActive) ||
+        (viewState.status === "INACTIVE" && !m.isActive);
 
-    const matchGender =
-      genderFilter === "ALL" ||
-      (genderFilter === "UNSPECIFIED" && !m.gender) ||
-      (genderFilter !== "UNSPECIFIED" && m.gender === genderFilter);
+      const matchGender =
+        viewState.gender === "ALL" ||
+        (viewState.gender === "UNSPECIFIED" && !m.gender) ||
+        (viewState.gender !== "UNSPECIFIED" && m.gender === viewState.gender);
 
-    const effectiveB = m.effectiveBatch || m.batch;
-    const matchBatch =
-      batchFilter === "ALL" || effectiveB === batchFilter;
+      const effectiveB = m.effectiveBatch || m.batch;
+      const matchBatch =
+        viewState.batch === "ALL" || effectiveB === viewState.batch;
 
-    const q = debouncedSearchQuery.toLowerCase().trim();
-    const matchSearch =
-      q === "" ||
-      m.name.toLowerCase().includes(q) ||
-      m.uniqueId.toLowerCase().includes(q) ||
-      (m.phoneNumber && m.phoneNumber.toLowerCase().includes(q)) ||
-      (m.email && m.email.toLowerCase().includes(q)) ||
-      (m.campus && m.campus.toLowerCase().includes(q));
+      const q = viewState.q.toLowerCase().trim();
+      const matchSearch =
+        q === "" ||
+        m.name.toLowerCase().includes(q) ||
+        m.uniqueId.toLowerCase().includes(q) ||
+        Boolean(m.phoneNumber && m.phoneNumber.toLowerCase().includes(q)) ||
+        Boolean(m.email && m.email.toLowerCase().includes(q)) ||
+        Boolean(m.campus && m.campus.toLowerCase().includes(q));
 
-    return matchStatus && matchGender && matchBatch && matchSearch;
-  });
+      return matchStatus && matchGender && matchBatch && matchSearch;
+    });
+  }, [members, viewState.status, viewState.gender, viewState.batch, viewState.q]);
 
   const getMatchRank = (m: DashboardMember, q: string) => {
     if (!q) return 4;
@@ -262,8 +225,8 @@ const MembersPage: React.FC = () => {
     return 4;
   };
 
-  const sortedAndFilteredMembers = (() => {
-    const q = debouncedSearchQuery.toLowerCase().trim();
+  const sortedAndFilteredMembers = React.useMemo(() => {
+    const q = viewState.q.toLowerCase().trim();
     const withRank = filteredMembers.map((m) => ({
       m,
       rank: getMatchRank(m, q),
@@ -272,7 +235,7 @@ const MembersPage: React.FC = () => {
     withRank.sort((a, b) => {
       if (a.rank !== b.rank) return a.rank - b.rank;
 
-      switch (sortBy) {
+      switch (viewState.sortBy) {
         case "ALPHA_ASC":
           return a.m.name.localeCompare(b.m.name);
         case "ALPHA_DESC":
@@ -292,17 +255,20 @@ const MembersPage: React.FC = () => {
     });
 
     return withRank.map((x) => x.m);
-  })();
+  }, [filteredMembers, viewState.q, viewState.sortBy]);
 
   const totalPages = Math.max(
     1,
     Math.ceil(sortedAndFilteredMembers.length / UI_PAGE_SIZE),
   );
+  const currentPage = Math.min(Math.max(1, viewState.page), totalPages);
 
-  const paginatedMembers = sortedAndFilteredMembers.slice(
-    (currentPage - 1) * UI_PAGE_SIZE,
-    currentPage * UI_PAGE_SIZE,
-  );
+  const paginatedMembers = React.useMemo(() => {
+    return sortedAndFilteredMembers.slice(
+      (currentPage - 1) * UI_PAGE_SIZE,
+      currentPage * UI_PAGE_SIZE,
+    );
+  }, [sortedAndFilteredMembers, currentPage]);
 
   const filteredPromoteList = (promoteData?.preview || []).filter((p) => {
     const q = promoteSearch.toLowerCase().trim();
@@ -317,250 +283,190 @@ const MembersPage: React.FC = () => {
   });
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 relative">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 fixed top-0 w-full z-30">
-        <div className="px-4 pt-6 max-w-4xl mx-auto w-full">
-          <div className="flex justify-between items-center mb-4">
-            <h1 className="text-2xl font-bold text-gray-900">Members</h1>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center">
-                <div className="relative flex items-center">
-                  <div
-                    className={`flex items-center transition-all duration-300 ease-in-out overflow-hidden rounded-md ${
-                      isSearchExpanded || searchQuery ? "w-40 sm:w-48" : "w-10"
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!isSearchExpanded) {
-                          setIsSearchExpanded(true);
-                          setTimeout(() => searchInputRef.current?.focus(), 80);
-                        } else {
-                          searchInputRef.current?.focus();
-                        }
-                      }}
-                      className="flex-shrink-0 p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md bg-white/0"
-                      aria-label="Open search"
-                    >
-                      <svg
-                        className="w-5 h-5"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="2"
-                          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                        />
-                      </svg>
-                    </button>
-
-                    <input
-                      ref={searchInputRef}
-                      type="text"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      onBlur={() => {
-                        if (!searchQuery) setIsSearchExpanded(false);
-                      }}
-                      placeholder="Search members..."
-                      className={`ml-2 w-full border border-transparent text-sm bg-transparent focus:outline-none focus:ring-0 transition-opacity duration-200 ${
-                        isSearchExpanded || searchQuery
-                          ? "opacity-100 px-2 py-1.5"
-                          : "opacity-0 pointer-events-none p-0"
-                      }`}
-                    />
-                  </div>
-                </div>
-              </div>
-              <button
-                onClick={async () => {
-                  await logout();
-                  navigate("/login", { replace: true });
-                }}
-                className="text-sm font-medium text-red-600 bg-red-50 px-3 py-1.5 rounded-md flex-shrink-0"
-              >
-                Logout
-              </button>
-            </div>
-          </div>
-
-          {/* Tab Navigation */}
-          <nav className="flex space-x-4">
-            <button
-              onClick={() => navigate("/events")}
-              className={`pb-2 px-1 text-sm font-medium border-b-2 transition-colors ${
-                location.pathname === "/events"
-                  ? "border-blue-600 text-blue-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700"
-              }`}
-            >
-              Events
-            </button>
-            <button
-              onClick={() => navigate("/studies")}
-              className={`pb-2 px-1 text-sm font-medium border-b-2 transition-colors ${
-                location.pathname === "/studies"
-                  ? "border-blue-600 text-blue-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700"
-              }`}
-            >
-              Studies
-            </button>
-            <button
-              onClick={() => navigate("/members")}
-              className={`pb-2 px-1 text-sm font-medium border-b-2 transition-colors ${
-                location.pathname === "/members"
-                  ? "border-blue-600 text-blue-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700"
-              }`}
-            >
-              Members
-            </button>
-            <button
-              onClick={() => navigate("/dashboard")}
-              className={`pb-2 px-1 text-sm font-medium border-b-2 transition-colors ${
-                location.pathname === "/dashboard"
-                  ? "border-blue-600 text-blue-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700"
-              }`}
-            >
-              Dashboard
-            </button>
-          </nav>
+    <PageLayout>
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 rounded-xl bg-slate-900 text-white px-4 py-2.5 text-xs font-bold shadow-2xl transition animate-in fade-in slide-in-from-bottom-2">
+          {toastMessage}
         </div>
-      </header>
+      )}
 
-      {/* Main Content */}
-      <div className="max-w-4xl mx-auto w-full px-4 pt-32 sm:pt-40 pb-6 space-y-4">
-        {successMessage && (
-          <div className="mb-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
-            {successMessage}
-          </div>
-        )}
+      {/* Page Header (Item 2) */}
+      <PageHeader
+        title="Members"
+        subtitle="Cohort roster, academic standing, and contact registry"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Promote Preview (SUPER_ADMIN) */}
+          {isSuperAdmin && (
+            <button
+              type="button"
+              onClick={handleOpenPromotePreview}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-purple-200 bg-purple-50 px-3 py-2 text-xs font-bold text-purple-700 hover:bg-purple-100 transition shadow-2xs"
+              title="Preview batch auto-promotion and graduation"
+            >
+              <GraduationCap className="w-3.5 h-3.5" />
+              <span>Promote Preview</span>
+            </button>
+          )}
 
-        {/* Filters & Actions Bar */}
-        <div className="flex flex-col mb-2 relative">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-            {/* Desktop and Mobile Filters */}
-            <div className="flex flex-wrap items-center gap-2">
-              {/* Batch Filter */}
-              <select
-                value={batchFilter}
-                onChange={(e) => setBatchFilter(e.target.value as BatchFilter)}
-                className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50"
-              >
-                <option value="ALL">All Batches</option>
-                <option value="FRESHMAN">Freshman</option>
-                <option value="YEAR_2">Year 2</option>
-                <option value="YEAR_3">Year 3</option>
-                <option value="YEAR_4">Year 4</option>
-                <option value="YEAR_5">Year 5</option>
-                <option value="GRADUATE">Graduate</option>
-              </select>
+          {/* Export Excel */}
+          <button
+            type="button"
+            onClick={() => void handleExportExcel()}
+            disabled={isLoading || isExporting}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs disabled:opacity-50"
+          >
+            <Download className="w-3.5 h-3.5 text-slate-500" />
+            <span>{isExporting ? "Exporting..." : "Export Excel"}</span>
+          </button>
 
-              {/* Status Filter */}
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-                className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50"
-              >
-                <option value="ALL">All Status</option>
-                <option value="ACTIVE">Active</option>
-                <option value="INACTIVE">Inactive</option>
-              </select>
-
-              {/* Gender Filter */}
-              <select
-                value={genderFilter}
-                onChange={(e) => setGenderFilter(e.target.value as GenderFilter)}
-                className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50"
-              >
-                <option value="ALL">All Genders</option>
-                <option value="MALE">Male</option>
-                <option value="FEMALE">Female</option>
-              </select>
-
-              {/* Sort Selector */}
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as SortOption)}
-                className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50"
-              >
-                <option value="ALPHA_ASC">Name (A-Z)</option>
-                <option value="ALPHA_DESC">Name (Z-A)</option>
-                <option value="MOST_ATTENDANCE">Most Attendance</option>
-                <option value="LEAST_ATTENDANCE">Least Attendance</option>
-                <option value="RECENTLY_REGISTERED">Recently Registered</option>
-              </select>
-            </div>
-
-            {/* Action Buttons: Promote Preview & Excel */}
-            <div className="flex items-center gap-2">
-              {isSuperAdmin && (
-                <button
-                  type="button"
-                  onClick={handleOpenPromotePreview}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 border border-purple-200 rounded-lg text-xs font-bold text-purple-700 hover:bg-purple-100 transition shadow-sm"
-                  title="Preview batch auto-promotion and graduation"
-                >
-                  <span>🎓</span>
-                  Promote Preview
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => void handleExportExcel()}
-                disabled={loading || isExporting}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs font-bold text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-60"
-              >
-                {isExporting ? (
-                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-emerald-300 border-t-emerald-700" />
-                ) : (
-                  <span>⬇</span>
-                )}
-                Export Excel
-              </button>
-            </div>
-          </div>
-
-          <div className="text-xs text-gray-500 font-medium">
-            Showing {sortedAndFilteredMembers.length} of {members.length} members
-          </div>
+          {/* Register Member Drawer Trigger (Item 10) */}
+          <button
+            type="button"
+            onClick={() => {
+              setMemberToEdit(null);
+              setIsDrawerOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 transition active:scale-[0.98]"
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            <span>Register Member</span>
+          </button>
         </div>
+      </PageHeader>
 
-        {error && (
-          <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm border border-red-100">
-            {error}
+      {/* Filter and Control Bar (Item 4 & 11) */}
+      <FilterBar
+        searchQuery={viewState.q}
+        onSearchChange={(q) => setViewState({ q, page: 1 })}
+        searchPlaceholder="Search members by name, ID, phone, or campus..."
+        rightActions={
+          <div className="flex items-center gap-3">
+            <div className="text-xs font-semibold text-slate-500 whitespace-nowrap">
+              {sortedAndFilteredMembers.length} {sortedAndFilteredMembers.length === 1 ? "member" : "members"}
+            </div>
+            <CopyAllPhonesDropdown
+              members={sortedAndFilteredMembers}
+              onToast={(msg) => showToast(msg)}
+              label="Copy Phones"
+            />
           </div>
-        )}
+        }
+      >
+        <select
+          value={viewState.batch}
+          onChange={(e) => setViewState({ batch: e.target.value, page: 1 })}
+          className="rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-white focus:border-blue-500 focus:outline-none"
+        >
+          <option value="ALL">All Batches</option>
+          <option value="FRESHMAN">Freshman</option>
+          <option value="YEAR_2">Year 2</option>
+          <option value="YEAR_3">Year 3</option>
+          <option value="YEAR_4">Year 4</option>
+          <option value="YEAR_5">Year 5</option>
+          <option value="GRADUATE">Graduate</option>
+        </select>
 
-        {/* Member Cards List */}
-        {loading ? (
-          <div className="space-y-4 animate-pulse">
-            {[1, 2, 3].map((n) => (
-              <div
-                key={n}
-                className="bg-white rounded-xl h-28 w-full border border-gray-100"
-              />
-            ))}
+        <select
+          value={viewState.status}
+          onChange={(e) => setViewState({ status: e.target.value, page: 1 })}
+          className="rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-white focus:border-blue-500 focus:outline-none"
+        >
+          <option value="ALL">All Status</option>
+          <option value="ACTIVE">Active</option>
+          <option value="INACTIVE">Inactive</option>
+        </select>
+
+        <select
+          value={viewState.gender}
+          onChange={(e) => setViewState({ gender: e.target.value, page: 1 })}
+          className="rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-white focus:border-blue-500 focus:outline-none"
+        >
+          <option value="ALL">All Genders</option>
+          <option value="MALE">Male</option>
+          <option value="FEMALE">Female</option>
+        </select>
+
+        <select
+          value={viewState.sortBy}
+          onChange={(e) => setViewState({ sortBy: e.target.value, page: 1 })}
+          className="rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-white focus:border-blue-500 focus:outline-none"
+        >
+          <option value="ALPHA_ASC">Name (A-Z)</option>
+          <option value="ALPHA_DESC">Name (Z-A)</option>
+          <option value="MOST_ATTENDANCE">Most Attendance</option>
+          <option value="LEAST_ATTENDANCE">Least Attendance</option>
+          <option value="RECENTLY_REGISTERED">Recently Registered</option>
+        </select>
+      </FilterBar>
+
+      {/* Error state */}
+      {isError && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs font-semibold text-rose-800 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600" />
+            <span>{(fetchError as Error)?.message || "Failed to load members."}</span>
           </div>
-        ) : sortedAndFilteredMembers.length === 0 ? (
-          <div className="text-center py-12 px-4 bg-white rounded-xl border border-gray-100 border-dashed">
-            <h3 className="text-lg font-bold text-gray-900 mb-1">
-              No Members Found
-            </h3>
-            <p className="text-gray-500 text-sm">
-              We couldn't find any members matching your criteria.
-            </p>
-          </div>
-        ) : (
-          paginatedMembers.map((member) => {
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            className="rounded-lg bg-rose-600 px-2.5 py-1 text-white font-bold hover:bg-rose-700"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Loading Skeleton */}
+      {isLoading && (
+        <div className="space-y-3 animate-pulse">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <div
+              key={n}
+              className="h-20 rounded-2xl border border-slate-200/80 bg-white"
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!isLoading && sortedAndFilteredMembers.length === 0 && (
+        <EmptyState
+          icon={Users}
+          title="No members found"
+          description={
+            viewState.q || viewState.batch !== "ALL" || viewState.status !== "ALL"
+              ? "No members match your current filters. Try resetting or adjusting search keywords."
+              : "No members have been registered yet in the system."
+          }
+          actionLabel={
+            viewState.q || viewState.batch !== "ALL" || viewState.status !== "ALL"
+              ? "Reset Filters"
+              : "Register First Member"
+          }
+          onAction={() => {
+            if (viewState.q || viewState.batch !== "ALL" || viewState.status !== "ALL") {
+              setViewState({
+                q: "",
+                status: "ALL",
+                gender: "ALL",
+                batch: "ALL",
+                sortBy: "ALPHA_ASC",
+                page: 1,
+              });
+            } else {
+              setMemberToEdit(null);
+              setIsDrawerOpen(true);
+            }
+          }}
+        />
+      )}
+
+      {/* Members List */}
+      {!isLoading && sortedAndFilteredMembers.length > 0 && (
+        <div className="space-y-2.5">
+          {paginatedMembers.map((member) => {
             const effectiveBatchStr = member.effectiveBatch || member.batch;
             return (
               <div
@@ -574,285 +480,226 @@ const MembersPage: React.FC = () => {
                     navigate(`/members/${member.id}`);
                   }
                 }}
-                className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 transition-all hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                className="group relative rounded-2xl border border-slate-200/80 bg-white p-4 shadow-2xs hover:border-blue-400 hover:shadow-md transition cursor-pointer"
               >
-                <div className="flex justify-between items-start mb-2 gap-3">
-                  <div>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  {/* Left: Info */}
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="text-base sm:text-lg font-bold text-gray-900 leading-tight">
+                      <h3 className="text-base font-bold text-slate-900 group-hover:text-blue-600 transition leading-tight">
                         {member.name}
                       </h3>
-                      {/* Effective Batch Badge */}
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+
+                      {/* Effective Cohort Pill */}
+                      <span className="rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-700 border border-blue-200/60">
                         {formatBatchLabel(effectiveBatchStr)}
                       </span>
 
-                      {/* Override flag */}
+                      {/* Manual Override Tag */}
                       {member.batchOverride && (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">
+                        <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-200">
                           Override
                         </span>
                       )}
+
+                      {/* Status indicator */}
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold border ${
+                          member.isActive
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : "bg-slate-100 text-slate-600 border-slate-200"
+                        }`}
+                      >
+                        {member.isActive ? "Active" : "Inactive"}
+                      </span>
                     </div>
-                    <div className="text-xs text-gray-500 mt-1 flex items-center gap-2">
-                      <span>ID: {member.uniqueId}</span>
+
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                      <span>ID: <strong className="text-slate-700">{member.uniqueId}</strong></span>
                       <span>·</span>
                       <span>Campus: {formatCampusLabel(member.campus)}</span>
+                      {member.department && (
+                        <>
+                          <span>·</span>
+                          <span>Dept: {member.department}</span>
+                        </>
+                      )}
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`px-2.5 py-0.5 text-xs font-bold rounded-full border whitespace-nowrap ${
-                        member.isActive
-                          ? "bg-green-100 text-green-800 border-green-200"
-                          : "bg-red-100 text-red-800 border-red-200"
-                      }`}
-                    >
-                      {member.isActive ? "Active" : "Inactive"}
-                    </span>
+                  {/* Right: Phone, Stats, Actions */}
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3 justify-between sm:justify-end border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100">
+                    {/* Individual Phone Copy Button (Item 11) */}
+                    {member.phoneNumber ? (
+                      <div
+                        className="flex items-center gap-1 text-xs font-semibold text-slate-700 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-200/60"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <span>{member.phoneNumber}</span>
+                        <CopyPhoneButton
+                          phoneNumber={member.phoneNumber}
+                          onCopied={() => showToast(`Copied ${member.name}'s phone`)}
+                        />
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-400 italic">No phone</span>
+                    )}
+
+                    {/* Attendance count */}
+                    <div className="rounded-xl bg-purple-50 px-2.5 py-1 text-xs font-bold text-purple-700 border border-purple-200/60">
+                      {member.attendanceCount} {member.attendanceCount === 1 ? "session" : "sessions"}
+                    </div>
+
+                    {/* Edit Drawer Trigger (Item 10) */}
                     <button
                       type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        navigate(`/members/${member.id}/edit`);
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMemberToEdit(member);
+                        setIsDrawerOpen(true);
                       }}
-                      className="inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-semibold bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200"
+                      className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100 transition"
                     >
-                      ✏️ Edit
+                      <Edit className="w-3 h-3 text-slate-500" />
+                      <span>Edit</span>
                     </button>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-3 border-t border-gray-100 text-xs text-gray-600">
-                  <div className="flex items-center gap-3">
-                    {member.phoneNumber && (
-                      <span className="font-medium text-gray-700">
-                        📞 {member.phoneNumber}
-                      </span>
-                    )}
-                    {member.email && (
-                      <span className="text-gray-500 truncate max-w-[200px]">
-                        ✉️ {member.email}
-                      </span>
-                    )}
-                  </div>
-                  <div className="font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-100">
-                    {member.attendanceCount} attended
                   </div>
                 </div>
               </div>
             );
-          })
-        )}
+          })}
+        </div>
+      )}
 
-        {/* Pagination */}
-        {!loading && totalPages > 1 && sortedAndFilteredMembers.length > 0 && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 flex items-center justify-between gap-3 mt-4">
+      {/* Pagination Controls */}
+      {!isLoading && totalPages > 1 && (
+        <div className="flex items-center justify-between border-t border-slate-200 pt-4">
+          <span className="text-xs font-semibold text-slate-500">
+            Page {currentPage} of {totalPages}
+          </span>
+          <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-              disabled={currentPage === 1}
-              className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={currentPage <= 1}
+              onClick={() => setViewState({ page: currentPage - 1 })}
+              className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition disabled:opacity-40"
             >
-              Previous
+              <ChevronLeft className="w-3.5 h-3.5" />
+              <span>Previous</span>
             </button>
-
-            <div className="flex items-center gap-2 text-sm text-gray-600">
-              <span className="font-semibold text-gray-900">
-                Page {currentPage}
-              </span>
-              <span>of {totalPages}</span>
-            </div>
-
             <button
               type="button"
-              onClick={() =>
-                setCurrentPage((prev) => Math.min(totalPages, prev + 1))
-              }
-              disabled={currentPage === totalPages}
-              className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={currentPage >= totalPages}
+              onClick={() => setViewState({ page: currentPage + 1 })}
+              className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition disabled:opacity-40"
             >
-              Next
+              <span>Next</span>
+              <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Floating Action Button */}
-      <button
-        onClick={() => navigate("/members/register")}
-        className="fixed bottom-6 right-4 md:bottom-8 md:right-8 bg-blue-600 shadow-lg hover:bg-blue-700 text-white rounded-full h-14 px-5 flex items-center justify-center z-10 font-medium active:scale-95 transition-all"
-      >
-        <svg
-          className="w-5 h-5 mr-1.5"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth="2"
-            d="M12 4v16m8-8H4"
-          />
-        </svg>
-        Register Member
-      </button>
+      {/* Member Form Drawer (Item 10) */}
+      <MemberFormDrawer
+        isOpen={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        memberToEdit={memberToEdit}
+        onSuccess={(saved) => {
+          showToast(`Saved member ${saved.name}`);
+          void queryClient.invalidateQueries({ queryKey: ["members"] });
+        }}
+      />
 
       {/* Promote Preview Modal (SUPER_ADMIN) */}
       {isPromoteModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 px-4 py-6">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl flex flex-col">
-            <div className="flex items-start justify-between gap-4 border-b border-gray-100 pb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-8 backdrop-blur-xs">
+          <div className="w-full max-w-4xl max-h-[85vh] rounded-2xl bg-white shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
               <div>
-                <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                  <span>🎓</span> Academic Year Batch Upgrade Preview
-                </h2>
-                <p className="mt-1 text-xs text-gray-500">
-                  Batches are dynamically computed from each member's entry academic year and campus program duration (4 vs 5 years). This preview is read-only.
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <GraduationCap className="w-5 h-5 text-purple-600" />
+                  Cohort Auto-Promotion Preview
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Total Active: <strong>{promoteData?.summary?.totalActive ?? 0}</strong> · Graduating: <strong>{promoteData?.summary?.graduatingCount ?? 0}</strong> · Promoting: <strong>{promoteData?.summary?.promotingCount ?? 0}</strong>
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsPromoteModalOpen(false)}
-                className="rounded-full p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                className="rounded-xl px-3 py-1.5 text-xs font-bold text-slate-500 hover:bg-slate-100 transition"
               >
-                ✕
+                Close
               </button>
             </div>
 
-            {promoteLoading ? (
-              <div className="py-16 flex flex-col items-center justify-center">
-                <div className="h-10 w-10 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
-                <p className="mt-3 text-sm text-gray-500 font-medium">
-                  Calculating progression rules...
-                </p>
-              </div>
-            ) : promoteError ? (
-              <div className="my-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-                {promoteError}
-              </div>
-            ) : promoteData ? (
-              <div className="mt-4 space-y-4">
-                {/* Summary Metrics */}
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4 text-center">
-                    <p className="text-xs font-semibold uppercase text-gray-400">
-                      Active Members
-                    </p>
-                    <p className="mt-1 text-2xl font-bold text-gray-900">
-                      {promoteData.summary.totalActive}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-center">
-                    <p className="text-xs font-semibold uppercase text-blue-500">
-                      Advancing Next Year
-                    </p>
-                    <p className="mt-1 text-2xl font-bold text-blue-700">
-                      {promoteData.summary.promotingCount}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-purple-100 bg-purple-50 p-4 text-center">
-                    <p className="text-xs font-semibold uppercase text-purple-500">
-                      Graduating Next Year
-                    </p>
-                    <p className="mt-1 text-2xl font-bold text-purple-700">
-                      {promoteData.summary.graduatingCount}
-                    </p>
-                  </div>
-                </div>
+            <div className="p-4 border-b border-slate-100 bg-slate-50/50">
+              <input
+                type="text"
+                value={promoteSearch}
+                onChange={(e) => setPromoteSearch(e.target.value)}
+                placeholder="Search promotion list by name, ID, or campus..."
+                className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-800 shadow-2xs focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
 
-                {/* Search */}
-                <div>
-                  <input
-                    type="text"
-                    value={promoteSearch}
-                    onChange={(e) => setPromoteSearch(e.target.value)}
-                    placeholder="Search preview by name, campus, or batch..."
-                    className="w-full rounded-xl border border-gray-200 px-3.5 py-2 text-xs text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-                  />
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+              {promoteLoading ? (
+                <div className="space-y-2 animate-pulse">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="h-12 rounded-xl bg-slate-100" />
+                  ))}
                 </div>
-
-                {/* Table */}
-                <div className="overflow-x-auto rounded-2xl border border-gray-100">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-gray-50 text-gray-500 uppercase tracking-wider font-semibold">
-                      <tr>
-                        <th className="py-3 px-4">Member</th>
-                        <th className="py-3 px-3">Campus</th>
-                        <th className="py-3 px-3">Current Effective Batch</th>
-                        <th className="py-3 px-3">Next Year's Batch</th>
-                        <th className="py-3 px-4 text-right">Status</th>
+              ) : promoteError ? (
+                <div className="rounded-xl bg-rose-50 p-4 text-xs font-semibold text-rose-700 border border-rose-200">
+                  {promoteError}
+                </div>
+              ) : filteredPromoteList.length === 0 ? (
+                <div className="text-center py-10 text-xs text-slate-400">
+                  No preview records found.
+                </div>
+              ) : (
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-slate-500 font-bold">
+                      <th className="pb-2">Name</th>
+                      <th className="pb-2">Campus</th>
+                      <th className="pb-2">Current Cohort</th>
+                      <th className="pb-2">Projected Next Cohort</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredPromoteList.map((p) => (
+                      <tr key={p.id} className="hover:bg-slate-50">
+                        <td className="py-2.5 font-bold text-slate-900">{p.name}</td>
+                        <td className="py-2.5 text-slate-600">{p.campus}</td>
+                        <td className="py-2.5">
+                          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700">
+                            {p.currentBatch}
+                          </span>
+                        </td>
+                        <td className="py-2.5">
+                          <span
+                            className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${
+                              p.nextBatch === "GRADUATE"
+                                ? "bg-purple-100 text-purple-800"
+                                : "bg-blue-100 text-blue-800"
+                            }`}
+                          >
+                            {p.nextBatch}
+                          </span>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {filteredPromoteList.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="py-8 text-center text-gray-400 italic">
-                            No member transitions match your search.
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredPromoteList.map((row) => (
-                          <tr key={row.id} className="hover:bg-gray-50/80">
-                            <td className="py-3 px-4 font-bold text-gray-900">
-                              <div>{row.name}</div>
-                              <div className="text-[10px] text-gray-400 font-normal">
-                                {row.uniqueId}
-                              </div>
-                            </td>
-                            <td className="py-3 px-3 text-gray-600">
-                              {formatCampusLabel(row.campus)}
-                            </td>
-                            <td className="py-3 px-3 font-medium text-gray-700">
-                              {formatBatchLabel(row.currentBatch)}
-                              {row.hasOverride && (
-                                <span className="ml-1 text-[9px] bg-amber-100 text-amber-800 px-1 py-0.5 rounded">
-                                  override
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-3 px-3 font-bold text-blue-700">
-                              {formatBatchLabel(row.nextBatch)}
-                            </td>
-                            <td className="py-3 px-4 text-right">
-                              {row.isGraduating ? (
-                                <span className="inline-block rounded-full bg-purple-100 px-2.5 py-0.5 text-[11px] font-bold text-purple-800">
-                                  🎓 Graduating
-                                </span>
-                              ) : row.isPromoting ? (
-                                <span className="inline-block rounded-full bg-blue-100 px-2.5 py-0.5 text-[11px] font-bold text-blue-800">
-                                  ↑ Advancing
-                                </span>
-                              ) : (
-                                <span className="inline-block rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-medium text-gray-600">
-                                  Unchanged
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ) : null}
-
-            <div className="mt-6 flex justify-end border-t border-gray-100 pt-3">
-              <button
-                type="button"
-                onClick={() => setIsPromoteModalOpen(false)}
-                className="rounded-xl bg-gray-900 px-5 py-2 text-sm font-semibold text-white hover:bg-gray-800"
-              >
-                Close Preview
-              </button>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         </div>
       )}
-    </div>
+    </PageLayout>
   );
 };
 

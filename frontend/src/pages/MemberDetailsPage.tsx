@@ -5,6 +5,9 @@ import { useAuth } from "../contexts/AuthContext";
 import { toFriendlyError } from "../lib/errors";
 import formatDate from "../lib/formatDate";
 import type { Member } from "../types/members";
+import CopyPhoneButton from "../components/shared/CopyPhoneButton";
+import MemberFormDrawer from "../components/members/MemberFormDrawer";
+import { Edit } from "lucide-react";
 
 interface AttendanceRecord {
   id: string;
@@ -130,6 +133,7 @@ const MemberDetailsPage: React.FC = () => {
   const [isResending, setIsResending] = useState(false);
   const [resendMessage, setResendMessage] = useState<string | null>(null);
   const [resendError, setResendError] = useState<string | null>(null);
+  const [isEditDrawerOpen, setIsEditDrawerOpen] = useState(false);
 
   // Batch Override Modal (SUPER_ADMIN)
   const [isOverrideModalOpen, setIsOverrideModalOpen] = useState(false);
@@ -605,26 +609,36 @@ const MemberDetailsPage: React.FC = () => {
       )}
 
       {/* Top Header */}
-      <div className="flex items-center space-x-4 mb-6">
-        <button
-          onClick={() => navigate("/members")}
-          className="text-gray-500 hover:text-gray-700 p-2 rounded-full hover:bg-gray-100 transition-colors"
-        >
-          <svg
-            className="w-6 h-6"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center space-x-4">
+          <button
+            onClick={() => navigate("/members")}
+            className="text-gray-500 hover:text-gray-700 p-2 rounded-full hover:bg-gray-100 transition-colors"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth="2"
-              d="M10 19l-7-7m0 0l7-7m-7 7h18"
-            />
-          </svg>
+            <svg
+              className="w-6 h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M10 19l-7-7m0 0l7-7m-7 7h18"
+              />
+            </svg>
+          </button>
+          <h1 className="text-2xl font-bold text-gray-900">Member Details</h1>
+        </div>
+        <button
+          type="button"
+          onClick={() => setIsEditDrawerOpen(true)}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs"
+        >
+          <Edit className="w-3.5 h-3.5 text-slate-500" />
+          <span>Edit Profile</span>
         </button>
-        <h1 className="text-2xl font-bold text-gray-900">Member Details</h1>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -657,7 +671,12 @@ const MemberDetailsPage: React.FC = () => {
               </div>
               <div>
                 <p className="text-sm text-gray-500 mb-1">Phone</p>
-                <p className="font-medium text-gray-900">{phoneDisplay}</p>
+                <div className="flex items-center gap-2">
+                  <p className="font-medium text-gray-900">{phoneDisplay}</p>
+                  {member.phoneNumber && (
+                    <CopyPhoneButton phoneNumber={member.phoneNumber} />
+                  )}
+                </div>
               </div>
               <div>
                 <p className="text-sm text-gray-500 mb-1">Email</p>
@@ -1126,6 +1145,17 @@ const MemberDetailsPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Edit Member Drawer */}
+      <MemberFormDrawer
+        isOpen={isEditDrawerOpen}
+        onClose={() => setIsEditDrawerOpen(false)}
+        memberToEdit={member}
+        onSuccess={async () => {
+          setIsEditDrawerOpen(false);
+          await fetchMemberDetails({ withGlobalLoading: false });
+        }}
+      />
     </div>
   );
 };
