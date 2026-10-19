@@ -21,6 +21,8 @@ import type {
   SessionType,
 } from "../types/events";
 import { useAuth } from "../contexts/AuthContext";
+import CopyPhoneButton from "../components/shared/CopyPhoneButton";
+import CopyAllPhonesDropdown from "../components/shared/CopyAllPhonesDropdown";
 
 type LocationState = {
   event?: DashboardEvent;
@@ -1341,19 +1343,25 @@ const EventDetailsPage: React.FC = () => {
                       </span>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = !showAllEligibleAbsentees;
-                        setShowAllEligibleAbsentees(next);
-                        void fetchAbsentees(next);
-                      }}
-                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-100 transition self-start sm:self-auto"
-                    >
-                      {showAllEligibleAbsentees
-                        ? "← Show Participants Only"
-                        : "Show All Eligible Members →"}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+                      <CopyAllPhonesDropdown
+                        members={filteredAbsentees}
+                        label="Copy All Phones"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = !showAllEligibleAbsentees;
+                          setShowAllEligibleAbsentees(next);
+                          void fetchAbsentees(next);
+                        }}
+                        className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-100 transition"
+                      >
+                        {showAllEligibleAbsentees
+                          ? "← Show Participants Only"
+                          : "Show All Eligible Members →"}
+                      </button>
+                    </div>
                   </div>
 
                   <input
@@ -1524,12 +1532,15 @@ const EventDetailsPage: React.FC = () => {
                               ID: {m.uniqueId} · {m.campus} · {m.batch}
                             </p>
                             {m.phoneNumber ? (
-                              <a
-                                href={`tel:${m.phoneNumber}`}
-                                className="mt-1 inline-flex items-center text-xs font-semibold text-blue-600 hover:underline"
-                              >
-                                📞 {m.phoneNumber}
-                              </a>
+                              <div className="mt-1 flex items-center gap-1.5">
+                                <a
+                                  href={`tel:${m.phoneNumber}`}
+                                  className="inline-flex items-center text-xs font-semibold text-blue-600 hover:underline"
+                                >
+                                  📞 {m.phoneNumber}
+                                </a>
+                                <CopyPhoneButton phoneNumber={m.phoneNumber} />
+                              </div>
                             ) : (
                               <p className="mt-1 text-xs text-slate-400">
                                 No phone recorded
