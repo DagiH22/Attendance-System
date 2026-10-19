@@ -9,13 +9,11 @@ import EventsPage from "./pages/EventsPage";
 import MembersPage from "./pages/MembersPage";
 import DashboardPage from "./pages/Dashboard";
 import MemberDetailsPage from "./pages/MemberDetailsPage";
-import RegisterMemberPage from "./pages/RegisterMemberPage";
-import EditMemberPage from "./pages/EditMemberPage";
-import CreateEvent from "./pages/CreateEvent";
 import EventDetailsPage from "./pages/EventDetailsPage";
 import StudiesPage from "./pages/StudiesPage";
 import TakeAttendancePage from "./pages/TakeAttendancePage";
 import ProtectedRoute from "./components/ProtectedRoute";
+import AppLayout from "./components/layout/AppLayout";
 import "./App.css";
 
 function App() {
@@ -26,23 +24,44 @@ function App() {
 
         {/* Protected Routes */}
         <Route element={<ProtectedRoute />}>
-          <Route path="/events" element={<EventsPage />} />
-          <Route path="/studies" element={<StudiesPage />} />
-          <Route path="/members" element={<MembersPage />} />
-          <Route path="/members/register" element={<RegisterMemberPage />} />
-          <Route path="/members/:memberId/edit" element={<EditMemberPage />} />
-          <Route path="/members/:memberId" element={<MemberDetailsPage />} />
-          <Route path="/events/create" element={<CreateEvent />} />
-          <Route path="/events/:id" element={<EventDetailsPage />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
+          {/* Main Shell with Persistent Header & Navigation Tabs (Item 3) */}
+          <Route element={<AppLayout />}>
+            <Route path="/sessions" element={<EventsPage />} />
+            <Route path="/events" element={<Navigate to="/sessions" replace />} />
+            <Route path="/studies" element={<StudiesPage />} />
+            <Route path="/members" element={<MembersPage />} />
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/sessions/:id" element={<EventDetailsPage />} />
+            <Route path="/events/:id" element={<EventDetailsPage />} />
+            <Route path="/members/:memberId" element={<MemberDetailsPage />} />
+          </Route>
+
+          {/* Standalone Live Attendance Scanner */}
+          <Route path="/sessions/:id/attendance" element={<TakeAttendancePage />} />
+          <Route path="/events/:id/attendance" element={<TakeAttendancePage />} />
+
+          {/* Redirect legacy standalone creation routes to drawer-driven views */}
           <Route
-            path="/events/:id/attendance"
-            element={<TakeAttendancePage />}
+            path="/events/create"
+            element={<Navigate to="/sessions" replace />}
+          />
+          <Route
+            path="/sessions/create"
+            element={<Navigate to="/sessions" replace />}
+          />
+          <Route
+            path="/members/register"
+            element={<Navigate to="/members" replace />}
+          />
+          <Route
+            path="/members/:memberId/edit"
+            element={<Navigate to="/members" replace />}
           />
         </Route>
 
-        {/* Redirect root to login */}
-        <Route path="/" element={<Navigate to="/login" replace />} />
+        {/* Root Redirect to Sessions */}
+        <Route path="/" element={<Navigate to="/sessions" replace />} />
+        <Route path="*" element={<Navigate to="/sessions" replace />} />
       </Routes>
     </Router>
   );
