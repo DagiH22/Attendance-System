@@ -416,7 +416,7 @@ const TakeAttendancePage: React.FC = () => {
 
   useEffect(() => {
     setManualPage(1);
-  }, [attendanceRecords, members, presentMembers, searchQuery]);
+  }, [attendanceRecords, members, searchQuery]);
 
   useEffect(() => {
     if (manualPage >= totalManualPages) {
