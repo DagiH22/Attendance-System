@@ -8,6 +8,7 @@ import {
   deleteEvent,
   exportEventAttendanceExcel,
   getAllEvents,
+  getSessionLocations,
   getEventAttendance,
   getEventClusterById,
   getEventById,
@@ -26,6 +27,9 @@ router.use(verifyAuth);
 
 // create event (super admin only)
 router.post("/", requireRole("SUPER_ADMIN"), createEvent);
+
+// get distinct past locations, most used first (Item 3)
+router.get("/locations", getSessionLocations);
 
 // get list of all events (supports studyId, sessionType, status filters)
 router.get("/", getAllEvents);

@@ -15,6 +15,7 @@ import {
   getEffectiveStudyId,
   getStudyParticipants,
 } from "../services/academic.service";
+import { normalizeLocation } from "../config/location.config";
 
 const prisma = new PrismaClient() as PrismaClient & { eventCluster: any };
 
@@ -35,7 +36,7 @@ const validateEventPayload = (payload: {
 }) => {
   const title = String(payload.title ?? "").trim();
   const description = String(payload.description ?? "").trim();
-  const location = String(payload.location ?? "").trim();
+  const location = normalizeLocation(payload.location);
 
   if (!title) {
     return { error: "Event title is required" };
@@ -57,10 +58,6 @@ const validateEventPayload = (payload: {
     return { error: "Event end time is required" };
   }
 
-  if (!location) {
-    return { error: "Event location is required" };
-  }
-
   return {
     value: {
       title,
@@ -77,7 +74,7 @@ const validateClusterPayload = (payload: {
 }) => {
   const title = String(payload.title ?? "").trim();
   const description = String(payload.description ?? "").trim();
-  const location = String(payload.location ?? "").trim();
+  const location = normalizeLocation(payload.location);
 
   if (!title) {
     return { error: "Event title is required" };
@@ -85,10 +82,6 @@ const validateClusterPayload = (payload: {
 
   if (!description) {
     return { error: "Event description is required" };
-  }
-
-  if (!location) {
-    return { error: "Event location is required" };
   }
 
   return {
@@ -272,12 +265,8 @@ export const createEvent = async (req: Request, res: Response) => {
         ? type
         : EventType.ONE_TIME;
 
-    // validate location string
-    if (typeof location !== "string" || location.trim() === "") {
-      return res
-        .status(400)
-        .json({ error: "location must be a non-empty string" });
-    }
+    // Location is optional; normalize whitespace
+    const normalizedLocation = normalizeLocation(location);
 
     const studyId = req.body.studyId || null;
     const sessionType = req.body.sessionType || SessionType.EVENING;
@@ -1356,12 +1345,10 @@ export const updateEvent = async (req: Request, res: Response) => {
     }
 
     if (location !== undefined) {
-      if (typeof location !== "string" || location.trim() === "") {
-        return res
-          .status(400)
-          .json({ error: "location must be a non-empty string" });
+      if (typeof location !== "string") {
+        return res.status(400).json({ error: "location must be a string" });
       }
-      updateData.location = location.trim();
+      updateData.location = normalizeLocation(location);
     }
 
     if (startTime !== undefined) {
@@ -1658,9 +1645,44 @@ export const deleteEvent = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * Item 3: Return distinct previously used locations from existing sessions,
+ * ordered by frequency (most used first).
+ */
+export const getSessionLocations = async (_req: Request, res: Response) => {
+  try {
+    const counts = await prisma.event.groupBy({
+      by: ["location"],
+      where: {
+        location: {
+          not: "",
+        },
+      },
+      _count: {
+        location: true,
+      },
+      orderBy: {
+        _count: {
+          location: "desc",
+        },
+      },
+    });
+
+    const locations = counts
+      .map((c) => normalizeLocation(c.location))
+      .filter((loc) => loc.length > 0);
+
+    return res.json({ locations });
+  } catch (error: any) {
+    console.error("Error fetching session locations:", error);
+    return res.status(500).json({ error: "Failed to fetch session locations" });
+  }
+};
+
 export default {
   createEvent,
   getAllEvents,
+  getSessionLocations,
   getEventById,
   getEventClusterById,
   getEventAttendance,
@@ -1672,3 +1694,4 @@ export default {
   updateEventCluster,
   deleteEvent,
 };
+

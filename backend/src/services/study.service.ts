@@ -259,7 +259,7 @@ export class StudyService {
     });
     if (!study) throw new Error("Study not found");
 
-    const defaultLocation = "Main Hall";
+    const defaultLocation = "";
     const defaultGrace = study.defaultLateGraceMinutes ?? 15;
 
     if (input.mode === "one-time") {
@@ -271,7 +271,7 @@ export class StudyService {
 
       const title = input.title?.trim() || `${study.name} - Session`;
       const description = input.description?.trim() || study.description || title;
-      const location = input.location?.trim() || defaultLocation;
+      const location = (input.location ?? "").trim().replace(/\s+/g, " ");
       const sessionType = input.sessionType || SessionType.EVENING;
 
       const created = await this.prisma.event.create({
@@ -305,7 +305,7 @@ export class StudyService {
 
       const title = input.title?.trim() || study.name;
       const description = input.description?.trim() || study.description || title;
-      const location = input.location?.trim() || defaultLocation;
+      const location = (input.location ?? "").trim().replace(/\s+/g, " ");
       const sessionType = input.sessionType || SessionType.EVENING;
 
       const length = (() => {
@@ -396,7 +396,7 @@ export class StudyService {
         const endTime = new Date(item.endTime || new Date(startTime.getTime() + 2 * 3600 * 1000));
         const title = item.title?.trim() || `${study.name} - Session ${i + 1}`;
         const description = item.description?.trim() || study.description || title;
-        const location = item.location?.trim() || input.location?.trim() || defaultLocation;
+        const location = (item.location ?? input.location ?? "").trim().replace(/\s+/g, " ");
         const sessionType = item.sessionType || SessionType.EVENING;
 
         creates.push(

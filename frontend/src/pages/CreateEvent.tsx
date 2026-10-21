@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
 import formatDate from "../lib/formatDate";
+import LocationCombobox from "../components/shared/LocationCombobox";
+import { normalizeLocation } from "../config/location.config";
 
 const CreateEvent: React.FC = () => {
   const navigate = useNavigate();
@@ -54,7 +56,6 @@ const CreateEvent: React.FC = () => {
   const [descriptionError, setDescriptionError] = useState("");
   const [dateError, setDateError] = useState("");
   const [timeError, setTimeError] = useState("");
-  const [locationError, setLocationError] = useState("");
   const [clusterError, setClusterError] = useState("");
 
   // Custom dropdown state to keep the options list width equal to the control
@@ -139,7 +140,6 @@ const CreateEvent: React.FC = () => {
     setDescriptionError("");
     setDateError("");
     setTimeError("");
-    setLocationError("");
     setClusterError("");
 
     if (!title.trim()) {
@@ -170,11 +170,7 @@ const CreateEvent: React.FC = () => {
       }
     }
 
-    // Location must be provided
-    if (!location || location.trim() === "") {
-      setLocationError("Event location is required");
-      isValid = false;
-    }
+    // Location is optional
 
     if (type !== "custom") {
       // End time must be after start time
@@ -234,7 +230,7 @@ const CreateEvent: React.FC = () => {
         payload = {
           title,
           description,
-          location: location.trim(),
+          location: normalizeLocation(location),
           clusterEvents: clusterEventsPayload,
         };
       } else {
@@ -255,7 +251,7 @@ const CreateEvent: React.FC = () => {
           eventDate: new Date(eventDate).toISOString(),
           startTime: startDateTime,
           endTime: endDateTime,
-          location: location.trim(),
+          location: normalizeLocation(location),
           ...(type === "weekly" && endDate
             ? { endDate: new Date(endDate).toISOString() }
             : {}),
@@ -358,22 +354,14 @@ const CreateEvent: React.FC = () => {
               htmlFor="location"
               className="block text-sm font-medium text-gray-700 mb-1"
             >
-              Location <span className="text-red-500">*</span>
+              Location <span className="text-gray-400 font-normal lowercase">(optional)</span>
             </label>
-            <input
-              type="text"
+            <LocationCombobox
               id="location"
               value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="e.g. Main Hall, Building A"
-              required
-              className={`w-full px-4 py-2.5 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${locationError ? "border-red-300 bg-red-50" : "border-gray-300"}`}
+              onChange={(val) => setLocation(val)}
+              placeholder="Optional — e.g. ማዕከል 4ኛ ፎቅ"
             />
-            {locationError && (
-              <p className="mt-1 text-xs text-red-600 font-medium">
-                {locationError}
-              </p>
-            )}
           </div>
 
           {/* Event Type */}

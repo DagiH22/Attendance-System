@@ -2,8 +2,10 @@ import React, { useState, useEffect, useMemo } from "react";
 import { RightDrawer } from "../shared/RightDrawer";
 import type { DashboardEvent, Study, SessionType } from "../../types/events";
 import api, { getStudies } from "../../lib/api";
-import { AlertTriangle, Clock, MapPin, Search } from "lucide-react";
+import { AlertTriangle, Clock, Search } from "lucide-react";
 import formatDate from "../../lib/formatDate";
+import LocationCombobox from "../shared/LocationCombobox";
+import { normalizeLocation } from "../../config/location.config";
 
 export interface SessionFormDrawerProps {
   isOpen: boolean;
@@ -158,7 +160,7 @@ export const SessionFormDrawer: React.FC<SessionFormDrawerProps> = ({
         const payload: any = {
           title: title.trim(),
           description: description.trim(),
-          location: location.trim(),
+          location: normalizeLocation(location),
           startTime: startDateTime,
           endTime: endDateTime,
           sessionType,
@@ -172,7 +174,7 @@ export const SessionFormDrawer: React.FC<SessionFormDrawerProps> = ({
         const payload: any = {
           title: title.trim(),
           description: description.trim(),
-          location: location.trim(),
+          location: normalizeLocation(location),
           type: mode === "weekly" ? "WEEKLY" : "ONE_TIME",
           eventDate: startDate,
           startTime: startDateTime,
@@ -361,21 +363,16 @@ export const SessionFormDrawer: React.FC<SessionFormDrawerProps> = ({
 
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-              Location
+              Location <span className="text-slate-400 font-normal lowercase">(optional)</span>
             </label>
-            <div className="relative">
-              <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                value={location}
-                onChange={(e) => {
-                  setLocation(e.target.value);
-                  setIsDirty(true);
-                }}
-                placeholder="e.g., Main Hall / St. Mary Cathedral"
-                className="w-full rounded-xl border border-slate-200 pl-9 pr-3.5 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
+            <LocationCombobox
+              value={location}
+              onChange={(val) => {
+                setLocation(val);
+                setIsDirty(true);
+              }}
+              placeholder="Optional — e.g. ማዕከል 4ኛ ፎቅ"
+            />
           </div>
         </div>
 

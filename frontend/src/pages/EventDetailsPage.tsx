@@ -25,6 +25,8 @@ import CopyPhoneButton from "../components/shared/CopyPhoneButton";
 import CopyAllPhonesDropdown from "../components/shared/CopyAllPhonesDropdown";
 import { usePersistedViewState } from "../hooks/usePersistedViewState";
 import { RotateCcw } from "lucide-react";
+import LocationCombobox from "../components/shared/LocationCombobox";
+import { normalizeLocation } from "../config/location.config";
 
 type LocationState = {
   event?: DashboardEvent;
@@ -780,8 +782,6 @@ const EventDetailsPage: React.FC = () => {
     if (!editForm.title.trim()) nextErrors.title = "Event title is required";
     if (!editForm.description.trim())
       nextErrors.description = "Event description is required";
-    if (!editForm.location.trim())
-      nextErrors.location = "Event location is required";
     if (!editForm.startTime) nextErrors.startTime = "Start time is required";
     if (!editForm.endTime) nextErrors.endTime = "End time is required";
 
@@ -803,7 +803,7 @@ const EventDetailsPage: React.FC = () => {
       const response = await api.patch(`/events/${event.id}`, {
         title: editForm.title.trim(),
         description: editForm.description.trim(),
-        location: editForm.location.trim(),
+        location: normalizeLocation(editForm.location),
         status: editForm.status === "DEACTIVATED" ? "DEACTIVATED" : "UPCOMING",
         startTime: parsedStartTime.toISOString(),
         endTime: parsedEndTime.toISOString(),
@@ -1955,19 +1955,17 @@ const EventDetailsPage: React.FC = () => {
 
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Location <span className="text-red-500">*</span>
+                  Location <span className="text-gray-400 font-normal lowercase">(optional)</span>
                 </label>
-                <input
-                  type="text"
+                <LocationCombobox
                   value={editForm.location}
-                  onChange={(e) =>
+                  onChange={(val) =>
                     setEditForm((prev) => ({
                       ...prev,
-                      location: e.target.value,
+                      location: val,
                     }))
                   }
-                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                  required
+                  placeholder="Optional — e.g. ማዕከል 4ኛ ፎቅ"
                 />
               </div>
 
