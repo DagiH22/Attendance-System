@@ -94,7 +94,7 @@ export const NewSplitButton: React.FC<NewSplitButtonProps> = ({
               </div>
               <div className="text-left">
                 <div className="font-semibold text-slate-800">New Study</div>
-                <div className="text-[11px] text-slate-500">Course or liturgical series</div>
+                <div className="text-[11px] text-slate-500">Course or study series</div>
               </div>
             </button>
           )}

@@ -293,12 +293,15 @@ export const StudiesPage: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    document.title = "Studies";
+  }, []);
+
   return (
     <PageLayout>
-      {/* Shared Page Header */}
+      {/* Shared Page Header (Item 2 & 5) */}
       <PageHeader
-        title="Liturgical Studies"
-        subtitle="Church Hymn Department Attendance"
+        title="Studies"
       >
         <NewSplitButton
           primaryLabel="New Study"
@@ -440,7 +443,7 @@ export const StudiesPage: React.FC = () => {
         <EmptyState
           icon={BookOpen}
           title="No studies created yet"
-          description="Create your first study program to schedule sessions and track liturgical progress."
+          description="Create your first study program to schedule sessions and track progress."
           actionLabel="Create Study"
           onAction={() => {
             setStudyToEdit(null);

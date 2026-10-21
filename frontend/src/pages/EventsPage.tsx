@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import api, { getStudies } from "../lib/api";
@@ -274,12 +274,15 @@ export const EventsPage: React.FC = () => {
     void queryClient.invalidateQueries({ queryKey: ["studies"] });
   };
 
+  useEffect(() => {
+    document.title = "Sessions";
+  }, []);
+
   return (
     <PageLayout>
       {/* Shared Page Header */}
       <PageHeader
         title="Sessions"
-        subtitle="Liturgical Department Schedule & Attendance"
       >
         <NewSplitButton
           primaryLabel="New Session"

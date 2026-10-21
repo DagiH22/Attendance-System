@@ -211,6 +211,10 @@ const MemberDetailsPage: React.FC = () => {
     void fetchMemberDetails({ withGlobalLoading: true });
   }, [fetchMemberDetails]);
 
+  useEffect(() => {
+    document.title = member?.name || "Member Details";
+  }, [member?.name]);
+
   const handleDeactivate = async () => {
     try {
       await api.patch(`/members/${memberId}/deactivate`);

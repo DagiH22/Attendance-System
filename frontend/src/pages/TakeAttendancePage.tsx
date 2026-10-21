@@ -204,6 +204,10 @@ const TakeAttendancePage: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    document.title = "Take Attendance";
+  }, []);
+
+  useEffect(() => {
     // Auto-dismiss feedback message after 3 seconds so screen stays clean
     if (feedback) {
       const timer = setTimeout(() => {

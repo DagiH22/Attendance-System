@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { dashboardApi } from "../lib/dashboard.api";
 import {
@@ -25,6 +25,10 @@ export default function DashboardPage() {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
   };
+
+  useEffect(() => {
+    document.title = "Dashboard";
+  }, []);
 
   // TanStack Query for instant cached data and seamless revalidation (Item 3)
   const {
@@ -53,10 +57,9 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Persistent Page Header (Item 2) */}
+      {/* Persistent Page Header (Item 2 & 5) */}
       <PageHeader
-        title="Department Dashboard"
-        subtitle="Hymn Department · Real-time attendance health, risk alerts, and tracking"
+        title="Dashboard"
       >
         <div className="flex items-center gap-2">
           <button

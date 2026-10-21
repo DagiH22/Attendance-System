@@ -217,6 +217,10 @@ const EventDetailsPage: React.FC = () => {
   const [isUndoing, setIsUndoing] = useState(false);
   const [undoError, setUndoError] = useState("");
 
+  useEffect(() => {
+    document.title = event?.title || "Session";
+  }, [event?.title]);
+
   // Edit Event Form
   const [editForm, setEditForm] = useState({
     title: "",

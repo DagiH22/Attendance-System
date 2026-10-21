@@ -154,7 +154,7 @@ export const StudyFormDrawer: React.FC<StudyFormDrawerProps> = ({
       subtitle={
         isEditing
           ? "Update curriculum, audience eligibility, and grace periods"
-          : "Define a liturgical program, course series, or seasonal cluster"
+          : "Define a study program, course series, or seasonal cluster"
       }
       onSave={handleSubmit}
       saveLabel={isEditing ? "Update Study" : "Create Study"}
@@ -214,7 +214,7 @@ export const StudyFormDrawer: React.FC<StudyFormDrawerProps> = ({
               setName(e.target.value);
               setIsDirty(true);
             }}
-            placeholder="e.g., Zema & Liturgical Rites"
+            placeholder="e.g., Summer Course Series"
             className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           {errors.name && <p className="mt-1 text-xs text-rose-600 font-medium">{errors.name}</p>}

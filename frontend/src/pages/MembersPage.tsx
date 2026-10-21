@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import api, { getPromotePreview } from "../lib/api";
@@ -283,6 +283,10 @@ export const MembersPage: React.FC = () => {
     );
   });
 
+  useEffect(() => {
+    document.title = "Members";
+  }, []);
+
   return (
     <PageLayout>
       {/* Toast Notification */}
@@ -292,10 +296,9 @@ export const MembersPage: React.FC = () => {
         </div>
       )}
 
-      {/* Page Header (Item 2) */}
+      {/* Page Header (Item 2 & 5) */}
       <PageHeader
         title="Members"
-        subtitle="Cohort roster, academic standing, and contact registry"
       >
         <div className="flex flex-wrap items-center gap-2">
           {/* Promote Preview (SUPER_ADMIN) */}

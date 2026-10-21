@@ -210,7 +210,7 @@ export const SessionFormDrawer: React.FC<SessionFormDrawerProps> = ({
       subtitle={
         isEditing
           ? "Update session schedule, details, and study assignment"
-          : "Schedule a standalone session or assign it to a liturgical study"
+          : "Schedule a standalone session or assign it to a study"
       }
       onSave={handleSubmit}
       saveLabel={isEditing ? "Update Session" : "Create Session"}
@@ -337,7 +337,7 @@ export const SessionFormDrawer: React.FC<SessionFormDrawerProps> = ({
               setTitle(e.target.value);
               setIsDirty(true);
             }}
-            placeholder="e.g., General Assembly / Hymn Workshop"
+            placeholder="e.g., General Assembly / Practice Session"
             className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           {errors.title && <p className="mt-1 text-xs text-rose-600 font-medium">{errors.title}</p>}

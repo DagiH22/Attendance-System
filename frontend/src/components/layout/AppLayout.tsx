@@ -39,11 +39,8 @@ export const AppLayout: React.FC = () => {
               </div>
               <div>
                 <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 leading-none">
-                  Liturgical Attendance
+                  Attendance
                 </h1>
-                <p className="text-[11px] font-bold uppercase tracking-wider text-blue-600 mt-1">
-                  Church Hymn Department
-                </p>
               </div>
             </div>
 
