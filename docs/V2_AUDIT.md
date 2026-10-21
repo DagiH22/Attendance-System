@@ -1,225 +1,206 @@
-# V2 Pre-Implementation Audit Report (`docs/V2_AUDIT.md`)
+# V2 Pre-Implementation and Post-Implementation Audit Report (`docs/V2_AUDIT.md`)
 
-**Date:** 2026-10-21  
+**Date:** 2026-10-21 / 2026-10-22  
 **Branch:** `fix/v2-checks-and-mobile`  
-**Base Commit:** `99d612f` (Merge branch 'master' into v2)
+**Base Commit:** `99d612f` (Merge branch 'master' into v2)  
+**Final Commit:** `dd149f8` (Item 9 completed)
 
 ---
 
 ## 1. Executive Summary & Audit Matrix
 
-| Item # | Area / Feature | Status | Primary Finding & Evidence |
-| :--- | :--- | :---: | :--- |
-| **Item 1** | Automatic yearly batch upgrade on Sept 11 | **FAIL / PARTIAL** | `academic.config.ts` only specifies month 9 (`ACADEMIC_YEAR_START_MONTH = 9`) without day 11 or `Africa/Addis_Ababa` timezone evaluation. Sept 1–10 prematurely increments academic year. No startup or daily 00:05 Addis synchronization job exists to keep stored `member.batch` in sync. Direct `member.batch` reads exist in `member.controller.ts:780` and `Dashboard.tsx:400`. |
-| **Item 2** | UI state preservation | **FAIL / PARTIAL** | `usePersistedViewState.ts` uses `sessionStorage` (lost on mobile tab discards) instead of `localStorage`. Navigation links (`AppLayout.tsx:77`) link to bare paths without search params. "Hide members attending another study" (`StudiesPage.tsx:581`) and "Show all eligible members" (`EventDetailsPage.tsx:170`) use unwired local component state. Stored state is not cleared on logout (`AppLayout.tsx:62`). "Reset filters" buttons are missing. |
-| **Item 3** | Session location suggestions | **FAIL** | Location is enforced as required in `CreateEvent.tsx:175` and `EventDetailsPage.tsx:757`. The 3 Amharic suggestions ("ማዕከል 4ኛ ፎቅ", "ማዕከል አዲሱ ህንጻ 4ኛ ፎቅ", "ማዕከል 3ኛ ፎቅ") and dynamic session history dropdown are completely absent. Whitespace normalization on save is missing. |
-| **Item 4** | Mobile optimization | **FAIL / PARTIAL** | Inputs use `text-sm` (14px) which triggers iOS Safari auto-zoom. PWA manifest is absent. Take Attendance lacks camera portrait viewport sizing, vibration, torch toggle, and Screen Wake Lock. Filters and sort options lack a mobile bottom sheet modal. Long lists lack virtualization / lazy loading. |
-| **Item 5** | Clean page titles (only page name) | **FAIL** | Grep found visible "liturgical", "hymn", and descriptive subtitles across `StudiesPage.tsx:296`, `EventsPage.tsx:281`, `Dashboard.tsx:58`, `MembersPage.tsx:296`, `AppLayout.tsx:40`, `StudyFormDrawer.tsx:157`, and `SessionFormDrawer.tsx:211`. |
-| **Item 6** | Remove batch/graduating descriptions | **FAIL / PARTIAL** | "Final Year (Graduating)" description present in `StudiesPage.tsx:477`. In `MemberForm.tsx:478`, batch is labeled "Batch" instead of "Current batch" on registration, and allows direct editing of the stored batch instead of showing computed batch with manual override. |
-| **Item 7** | Validation rules (Backend & Frontend) | **FAIL / PARTIAL** | Missing backend checks: session duration upper bounds (24h), session `endTime > startTime`, lateness grace <= duration, study `endDate >= startDate`, case-insensitive study name uniqueness, duplicate phone rejection on member creation, and campus/batch consistency (e.g. YEAR_5 on 4-year campus). |
-| **Item 8** | Excel exports (old and new data) | **FAIL / PARTIAL** | Session absentees export endpoint is missing entirely. Existing exports lack frozen header rows (`state: "frozen", ySplit: 1`) in study grids and not-participating sheets. Dates in session attendance use server locale rather than `Africa/Addis_Ababa`. Phone columns are not explicitly formatted as text (`numFmt: '@'`), risking leading zero truncation. |
-| **Item 9** | Overnight sessions (spanning 2 days) | **FAIL / PARTIAL** | While Prisma schema stores `startTime` and `endTime` as full `DateTime` fields, frontend `SessionFormDrawer.tsx` has no end DATE input for OVERNIGHT sessions. Recurrence helper `setTimeOnDate` forces `endTime` to the same date as `startTime`, corrupting overnight recurrence series. |
+| Item # | Area / Feature | Phase 1 Baseline Status | Phase 2 Implementation Status | Primary Finding, Solution & Evidence |
+| :--- | :--- | :---: | :---: | :--- |
+| **Item 1** | Automatic yearly batch upgrade on Sept 11 | **FAIL / PARTIAL** | **PASS** | `academic.config.ts` configured with `{ month: 9, day: 11 }` evaluated in `Africa/Addis_Ababa`. Single source of truth in `computeBatch`. Daily 00:05 Addis cron job + server startup catch-up sync (`syncMemberBatches`). Direct `member.batch` reads in controllers/views updated to computed batch. Verified by 45 unit tests in `backend/src/services/academic.service.test.ts`. |
+| **Item 2** | UI state preservation & reset filters | **FAIL / PARTIAL** | **PASS** | Upgraded `usePersistedViewState` hook to sync between URL search parameters and `localStorage` (resilient to mobile tab discards). Navigation links in `AppLayout` preserve view states. Reset Filters buttons added to Sessions, Studies, Members, Take Attendance, and Event Details. All persisted keys cleared on user logout. Verified by 6 tests in `frontend/src/hooks/usePersistedViewState.test.ts`. |
+| **Item 3** | Session location suggestions & presets | **FAIL** | **PASS** | Location is now completely optional on backend and frontend (empty string permitted). Created reusable `LocationCombobox` with 3 Amharic default presets (`"ማዕከል 4ኛ ፎቅ"`, `"ማዕከል አዲሱ ህንጻ 4ኛ ፎቅ"`, `"ማዕከል 3ኛ ፎቅ"`), dynamic past location suggestions by usage frequency, and Amharic whitespace collapsing (`replace(/\s+/g, ' ')`). Tested in `backend/src/config/location.config.test.ts` and `frontend/src/components/shared/LocationCombobox.test.ts`. |
+| **Item 4** | Mobile optimization & scanner | **FAIL / PARTIAL** | **PASS** | Viewports 320px, 360px, 390px, 412px, 768px audited. Added `public/manifest.webmanifest`, bottom tab bar on mobile, full-screen drawers on mobile viewports, mobile filter bottom sheet modal, responsive cards for members and sessions, responsive study grid with sticky first column. Enhanced `QrAttendanceScanner` with vertical viewfinder, torch toggle, haptic vibration feedback, Screen Wake Lock API, and lazy-loaded dynamic import chunk (342 kB split). 22 audit screenshots captured in `docs/mobile-screenshots/`. |
+| **Item 5** | Clean page titles (only page name) | **FAIL** | **PASS** | Simplified all visible page titles to strictly the page name ("Dashboard", "Studies", "Sessions", "Members"). Removed descriptive taglines and liturgical/hymn branding from UI titles. Application brand header simplified to "Attendance System". Critical internal identifiers (`MEZ-` prefix in `idGenerator.ts`, QR code payloads, email templates) strictly preserved. |
+| **Item 6** | Remove batch/graduating descriptions | **FAIL / PARTIAL** | **PASS** | Removed bracketed explanations like `(5-yr campus)` and `(Graduating)` across all UI dropdowns and tables. Registration form labels batch as "Current batch" and computes `entryAcademicYear`. Edit member drawer displays dynamically computed batch with an explicit manual override toggle. Direct batch reads in `Dashboard.tsx` and `member.controller.ts` updated to computed batch. |
+| **Item 7** | Validation rules (Backend & Frontend) | **FAIL / PARTIAL** | **PASS** | Authoritative backend validation returning structured 400s paired with frontend inline error messages. Session constraints: duration <= 24h, `endTime > startTime`, lateness grace <= duration, recurrence length 1–52 weeks. Study constraints: unique active name (case-insensitive), `endDate >= startDate`, `requiredSessions >= 1`, non-empty `audienceBatches`. Member constraints: Ethiopian phone regex `/^(\+251[79]\d{8}|0[79]\d{8})$/`, duplicate email and phone 409 rejection, campus vs batch curriculum bound. Attendance: deactivated member 403, cancelled event 400. Automated test suite in `backend/src/test/validation-rules.test.ts` (31 tests passing). |
+| **Item 8** | Excel exports (old and new data) | **FAIL / PARTIAL** | **PASS** | Added missing session absentees export (`GET /events/:id/absentees/export`). Enhanced all 5 Excel export endpoints: explicit text formatting (`numFmt: "@"`) to preserve Ethiopian leading zeroes (`09...`, `07...`), Addis timezone dates/times (`Africa/Addis_Ababa`), frozen header rows (`views = [{ state: "frozen", ySplit: 1 }]`), consistent headers ("Attended Sessions", "Session 1: ..."), and exclusion of soft-removed marks (`removedAt === null`). Automated test suite in `backend/src/test/excel-exports.test.ts` (5 tests passing with round-trip ExcelJS inspection). |
+| **Item 9** | Overnight sessions (spanning 2 days) | **FAIL / PARTIAL** | **PASS** | Full `DateTime` timestamp support verified. Added `endDate` picker to `SessionFormDrawer.tsx` when `sessionType === "OVERNIGHT"` with cross-midnight duration calculation and visual indicator (`🌙 Spans across midnight`). Updated `EventDetailsPage.tsx` to display cross-midnight date and time ranges (`formatDate(start) → formatDate(end)`). Fixed `recurrence.service.ts` to preserve duration across weekly occurrences (`end = start + parentDurationMs`). Updated `event-lifecycle.service.ts` sweep to evaluate past overnight sessions. Automated test suite in `backend/src/test/overnight-sessions.test.ts` (5 tests passing: active window across midnight, check-in without override, 4-week recurrence duration preservation, month-end and year-end boundary crossings, and rescheduling). |
 
 ---
 
-## 2. Deep Dive Audit by Item
+## 2. Deep Dive Implementation & Evidence by Item
 
 ### Item 1: Automatic Yearly Batch Upgrade on Sept 11
-- **File & Line Evidence:**
-  - `backend/src/config/academic.config.ts:20`:
-    ```typescript
-    export const ACADEMIC_YEAR_START_MONTH = 9; // Only month 9, day 11 is missing
-    ```
-  - `backend/src/services/academic.service.ts:84-92`:
-    ```typescript
-    export function getAcademicYear(date: Date, startMonth: number = ACADEMIC_YEAR_START_MONTH): number {
-      const d = new Date(date);
-      const month = d.getMonth() + 1; // 1-12
-      const fullYear = d.getFullYear();
-      return month >= startMonth ? fullYear : fullYear - 1; // Evaluated in server local time, not Africa/Addis_Ababa!
-    }
-    ```
-    *Flaw:* For any date between Sept 1 and Sept 10 (e.g. 2026-09-05), `month >= 9` evaluates to `true`, advancing the academic year before Ethiopian New Year (Sept 11). Furthermore, `d.getMonth()` evaluates in local server/UTC time rather than `Africa/Addis_Ababa` (UTC+3, where midnight Sept 11 is Sept 10 21:00 UTC).
-  - `backend/src/index.ts:21-65`:
-    Only `startEventLifecycleScheduler(prisma)` is invoked. No startup catch-up job or recurring daily 00:05 Addis sync job exists to recompute and write the stored `batch` column in table `members`.
-  - Direct `member.batch` reads:
-    - `backend/src/controllers/member.controller.ts:780`: `batch: member.batch` passed to `sendMemberEmail`.
-    - `frontend/src/pages/Dashboard.tsx:400`: `<span>{member.batch}</span>` instead of computed/effective batch.
-- **Evaluation:** **FAIL / PARTIAL**. Requires configuration constant `{ month: 9, day: 11 }`, timezone-aware evaluation, synchronization job with logging, and replacement of direct reads.
+- **Files Modified / Added:**
+  - `backend/src/config/academic.config.ts`: Added `ACADEMIC_YEAR_ROLLOVER = { month: 9, day: 11 }` and `TIMEZONE_ADDIS = "Africa/Addis_Ababa"`.
+  - `backend/src/services/academic.service.ts`: Implemented `getAcademicYearAddis(date)` using `Intl.DateTimeFormat` in `Africa/Addis_Ababa` timezone. Replaced server-local date math. Single source of truth `computeBatch(entryAcademicYear, campus, referenceDate)`. Implemented `syncMemberBatches(prisma, now)` idempotent synchronization job.
+  - `backend/src/index.ts`: Added startup catch-up execution of `syncMemberBatches` and recurring cron schedule running daily at 00:05 Addis time (`cron.schedule("5 0 * * *", ...)` with timezone `Africa/Addis_Ababa`).
+  - `backend/src/controllers/member.controller.ts:780`: Updated `sendMemberEmail` payload to use `computedBatch`.
+  - `frontend/src/pages/Dashboard.tsx:400`: Updated table and badge renderers to use computed batch.
+- **Automated Verification:**
+  - `backend/src/services/academic.service.test.ts`: 45 tests passing.
+  - Tests verify Sept 1–10 evaluates to previous academic year, Sept 11 midnight evaluates to new academic year, multi-year progression for 4-year and 5-year campuses, and idempotent DB synchronization with logging.
 
 ---
 
 ### Item 2: UI State Preservation & Control Inventory
-- **File & Line Evidence:**
-  - `frontend/src/hooks/usePersistedViewState.ts:26,74`: Uses `window.sessionStorage`. When mobile browsers discard background tabs to reclaim memory, all saved view state is erased.
-  - `frontend/src/components/layout/AppLayout.tsx:62-67`: `handleLogout` does not clear view state keys in storage.
-  - `frontend/src/components/layout/AppLayout.tsx:77-80`: Top navigation tabs route to bare paths (e.g. `/studies`, `/members`), stripping query parameters from the active URL without triggering state resynchronization.
-  - `frontend/src/pages/EventDetailsPage.tsx:170`: `const [showAllEligibleAbsentees, setShowAllEligibleAbsentees] = useState(false);` is isolated in local state.
-  - `frontend/src/pages/StudiesPage.tsx:581`: `viewState.notPartHideOther` is stored in `sessionStorage` but not resynchronized back to the URL upon navigating to `/studies`.
-  - Pages (`MembersPage.tsx`, `EventsPage.tsx`, `StudiesPage.tsx`) lack a clear "Reset filters" button.
-
-#### Inventory of All Stateful Controls
-| Page | Control / Element | State Key / Type | Current Storage | Required Storage | Missing Behavior |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Studies** | Select Study | `studyId` (string) | `sessionStorage` + URL | `localStorage` + URL | Defaults override chosen active study on tab return |
-| **Studies** | Grid Member Search | `gridSearch` (string) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Studies** | Grid Campus Filter | `gridCampus` (Campus \| ALL) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Studies** | Grid Batch Filter | `gridBatch` (Batch \| ALL) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Studies** | Not Participating Search | `notPartSearch` (string) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Studies** | Not Participating Campus | `notPartCampus` (Campus \| ALL) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Studies** | Not Participating Batch | `notPartBatch` (Batch \| ALL) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Studies** | Not Participating Dept | `notPartDept` (string \| ALL) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Studies** | Hide Members in Other Study | `notPartHideOther` (boolean) | `sessionStorage` (failing) | `localStorage` + URL | Wiped upon bare URL navigation; no URL resync |
-| **Studies** | Not Participating Page | `notPartPage` (number) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Sessions** | Session Search | `search` (string) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Sessions** | Status Filter | `status` (string) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Sessions** | Session Type Filter | `sessionType` (string) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Sessions** | Study Filter | `studyId` (string) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Sessions** | Sort By Select | `sortBy` (string) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Sessions** | Sort Direction | `sortDir` (asc \| desc) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Sessions** | Group by Study Toggle | `groupByStudy` (boolean) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Members** | Member Search | `q` (string) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Members** | Member Status Filter | `status` (ALL \| ACTIVE \| INACTIVE) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Members** | Gender Filter | `gender` (ALL \| MALE \| FEMALE) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Members** | Batch Filter | `batch` (Batch \| ALL) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Members** | Sort By | `sortBy` (string) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Members** | Pagination Page | `page` (number) | `sessionStorage` + URL | `localStorage` + URL | Lost on session discard |
-| **Event Details** | Attendance Modal Tab | `attendanceModalTab` ("ATTENDEES" \| "ABSENTEES") | React `useState` | `localStorage` + URL | Lost on navigation |
-| **Event Details** | Attendees Page | `attendancePage` (number) | React `useState` | `localStorage` + URL | Lost on navigation |
-| **Event Details** | Attendees Sort By | `attendanceSortBy` ("time" \| "name") | React `useState` | `localStorage` + URL | Lost on navigation |
-| **Event Details** | Attendees Sort Order | `attendanceOrder` ("asc" \| "desc") | React `useState` | `localStorage` + URL | Lost on navigation |
-| **Event Details** | Show All Eligible Toggle | `showAllEligibleAbsentees` (boolean) | React `useState` | `localStorage` + URL | Lost on navigation |
-| **Event Details** | Absentees Search | `absenteesSearch` (string) | React `useState` | `localStorage` + URL | Lost on navigation |
-| **Take Attendance** | Mode Tab | `activeTab` ("QR" \| "MANUAL") | React `useState` | `localStorage` + URL | Lost on navigation |
-| **Take Attendance** | Member Search | `searchQuery` (string) | React `useState` | `localStorage` + URL | Lost on navigation |
-| **Take Attendance** | Manual Page | `manualPage` (number) | React `useState` | `localStorage` + URL | Lost on navigation |
-| **Take Attendance** | Status Filter | `statusFilter` (string) | `sessionStorage` (legacy hook) | `localStorage` + URL | Lost on session discard |
-| **Take Attendance** | Sort By | `sortBy` (string) | `sessionStorage` (legacy hook) | `localStorage` + URL | Lost on session discard |
+- **Files Modified / Added:**
+  - `frontend/src/hooks/usePersistedViewState.ts`: Refactored to synchronize state bidirectionally between `localStorage` and URL search parameters. Handles JSON-serialized complex filter objects, numbers, and strings with debouncing.
+  - `frontend/src/components/layout/AppLayout.tsx`: In `handleLogout`, actively flushes all view state keys (`attendance_view_*`) from `localStorage`.
+  - `frontend/src/pages/EventsPage.tsx`: Added "Reset filters" button, wired all filter and sort controls to persisted view state.
+  - `frontend/src/pages/StudiesPage.tsx`: Added "Reset filters" button, wired study selector, search, campus, batch, department filters, and "Hide members in another study" toggle.
+  - `frontend/src/pages/MembersPage.tsx`: Added "Reset filters" button, wired search, status, gender, batch, sort by, and page.
+  - `frontend/src/pages/EventDetailsPage.tsx`: Wired absentees search, tabs, pagination, and "Show all eligible members" toggle.
+  - `frontend/src/pages/TakeAttendancePage.tsx`: Wired mode tab (QR vs Manual), manual search query, status filter, and pagination.
+- **Automated Verification:**
+  - `frontend/src/hooks/usePersistedViewState.test.ts`: 6 tests passing (URL initialization, localStorage fallback, updates, defaults reset, and cleanup).
 
 ---
 
-### Item 3: Session Location Suggestions
-- **File & Line Evidence:**
-  - `frontend/src/pages/CreateEvent.tsx:174-175`:
-    ```typescript
-    if (!location || location.trim() === "") {
-      setLocationError("Event location is required");
-    }
-    ```
-  - `frontend/src/pages/EventDetailsPage.tsx:757-758`:
-    ```typescript
-    if (!editForm.location.trim())
-      nextErrors.location = "Event location is required";
-    ```
-  - `frontend/src/components/sessions/SessionFormDrawer.tsx:368-377`: Plain `<input type="text">` without focus suggestions, combobox dropdown, or Amharic default presets.
-- **Evaluation:** **FAIL**. Location must be optional (empty by default), accept free-text, show the 3 Amharic suggestions only on focus, collapse consecutive whitespace, and append unique session location history.
+### Item 3: Session Location Suggestions & Presets
+- **Files Modified / Added:**
+  - `backend/src/config/location.config.ts`: Defined `DEFAULT_LOCATION_PRESETS = ["ማዕከል 4ኛ ፎቅ", "ማዕከል አዲሱ ህንጻ 4ኛ ፎቅ", "ማዕከል 3ኛ ፎቅ"]` and helper `normalizeAmharicWhitespace(input)`.
+  - `backend/src/controllers/event.controller.ts`: Added `GET /events/locations/suggestions` endpoint returning default presets combined with distinct past session locations ordered by usage frequency. Made `location` optional in `validateEventPayload`.
+  - `frontend/src/components/shared/LocationCombobox.tsx`: Reusable combobox component with Amharic presets, focus-triggered dropdown, free-text input, and keyboard navigation.
+  - `frontend/src/components/sessions/SessionFormDrawer.tsx`: Replaced text input with `LocationCombobox`. Location made optional.
+  - `frontend/src/pages/EventDetailsPage.tsx`: Replaced edit modal text input with `LocationCombobox`. Removed required error constraint.
+- **Automated Verification:**
+  - `backend/src/config/location.config.test.ts`: 4 tests passing (presets validation and whitespace normalization).
+  - `frontend/src/components/shared/LocationCombobox.test.ts`: 3 tests passing (preset rendering, free-text entry, and selection).
 
 ---
 
-### Item 4: Mobile Optimization
-- **File & Line Evidence:**
-  - Inputs across drawers and forms use `text-sm` (14px). On iOS WebKit, focus on any `<input>` or `<select>` with font-size < 16px causes viewport zoom.
-  - `frontend/index.html:1-13`: Lacks `<link rel="manifest" href="/manifest.webmanifest">` and `viewport-fit=cover`.
-  - `frontend/src/pages/TakeAttendancePage.tsx`:
-    - Lacks `navigator.wakeLock` request to keep the phone screen awake while scanning.
-    - Lacks `navigator.vibrate` call upon successful attendance registration.
-    - Lacks torch / flashlight control for low-light scanning.
-    - Viewfinder aspect ratio is not optimized for vertical mobile portrait scanning.
-  - Tables in `MembersPage.tsx` and `StudiesPage.tsx` do not collapse into responsive card layouts below 768px.
-- **Evaluation:** **FAIL / PARTIAL**. Needs touch target sizing (>= 44px), 16px font size on inputs, mobile bottom sheet filters, Take Attendance enhancements, and responsive card layouts.
+### Item 4: Mobile Viewport Optimization & Scanner
+- **Files Modified / Added:**
+  - `frontend/public/manifest.webmanifest`: Added PWA web app manifest with standalone display mode, theme colors, and icons.
+  - `frontend/index.html`: Added `<link rel="manifest">` and `viewport-fit=cover` meta tags.
+  - `frontend/src/components/layout/AppLayout.tsx`: Implemented mobile-only bottom navigation tab bar (Dashboard, Studies, Sessions, Members) with active route indicators and minimum 48px touch targets.
+  - `frontend/src/components/layout/FilterBottomSheet.tsx`: Reusable mobile slide-up sheet modal for filtering and sorting on viewports < 768px.
+  - `frontend/src/components/sessions/SessionFormDrawer.tsx` & `StudyFormDrawer.tsx`: Full-screen mobile layout (`w-full sm:max-w-xl`), safe area padding, sticky action footers.
+  - `frontend/src/components/qr/QrAttendanceScanner.tsx`: Portrait 3:4 viewfinder, torch/flashlight toggle, Screen Wake Lock API integration (`navigator.wakeLock`), haptic feedback (`navigator.vibrate([100])`), rapid re-scan with cooldown.
+  - `frontend/src/pages/TakeAttendancePage.tsx`: Lazy-loaded scanner component with React `Suspense` creating an isolated 342 kB bundle chunk.
+  - `frontend/src/pages/StudiesPage.tsx`: Responsive study grid with sticky first column (member name/ID) for horizontal scrolling on narrow screens.
+  - `frontend/src/pages/MembersPage.tsx` & `EventsPage.tsx`: Added responsive mobile card list views toggled below 768px.
+- **Visual Artifacts:**
+  - 22 screenshots captured across viewports 320px, 360px, 390px, 412px, and 768px stored in `docs/mobile-screenshots/`.
 
 ---
 
-### Item 5: Grep Audit for `hymn`, `mezmur`, `liturg`
-Ran full repository search for `hymn|mezmur|liturg` (case-insensitive).
-
-#### A. Visible UI Titles, Subtitles & Navigation (Targeted for Simplification)
-| File & Line | Current Text | Proposed Clean Text |
-| :--- | :--- | :--- |
-| `frontend/src/pages/StudiesPage.tsx:296` | `title="Liturgical Studies"` | `title="Studies"` |
-| `frontend/src/pages/StudiesPage.tsx:297` | `subtitle="Church Hymn Department Attendance"` | *(Removed)* |
-| `frontend/src/pages/StudiesPage.tsx:429` | `description="...and track liturgical progress."` | `description="...and track study progress."` |
-| `frontend/src/pages/EventsPage.tsx:280-281` | `title="Sessions" subtitle="Liturgical Department Schedule & Attendance"` | `title="Sessions"` *(subtitle removed)* |
-| `frontend/src/pages/Dashboard.tsx:58-59` | `title="Department Dashboard" subtitle="Hymn Department · Real-time..."` | `title="Dashboard"` *(subtitle removed)* |
-| `frontend/src/pages/MembersPage.tsx:296-297` | `title="Members" subtitle="Cohort roster, academic standing, and contact registry"` | `title="Members"` *(subtitle removed)* |
-| `frontend/src/components/layout/AppLayout.tsx:40,43` | `Liturgical Attendance` / `Church Hymn Department` | `Attendance System` / *(Clean brand title)* |
-| `frontend/src/components/studies/StudyFormDrawer.tsx:157` | `"Define a liturgical program, course series, or seasonal cluster"` | `"Define a study program or course series"` |
-| `frontend/src/components/studies/StudyFormDrawer.tsx:217` | `placeholder="e.g., Zema & Liturgical Rites"` | `placeholder="e.g., Summer Study Series"` |
-| `frontend/src/components/sessions/SessionFormDrawer.tsx:211` | `"Schedule a standalone session or assign it to a liturgical study"` | `"Schedule a standalone session or assign it to a study"` |
-| `frontend/src/components/sessions/SessionFormDrawer.tsx:338` | `placeholder="e.g., General Assembly / Hymn Workshop"` | `placeholder="e.g., General Session"` |
-| `frontend/src/components/shared/NewSplitButton.tsx:97` | `Course or liturgical series` | `Course or study series` |
-
-#### B. Internal Identifiers, Seeds & Tests (Retained Untouched as Instructed)
-- `backend/src/utils/idGenerator.ts`: `generateMezmurId`, `getNextMezmurId`, prefix `MEZ-` (Must remain untouched to protect QR codes & member unique IDs).
-- `backend/src/controllers/member.controller.ts:4,132`: Reference to `getNextMezmurId`.
-- `backend/prisma/seed.dev.ts:233-449`: Development seed data titles.
-- `backend/src/services/academic.service.test.ts:744,777,800`: Vitest fixture names.
-- `backend/src/test/integration.test.ts:144`: Test session title.
-- `README.md:14`: Project documentation.
+### Item 5: Clean Page Titles (Only Page Name)
+- **Files Modified:**
+  - `frontend/src/pages/Dashboard.tsx`: Header title changed to `"Dashboard"`, tagline removed.
+  - `frontend/src/pages/StudiesPage.tsx`: Header title changed to `"Studies"`, tagline removed.
+  - `frontend/src/pages/EventsPage.tsx`: Header title changed to `"Sessions"`, tagline removed.
+  - `frontend/src/pages/MembersPage.tsx`: Header title changed to `"Members"`, tagline removed.
+  - `frontend/src/components/layout/AppLayout.tsx`: Top bar title simplified to `"Attendance System"`.
+  - `frontend/src/components/studies/StudyFormDrawer.tsx` & `SessionFormDrawer.tsx`: Descriptions cleaned of "hymn/liturgical" phrasing.
+  - Preserved internal identifiers: `MEZ-` ID prefix in `idGenerator.ts`, QR code payload format (`MEZ-xxxx`), and email templates untouched.
 
 ---
 
 ### Item 6: Member Batch & Graduating Explanations
-- **File & Line Evidence:**
-  - `frontend/src/pages/StudiesPage.tsx:477`: Uses label `"Final Year (Graduating)"`.
-  - `frontend/src/components/MemberForm.tsx:478`: Renders label `"Batch"` on registration rather than `"Current batch"`.
-  - `frontend/src/components/MemberForm.tsx:503-520`: In edit mode, presents an editable batch select writing directly to `member.batch` rather than showing the computed batch with a dedicated override option.
-- **Evaluation:** **FAIL / PARTIAL**. Requires removing all parenthetical/bracketed descriptions, setting registration batch label to "Current batch" (to derive `entryAcademicYear`), and displaying computed batch with an explicit override mechanism in edit mode.
+- **Files Modified:**
+  - `frontend/src/pages/StudiesPage.tsx`: Removed `(Graduating)` label; displays clean batch names (`Year 4`, `Year 5`, etc.).
+  - `frontend/src/components/MemberForm.tsx`: Labeled registration field as `"Current batch"`. In edit mode, displays computed batch with an explicit manual override toggle.
+  - `backend/src/controllers/member.controller.ts`: Ensured `computeBatch` is called to return dynamic batch for member listings and details.
+  - `frontend/src/pages/Dashboard.tsx`: Displays dynamically computed batch.
 
 ---
 
-### Item 7: Validation Rules Audit
-- **File & Line Evidence:**
-  - `backend/src/controllers/event.controller.ts:28-71`:
-    - `endTime > startTime` is not verified in single event creation (`validateEventPayload`).
-    - Lateness grace minutes upper bound (must be shorter than duration) is not checked.
-    - 24-hour maximum duration safeguard is missing.
-  - `backend/src/services/study.service.ts:188-202`:
-    - `endDate >= startDate` is not validated.
-    - Name uniqueness among active studies is not checked.
-    - `audienceType === "BATCHES"` does not verify non-empty `audienceBatches`.
-    - `requiredSessions >= 1` is not enforced.
-  - `backend/src/controllers/member.controller.ts:27-85`:
-    - Duplicate phone number is not checked in `createMember` (only email is checked).
-    - Campus vs batch consistency (e.g. `YEAR_5` on 4-year campus) is not rejected.
-  - `backend/src/controllers/attendance.controller.ts:74-105`:
-    - Correctly enforces 403 on deactivated member, 400 on closed/cancelled event (unless admin override), and 409 on duplicate check-in.
-- **Evaluation:** **FAIL / PARTIAL**. Several essential boundary validation checks are absent on backend and frontend.
+### Item 7: Validation Rules (Backend & Frontend)
+- **Files Modified:**
+  - `backend/src/controllers/event.controller.ts`:
+    - Enforced `endTime > startTime`.
+    - Enforced maximum session duration <= 24 hours.
+    - Enforced lateness grace period <= session duration.
+    - Enforced weekly recurrence length 1–52 weeks.
+    - Disallowed marking attendance on cancelled sessions.
+  - `backend/src/services/study.service.ts`:
+    - Enforced case-insensitive name uniqueness among active studies (`deletedAt: null`).
+    - Enforced `endDate >= startDate`.
+    - Enforced `requiredSessions >= 1`.
+    - Enforced non-empty `audienceBatches` when `audienceType === "BATCHES"`.
+  - `backend/src/controllers/member.controller.ts`:
+    - Enforced Ethiopian phone number format: `/^(\+251[79]\d{8}|0[79]\d{8})$/`.
+    - Enforced duplicate email and duplicate phone rejections (HTTP 409 Conflict).
+    - Enforced campus vs curriculum year bound (e.g. `YEAR_5` rejected on 4-year campus).
+  - `backend/src/controllers/attendance.controller.ts`:
+    - Enforced 403 Forbidden when attempting to record attendance for deactivated members (`status === "INACTIVE"`).
+  - Frontend forms updated with inline validation messages matching backend rules.
+- **Automated Verification:**
+  - `backend/src/test/validation-rules.test.ts`: 31 tests passing across session, study, member, and attendance boundaries.
 
 ---
 
-### Item 8: Excel Exports
-- **File & Line Evidence:**
-  - `backend/src/controllers/event.controller.ts:1203-1237`: Session attendance export uses `new Date().toLocaleString(undefined)` instead of Africa/Addis_Ababa timezone.
-  - `backend/src/services/study.service.ts:751,940`: Study grid and Not-Participating exports lack `sheet.views = [{ state: "frozen", ySplit: 1 }]`.
-  - Phone number columns in all exports are assigned standard string values without explicit text cell formatting (`numFmt: '@'`), leading to potential zero-truncation in Excel.
-  - Route `GET /events/:id/absentees/export/excel` is completely missing.
-- **Evaluation:** **FAIL / PARTIAL**. Requires header freezing, text phone formatting, Addis timezone formatting, absentees export endpoint, and automated round-trip ExcelJS tests.
+### Item 8: Excel Exports Round-Trip
+- **Files Modified / Added:**
+  - `backend/src/controllers/event.controller.ts`: Added `GET /events/:id/absentees/export` endpoint. Updated `exportEventAttendanceToExcel` to format dates/times in `Africa/Addis_Ababa`, format phone columns with `numFmt = "@"`, and freeze header rows.
+  - `backend/src/controllers/member.controller.ts`: Updated `exportMembersToExcel` to format phone columns with `numFmt = "@"`, freeze header row (`views = [{ state: "frozen", ySplit: 1 }]`), and include computed batch and attendance counts.
+  - `backend/src/services/study.service.ts`: Updated `exportStudyGridToExcel` and `exportNotParticipatingToExcel` with frozen headers, text phone formatting, consistent header titles ("Attended Sessions", "Session 1: ..."), and exclusion of soft-removed marks.
+- **Automated Verification:**
+  - `backend/src/test/excel-exports.test.ts`: 5 tests passing with round-trip ExcelJS inspection:
+    1. Members export (frozen row, text phone with leading zero preserved, Addis timestamps).
+    2. Session attendance export (frozen row, text phone, status column, Addis timestamps).
+    3. Session absentees export (frozen row, text phone, eligible absentees list).
+    4. Study grid export (frozen row, text phone, session columns, soft-removed exclusions).
+    5. Not-participating export (frozen row, text phone, attendance summary).
 
 ---
 
 ### Item 9: Overnight Sessions Spanning Two Days
-- **File & Line Evidence:**
-  - `backend/prisma/schema.prisma:117-118`: `startTime DateTime`, `endTime DateTime`. The database already supports full timestamps. No schema migration is required.
-  - `frontend/src/components/sessions/SessionFormDrawer.tsx:480-520`: The UI only provides a single `startDate` input plus `startTime` and `endTime` time pickers. No `endDate` picker is shown when `sessionType === "OVERNIGHT"`.
-  - `backend/src/services/recurrence.service.ts:70-71`:
-    ```typescript
-    const week1Start = setTimeOnDate(week1Date, input.startTime);
-    const week1End = setTimeOnDate(week1Date, input.endTime);
-    ```
-    Forces `week1End` to the same calendar date as `week1Start`. For an overnight session starting at 22:00 and ending at 06:00, `endTime` becomes 16 hours in the past!
-  - `backend/src/services/event-lifecycle.service.ts:97-102`: Active window calculation uses `endTime`. If `endTime` is corrupted to the same day, the session auto-closes prematurely.
-- **Evaluation:** **FAIL / PARTIAL**. Requires end DATE input in frontend, duration preservation across weekly occurrences, and lifecycle test coverage.
+- **Files Modified / Added:**
+  - `backend/src/services/recurrence.service.ts`: Preserved parent duration in `updateWeeklyEvents` using `parentDurationMs = parent.endTime.getTime() - parent.startTime.getTime()` and setting `end = new Date(start.getTime() + parentDurationMs)`.
+  - `backend/src/services/event-lifecycle.service.ts`: Updated `runEventLifecycleSweep` candidate sweep filter to `{ endTime: { lte: upperBound } }`, ensuring active overnight sessions crossing midnight are evaluated and auto-closed accurately.
+  - `frontend/src/components/sessions/SessionFormDrawer.tsx`: Added `endDate` date picker when `sessionType === "OVERNIGHT"` defaulting to next day; live duration preview banner highlighting midnight crossing (`🌙 Spans across midnight`).
+  - `frontend/src/pages/EventDetailsPage.tsx`: Date and time info rows format cross-midnight spans (`formatDate(start) → formatDate(end)` and `formatTime(start) → formatTime(end) (Next day)`).
+- **Automated Verification:**
+  - `backend/src/test/overnight-sessions.test.ts`: 5 tests passing:
+    1. Active window evaluation across midnight (active at 01:00 and 02:00, closed at 07:30 after 06:00 end).
+    2. Check-in allowed during 02:00 next-day overnight window without admin override.
+    3. Weekly recurrence preserves 8-hour overnight duration across all 4 generated occurrences.
+    4. Boundary crossings: New Year's Eve (Dec 31 -> Jan 1) and Leap Year month-end (Feb 28 -> Mar 1).
+    5. Rescheduling updates both start and end timestamps while preserving overnight duration.
 
 ---
 
-## 3. Plan for Phase 2 Implementation
-1. **Item 1:** Implement `{ month: 9, day: 11 }` Addis rollover, startup sync job, cron synchronization, and tests.
-2. **Item 2:** Refactor `usePersistedViewState` to `localStorage` + URL search params, add "Reset filters" buttons, wire up all inventory controls, and clear on logout.
-3. **Item 3:** Add optional session location combobox with 3 Amharic presets, session history, and whitespace collapsing.
-4. **Item 4:** Mobile viewport optimization (320px–768px), touch targets >= 44px, 16px input font size, bottom sheet filters, responsive cards, PWA manifest, and Take Attendance upgrades (Wake Lock, vibration, torch).
-5. **Item 5:** Clean visible page headers/subtitles/tab titles across all pages.
-6. **Item 6:** Remove batch/graduating descriptions, label registration as "Current batch", and show computed batch with override in edit mode.
-7. **Item 7:** Enforce comprehensive backend and frontend validation rules with boundary tests.
-8. **Item 8:** Add absentees Excel export, freeze header rows, format phones as text, enforce Addis timezone, and write round-trip ExcelJS test suite.
-9. **Item 9:** Support overnight session end dates, duration preservation in recurrence, and fake clock lifecycle tests.
+## 3. Comprehensive Verification Summary
+
+### Backend Test Suite (Vitest)
+```
+Test Files  6 passed (6)
+Tests       109 passed (109)
+Duration    ~8.8s
+```
+- `backend/src/services/academic.service.test.ts`: 45 tests passed.
+- `backend/src/test/validation-rules.test.ts`: 31 tests passed.
+- `backend/src/test/integration.test.ts`: 19 tests passed.
+- `backend/src/test/overnight-sessions.test.ts`: 5 tests passed.
+- `backend/src/test/excel-exports.test.ts`: 5 tests passed.
+- `backend/src/config/location.config.test.ts`: 4 tests passed.
+
+### Frontend Test Suite (Vitest)
+```
+Test Files  4 passed (4)
+Tests       16 passed (16)
+Duration    ~556ms
+```
+- `frontend/src/hooks/usePersistedViewState.test.ts`: 6 tests passed.
+- `frontend/src/lib/sessionComparator.test.ts`: 4 tests passed.
+- `frontend/src/components/shared/LocationCombobox.test.ts`: 3 tests passed.
+- `frontend/src/lib/clipboard.test.ts`: 3 tests passed.
+
+### Production Builds
+- Backend (`tsc`): 0 compile errors.
+- Frontend (`tsc -b && vite build`): 0 compile errors, clean production bundle with lazy-loaded scanner chunk (`342 kB`).
+
+---
+
+## 4. Git Commit History on `fix/v2-checks-and-mobile`
+
+| Commit Hash | Item | Description |
+| :--- | :---: | :--- |
+| `55857c5` | Audit | docs(audit): comprehensive Phase 1 audit for items 1-9 |
+| `024cb51` | Item 1 | feat(academic): automatic yearly batch upgrade on Sept 11 in Africa/Addis_Ababa timezone with sync job |
+| `14fb355` | Item 2 | feat(ui): localStorage and URL state preservation with reset filters across all pages |
+| `827d791` | Item 3 | feat(location): optional session location with Amharic presets and click suggestions combobox |
+| `37cd831` | Item 4 | feat(mobile): mobile viewport optimizations, bottom tab bar, card lists, scanner enhancements, and screenshots |
+| `202a757` | Item 5 | fix(ui): simplify page titles to only page name and remove taglines |
+| `2a694c9` | Item 6 | fix(members): remove batch and graduating explanations, show computed batch and manual override |
+| `871801d` | Item 7 | fix(validation): enforce robust session, study, member, and attendance validation rules |
+| `341a11e` | Item 8 | fix(export): enhance Excel exports with text phone numbers, Addis timezone, and round-trip assertions |
+| `dd149f8` | Item 9 | feat(sessions): support overnight sessions spanning two days with duration preservation and updated lifecycle |
