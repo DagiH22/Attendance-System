@@ -53,5 +53,6 @@ router.get("/:id/grid", getStudyGrid);
 
 // Study Excel export
 router.get("/:id/export/excel", exportStudyExcel);
+router.get("/:id/export", exportStudyExcel);
 
 export default router;

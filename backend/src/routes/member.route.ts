@@ -38,6 +38,7 @@ router.get("/search", searchMembers);
 
 // export members list as Excel
 router.get("/export/excel", exportMembersExcel);
+router.get("/export", exportMembersExcel);
 
 // attended/missed events lists
 router.get("/:id/attendance", getMemberAttendanceDetails);

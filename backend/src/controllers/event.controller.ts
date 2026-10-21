@@ -1,7 +1,11 @@
 import { Request, Response } from "express";
 import { PrismaClient, EventType, SessionType } from "@prisma/client";
 import ExcelJS from "exceljs";
-import { setExcelDownloadHeaders } from "../utils/excelExport";
+import {
+  setExcelDownloadHeaders,
+  formatAddisDateTime,
+  formatAddisDate,
+} from "../utils/excelExport";
 import {
   computeEventLifecycle,
   serializeEventForResponse,
@@ -1259,8 +1263,9 @@ export const exportEventAttendanceExcel = async (
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const { eventId } = req.params;
-    const normalizedEventId = Array.isArray(eventId) ? eventId[0] : eventId;
+    const { eventId, id } = req.params;
+    const rawId = eventId || id;
+    const normalizedEventId = Array.isArray(rawId) ? rawId[0] : rawId;
 
     if (!normalizedEventId) {
       return res.status(400).json({ error: "Event id is required" });
@@ -1296,6 +1301,10 @@ export const exportEventAttendanceExcel = async (
             name: true,
             email: true,
             phoneNumber: true,
+            campus: true,
+            department: true,
+            entryAcademicYear: true,
+            batchOverride: true,
             isActive: true,
           },
         },
@@ -1312,33 +1321,40 @@ export const exportEventAttendanceExcel = async (
       { header: "Name", key: "name", width: 28 },
       { header: "Email", key: "email", width: 30 },
       { header: "Phone", key: "phone", width: 18 },
+      { header: "Campus", key: "campus", width: 14 },
+      { header: "Batch", key: "batch", width: 14 },
+      { header: "Department", key: "department", width: 24 },
       { header: "Status", key: "status", width: 14 },
       { header: "Excuse Reason", key: "excuseReason", width: 24 },
-      { header: "Marked On", key: "markedAt", width: 28 },
+      { header: "Marked On", key: "markedAt", width: 26 },
     ];
     sheet.getRow(1).font = { bold: true };
     sheet.views = [{ state: "frozen", ySplit: 1 }];
+    sheet.getColumn("phone").numFmt = "@";
 
     for (const record of attendanceRecords) {
-      const markedDate = new Date(record.markedAt);
-      const markedFriendly = markedDate.toLocaleString(undefined, {
-        weekday: "short",
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
+      const computedB = computeBatch(
+        {
+          campus: record.member.campus,
+          entryAcademicYear: record.member.entryAcademicYear ?? 2025,
+          batchOverride: record.member.batchOverride,
+        },
+        record.markedAt,
+      );
 
-      sheet.addRow({
+      const row = sheet.addRow({
         uniqueId: record.member.uniqueId,
         name: record.member.name,
         email: record.member.email,
         phone: record.member.phoneNumber ?? "",
-        status: record.status,
+        campus: record.member.campus,
+        batch: computedB,
+        department: record.member.department ?? "",
+        status: record.status || "PRESENT",
         excuseReason: record.excuseReason ?? "",
-        markedAt: markedFriendly,
+        markedAt: formatAddisDateTime(record.markedAt),
       });
+      row.getCell("phone").numFmt = "@";
     }
 
     const buffer = await workbook.xlsx.writeBuffer();
@@ -1346,6 +1362,127 @@ export const exportEventAttendanceExcel = async (
     return res.status(200).send(Buffer.from(buffer));
   } catch (err: any) {
     console.error("Error in exportEventAttendanceExcel:", err?.message ?? err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+export const exportEventAbsenteesExcel = async (req: Request, res: Response) => {
+  try {
+    const { id, eventId } = req.params;
+    const rawId = id || eventId;
+    const idStr = Array.isArray(rawId) ? rawId[0] : rawId;
+    if (!idStr) return res.status(400).json({ error: "Event id is required" });
+
+    const event = await prisma.event.findUnique({
+      where: { id: idStr },
+      include: { study: true },
+    });
+    if (!event) return res.status(404).json({ error: "Event not found" });
+
+    const [allMembers, attendances] = await Promise.all([
+      prisma.member.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          name: true,
+          uniqueId: true,
+          phoneNumber: true,
+          campus: true,
+          batch: true,
+          department: true,
+          entryAcademicYear: true,
+          batchOverride: true,
+          createdAt: true,
+          deactivatedAt: true,
+        },
+      }),
+      prisma.attendance.findMany({
+        where: { eventId: idStr, removedAt: null },
+        select: {
+          id: true,
+          memberId: true,
+          eventId: true,
+          status: true,
+          markedAt: true,
+          removedAt: true,
+        },
+      }),
+    ]);
+
+    const eligible = getEligibleMembers(
+      event,
+      allMembers.map((m) => ({
+        ...m,
+        entryAcademicYear: m.entryAcademicYear ?? 2025,
+      })),
+      attendances,
+      event.startTime,
+    );
+
+    const attendedOrExcusedMemberIds = new Set(
+      attendances
+        .filter(
+          (a) =>
+            a.status === "PRESENT" ||
+            a.status === "LATE" ||
+            a.status === "EXCUSED",
+        )
+        .map((a) => a.memberId),
+    );
+
+    const absentees = eligible.filter((m) => !attendedOrExcusedMemberIds.has(m.id));
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "Attendance System";
+    workbook.created = new Date();
+
+    const sheet = workbook.addWorksheet("Session Absentees");
+    sheet.columns = [
+      { header: "Member ID", key: "uniqueId", width: 20 },
+      { header: "Name", key: "name", width: 28 },
+      { header: "Phone", key: "phone", width: 18 },
+      { header: "Campus", key: "campus", width: 14 },
+      { header: "Batch", key: "batch", width: 14 },
+      { header: "Department", key: "department", width: 24 },
+      { header: "Session Title", key: "sessionTitle", width: 28 },
+      { header: "Session Date", key: "sessionDate", width: 24 },
+      { header: "Status", key: "status", width: 14 },
+    ];
+    sheet.getRow(1).font = { bold: true };
+    sheet.views = [{ state: "frozen", ySplit: 1 }];
+    sheet.getColumn("phone").numFmt = "@";
+
+    const sessionDateFormatted = formatAddisDateTime(event.startTime);
+
+    for (const m of absentees) {
+      const computedB = computeBatch(
+        {
+          campus: m.campus,
+          entryAcademicYear: m.entryAcademicYear ?? 2025,
+          batchOverride: m.batchOverride,
+        },
+        event.startTime,
+      );
+
+      const row = sheet.addRow({
+        uniqueId: m.uniqueId,
+        name: m.name,
+        phone: m.phoneNumber ?? "",
+        campus: m.campus,
+        batch: computedB,
+        department: m.department ?? "",
+        sessionTitle: event.title,
+        sessionDate: sessionDateFormatted,
+        status: "Absent",
+      });
+      row.getCell("phone").numFmt = "@";
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    setExcelDownloadHeaders(res, `${event.title} - Absentees`, "session-absentees");
+    return res.status(200).send(Buffer.from(buffer));
+  } catch (err: any) {
+    console.error("Error in exportEventAbsenteesExcel:", err?.message ?? err);
     return res.status(500).json({ error: "Internal server error" });
   }
 };

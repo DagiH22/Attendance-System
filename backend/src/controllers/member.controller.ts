@@ -4,7 +4,7 @@ import ExcelJS from "exceljs";
 import { getNextMezmurId } from "../utils/idGenerator";
 import { sendMemberEmail } from "../utils/email.service";
 import { generateQrWithLogo } from "../utils/qrCodeGenerator";
-import { setExcelDownloadHeaders } from "../utils/excelExport";
+import { setExcelDownloadHeaders, formatAddisDate } from "../utils/excelExport";
 import {
   computeBatch,
   deriveEntryAcademicYearForBackfill,
@@ -315,11 +315,12 @@ export const exportMembersExcel = async (req: Request, res: Response) => {
       { header: "Department", key: "department", width: 24 },
       { header: "Gender", key: "gender", width: 12 },
       { header: "Status", key: "status", width: 12 },
-      { header: "Total Attended", key: "attendedCount", width: 16 },
+      { header: "Attended Sessions", key: "attendedCount", width: 18 },
       { header: "Registered Date", key: "createdAt", width: 20 },
     ];
     sheet.getRow(1).font = { bold: true };
     sheet.views = [{ state: "frozen", ySplit: 1 }];
+    sheet.getColumn("phoneNumber").numFmt = "@";
 
     const now = new Date();
     for (const m of members) {
@@ -333,7 +334,7 @@ export const exportMembersExcel = async (req: Request, res: Response) => {
         now,
       );
 
-      sheet.addRow({
+      const row = sheet.addRow({
         uniqueId: m.uniqueId,
         name: m.name,
         email: m.email,
@@ -344,8 +345,9 @@ export const exportMembersExcel = async (req: Request, res: Response) => {
         gender: m.gender,
         status: m.isActive ? "Active" : "Inactive",
         attendedCount: m._count.attendances,
-        createdAt: new Date(m.createdAt).toLocaleDateString(),
+        createdAt: formatAddisDate(m.createdAt),
       });
+      row.getCell("phoneNumber").numFmt = "@";
     }
 
     const buffer = await workbook.xlsx.writeBuffer();

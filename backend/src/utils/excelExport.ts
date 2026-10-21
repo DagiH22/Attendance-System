@@ -39,3 +39,34 @@ export const setExcelDownloadHeaders = (
 
   return asciiFileName;
 };
+
+export const formatAddisDateTime = (
+  date: Date | string | null | undefined,
+): string => {
+  if (!date) return "";
+  const d = typeof date === "string" ? new Date(date) : date;
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "Africa/Addis_Ababa",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(d);
+};
+
+export const formatAddisDate = (
+  date: Date | string | null | undefined,
+): string => {
+  if (!date) return "";
+  const d = typeof date === "string" ? new Date(date) : date;
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "Africa/Addis_Ababa",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(d);
+};

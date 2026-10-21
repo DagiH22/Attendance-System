@@ -7,6 +7,7 @@ import {
   deactivateEvent,
   deleteEvent,
   exportEventAttendanceExcel,
+  exportEventAbsenteesExcel,
   getAllEvents,
   getSessionLocations,
   getEventAttendance,
@@ -42,12 +43,15 @@ router.get("/:eventId/attendance", getEventAttendance);
 
 // export attendance list for a specific event
 router.get("/:eventId/attendance/export/excel", exportEventAttendanceExcel);
+router.get("/:id/export/excel", exportEventAttendanceExcel);
 
 // get present members list
 router.get("/:eventId/present-members", getPresentMembersForEvent);
 
 // get absentees and stats for a specific event
 router.get("/:id/absentees", getEventAbsentees);
+router.get("/:id/absentees/export", exportEventAbsenteesExcel);
+router.get("/:id/absentees/export/excel", exportEventAbsenteesExcel);
 
 // get specific event by id (includes stats and absentees)
 router.get("/:id", getEventById);

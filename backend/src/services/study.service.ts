@@ -21,6 +21,7 @@ import {
   normalizeToDateOnly,
 } from "./recurrence.service";
 import ExcelJS from "exceljs";
+import { formatAddisDate } from "../utils/excelExport";
 
 export interface CreateStudyInput {
   name: string;
@@ -978,9 +979,9 @@ export class StudyService {
     // Columns: Name, Unique ID, Campus, Batch, Phone, [Sessions...], Attended, Excused, Absent, Completed
     const sessionCols = stats.study.totalSessions > 0
       ? stats.sessionSeries.map((s, idx) => ({
-          header: `S${idx + 1}: ${s.title}`,
+          header: `Session ${idx + 1}: ${s.title}${s.startTime ? ` (${formatAddisDate(s.startTime)})` : ""}`,
           key: `session_${s.eventId}`,
-          width: 15,
+          width: 22,
         }))
       : [];
 
@@ -1003,6 +1004,8 @@ export class StudyService {
       pattern: "solid",
       fgColor: { argb: "FFE0E7FF" },
     };
+    sheet.views = [{ state: "frozen", ySplit: 1 }];
+    sheet.getColumn("phone").numFmt = "@";
 
     for (const row of stats.grid) {
       const rowData: Record<string, any> = {
@@ -1029,6 +1032,7 @@ export class StudyService {
       }
 
       const excelRow = sheet.addRow(rowData);
+      excelRow.getCell("phone").numFmt = "@";
 
       // Color code cells
       for (const s of row.sessions) {
@@ -1185,6 +1189,8 @@ export class StudyService {
       pattern: "solid",
       fgColor: { argb: "FF1E3A8A" }, // Dark blue
     };
+    sheet.views = [{ state: "frozen", ySplit: 1 }];
+    sheet.getColumn("phoneNumber").numFmt = "@";
 
     for (const m of data.members) {
       const badgeText = m.badges.length > 0 ? m.badges.join(", ") : "Not Participating";
@@ -1197,6 +1203,7 @@ export class StudyService {
         department: m.department || "—",
         badges: badgeText,
       });
+      row.getCell("phoneNumber").numFmt = "@";
 
       if (m.attendingOtherStudy) {
         row.font = { color: { argb: "FF6B7280" } }; // Muted grey

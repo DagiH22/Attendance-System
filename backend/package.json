@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "nodemon src/index.ts",
-    "test": "vitest run",
+    "test": "vitest run --fileParallelism=false",
     "seed:dev": "ts-node prisma/seed.dev.ts",
     "studio": "prisma studio",
     "prisma:safe": "node scripts/prisma-safe.js",
