@@ -1078,7 +1078,7 @@ const MemberDetailsPage: React.FC = () => {
                   <option value="YEAR_2">Year 2</option>
                   <option value="YEAR_3">Year 3</option>
                   <option value="YEAR_4">Year 4</option>
-                  <option value="YEAR_5">Year 5 (5-yr campus)</option>
+                  <option value="YEAR_5">Year 5</option>
                   <option value="GRADUATE">Graduate</option>
                 </select>
               </div>

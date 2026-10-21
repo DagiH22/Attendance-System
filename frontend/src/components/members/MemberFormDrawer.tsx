@@ -43,6 +43,8 @@ export const MemberFormDrawer: React.FC<MemberFormDrawerProps> = ({
         phoneNumber: memberToEdit.phoneNumber || "",
         department: memberToEdit.department || "",
         batch: (memberToEdit.batch as any) || "",
+        batchOverride: memberToEdit.batchOverride || "",
+        effectiveBatch: memberToEdit.effectiveBatch || memberToEdit.batch || "",
         campus: (memberToEdit.campus as any) || "",
         gender: (memberToEdit.gender as any) || "",
         isActive: memberToEdit.isActive ?? true,
@@ -59,7 +61,7 @@ export const MemberFormDrawer: React.FC<MemberFormDrawerProps> = ({
       setSubmitting(true);
       setSubmitError("");
 
-      const payload = {
+      const payload: any = {
         name: values.name.trim(),
         email: values.email.trim(),
         phoneNumber: values.phoneNumber.trim(),
@@ -71,6 +73,7 @@ export const MemberFormDrawer: React.FC<MemberFormDrawerProps> = ({
       };
 
       if (isEditing && memberToEdit) {
+        payload.batchOverride = values.batchOverride === "" ? null : (values.batchOverride ?? null);
         const res = await api.put(`/members/${memberToEdit.id}`, payload);
         const updated = res.data?.member ?? res.data;
         onSuccess(updated, false);

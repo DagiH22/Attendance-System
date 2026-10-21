@@ -19,6 +19,8 @@ export type MemberFormValues = {
   phoneNumber: string;
   department: string;
   batch: BatchOption;
+  batchOverride?: string | null;
+  effectiveBatch?: string | null;
   campus: CampusOption;
   gender: GenderOption;
   isActive: boolean;
@@ -472,32 +474,71 @@ const MemberForm: React.FC<MemberFormProps> = ({
               )}
             </div>
 
-            <div>
-              <Dropdown
-                id="batch"
-                label="Batch"
-                required
-                placeholder={
-                  isCampusSelected ? "Select batch" : "Select campus first"
-                }
-                value={form.batch}
-                options={dropdownOptions.batch.filter((option) =>
-                  availableBatchOptions.includes(option.value as BatchOption),
-                )}
-                onChange={(value) => handleSelectChange("batch", value)}
-                error={errors.batch}
-                disabled={!isCampusSelected || departmentIsFreshman}
-                helperText={
-                  !isCampusSelected
-                    ? "Choose a campus to enable batch."
-                    : departmentIsFreshman
-                      ? "Batch is locked to Freshman when department is Freshman."
-                      : undefined
-                }
-              />
-            </div>
+            {mode === "create" ? (
+              <div>
+                <Dropdown
+                  id="batch"
+                  label="Current batch"
+                  required
+                  placeholder={
+                    isCampusSelected ? "Select current batch" : "Select campus first"
+                  }
+                  value={form.batch}
+                  options={dropdownOptions.batch.filter((option) =>
+                    availableBatchOptions.includes(option.value as BatchOption),
+                  )}
+                  onChange={(value) => handleSelectChange("batch", value)}
+                  error={errors.batch}
+                  disabled={!isCampusSelected || departmentIsFreshman}
+                  helperText={
+                    !isCampusSelected
+                      ? "Choose a campus to enable batch."
+                      : departmentIsFreshman
+                        ? "Batch is locked to Freshman when department is Freshman."
+                        : "Used to derive entry academic year"
+                  }
+                />
+              </div>
+            ) : (
+              <div className="space-y-4 sm:col-span-2">
+                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
+                      Computed batch
+                    </label>
+                    <div className="w-full rounded-2xl border border-gray-200 bg-gray-100 px-4 py-3 text-base font-bold text-gray-900">
+                      {formatEnumLabel(form.effectiveBatch || form.batch || "FRESHMAN")}
+                    </div>
+                  </div>
 
-            <div className="hidden sm:block" />
+                  <div>
+                    <Dropdown
+                      id="batchOverride"
+                      label="Manual batch override"
+                      placeholder="Automatic (No override)"
+                      value={form.batchOverride || ""}
+                      options={[
+                        { value: "", label: "Automatic (No override)" },
+                        ...dropdownOptions.batch.filter((option) =>
+                          availableBatchOptions.includes(option.value as BatchOption),
+                        ),
+                      ]}
+                      onChange={(value) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          batchOverride: value || null,
+                        }))
+                      }
+                      error={errors.batchOverride}
+                      disabled={!isCampusSelected}
+                      helperText="Optionally override the dynamically computed batch"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {mode === "create" && <div className="hidden sm:block" />}
           </div>
 
           {mode === "edit" && (

@@ -491,7 +491,7 @@ export const StudiesPage: React.FC = () => {
                   {statsData.study.audienceType === "ALL"
                     ? "All Registered Members"
                     : statsData.study.audienceType === "FINAL_YEAR"
-                    ? "Final Year (Graduating)"
+                    ? "Final Year"
                     : `Batches: ${statsData.study.audienceBatches.join(", ")}`}
                 </span>
               </div>

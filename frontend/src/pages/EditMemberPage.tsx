@@ -42,6 +42,8 @@ const EditMemberPage: React.FC = () => {
           phoneNumber: member.phoneNumber ?? "",
           department: member.department ?? "",
           batch: member.batch ?? "",
+          batchOverride: member.batchOverride ?? "",
+          effectiveBatch: member.effectiveBatch ?? member.batch ?? "",
           campus: member.campus ?? "",
           gender: member.gender ?? "",
           isActive:
@@ -82,6 +84,7 @@ const EditMemberPage: React.FC = () => {
         phoneNumber: values.phoneNumber,
         department: values.department,
         batch: values.batch,
+        batchOverride: values.batchOverride === "" ? null : (values.batchOverride ?? null),
         campus: values.campus,
         isActive: values.isActive,
         gender: values.gender,
