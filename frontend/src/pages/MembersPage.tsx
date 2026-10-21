@@ -342,6 +342,12 @@ export const MembersPage: React.FC = () => {
         searchQuery={viewState.q}
         onSearchChange={(q) => setViewState({ q, page: 1 })}
         searchPlaceholder="Search members by name, ID, phone, or campus..."
+        activeFilterCount={
+          (viewState.batch !== "ALL" ? 1 : 0) +
+          (viewState.status !== "ALL" ? 1 : 0) +
+          (viewState.gender !== "ALL" ? 1 : 0) +
+          (viewState.sortBy !== "ALPHA_ASC" ? 1 : 0)
+        }
         rightActions={
           <div className="flex items-center gap-3">
             <div className="text-xs font-semibold text-slate-500 whitespace-nowrap">

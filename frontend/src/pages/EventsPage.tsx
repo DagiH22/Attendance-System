@@ -294,6 +294,12 @@ export const EventsPage: React.FC = () => {
         searchQuery={viewState.search}
         onSearchChange={(q) => setField("search", q)}
         searchPlaceholder="Search sessions by title, description, or location..."
+        activeFilterCount={
+          (viewState.status !== "ALL" ? 1 : 0) +
+          (viewState.sessionType !== "ALL" ? 1 : 0) +
+          (viewState.studyId !== "ALL" ? 1 : 0) +
+          (viewState.sortBy !== "DATE" ? 1 : 0)
+        }
         rightActions={
           <div className="flex items-center gap-2">
             {/* Group by study toggle */}

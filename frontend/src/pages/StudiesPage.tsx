@@ -608,58 +608,120 @@ export const StudiesPage: React.FC = () => {
                 All eligible members have participated in at least one session!
               </p>
             ) : (
-              <div className="overflow-x-auto rounded-2xl border border-slate-200">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase">
-                    <tr>
-                      <th className="p-3">Member</th>
-                      <th className="p-3">Campus</th>
-                      <th className="p-3">Batch</th>
-                      <th className="p-3">Phone</th>
-                      <th className="p-3">Other Studies Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {notPartData?.members.map((m) => (
-                      <tr key={m.id} className="hover:bg-slate-50/60 transition">
-                        <td className="p-3 font-semibold text-slate-900">
+              <>
+                {/* Mobile Card List (md:hidden) */}
+                <div className="md:hidden space-y-3">
+                  {notPartData?.members.map((m) => (
+                    <div
+                      key={m.id}
+                      className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-2xs space-y-2.5"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
                           <button
                             type="button"
                             onClick={() => navigate(`/members/${m.id}`)}
-                            className="hover:text-blue-600 hover:underline"
+                            className="font-bold text-sm text-slate-900 hover:text-blue-600 text-left truncate block max-w-full"
                           >
                             {m.name}
                           </button>
-                          <span className="block text-[10px] text-slate-400 font-normal">
-                            {m.uniqueId}
+                          <span className="block text-[11px] text-slate-400 mt-0.5">
+                            ID: {m.uniqueId}
                           </span>
-                        </td>
-                        <td className="p-3 text-slate-600">{formatCampus(m.campus)}</td>
-                        <td className="p-3 text-slate-600">{formatBatch(m.effectiveBatch || m.batch)}</td>
-                        <td className="p-3 text-slate-600">
-                          <div className="flex items-center gap-1.5">
-                            <span>{m.phoneNumber || "—"}</span>
-                            {/* Individual Phone Copy Button (Item 11) */}
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700">
+                            {formatCampus(m.campus)}
+                          </span>
+                          <span className="rounded-md bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700 border border-blue-200/50">
+                            {formatBatch(m.effectiveBatch || m.batch)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 text-xs pt-2 border-t border-slate-100">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-slate-600 font-mono text-[11px]">
+                            {m.phoneNumber || "No phone"}
+                          </span>
+                          {m.phoneNumber && (
                             <CopyPhoneButton
                               phoneNumber={m.phoneNumber}
                               onCopied={() => showToast(`Copied ${m.name}'s phone`)}
                             />
-                          </div>
-                        </td>
-                        <td className="p-3 text-slate-600">
-                          {(m.attendedOtherStudies || m.attendingOtherStudy) && m.otherStudies && m.otherStudies.length > 0 ? (
-                            <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700">
+                          )}
+                        </div>
+
+                        <div>
+                          {(m.attendedOtherStudies || m.attendingOtherStudy) &&
+                          m.otherStudies &&
+                          m.otherStudies.length > 0 ? (
+                            <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700 border border-blue-200/60 max-w-[150px] truncate">
                               Attending: {m.otherStudies.map((s: { id: string; name: string }) => s.name).join(", ")}
                             </span>
                           ) : (
                             <span className="text-[11px] text-slate-400 italic">None</span>
                           )}
-                        </td>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Desktop Table (hidden md:block) */}
+                <div className="hidden md:block overflow-x-auto rounded-2xl border border-slate-200">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase">
+                      <tr>
+                        <th className="p-3">Member</th>
+                        <th className="p-3">Campus</th>
+                        <th className="p-3">Batch</th>
+                        <th className="p-3">Phone</th>
+                        <th className="p-3">Other Studies Status</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {notPartData?.members.map((m) => (
+                        <tr key={m.id} className="hover:bg-slate-50/60 transition">
+                          <td className="p-3 font-semibold text-slate-900">
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/members/${m.id}`)}
+                              className="hover:text-blue-600 hover:underline"
+                            >
+                              {m.name}
+                            </button>
+                            <span className="block text-[10px] text-slate-400 font-normal">
+                              {m.uniqueId}
+                            </span>
+                          </td>
+                          <td className="p-3 text-slate-600">{formatCampus(m.campus)}</td>
+                          <td className="p-3 text-slate-600">{formatBatch(m.effectiveBatch || m.batch)}</td>
+                          <td className="p-3 text-slate-600">
+                            <div className="flex items-center gap-1.5">
+                              <span>{m.phoneNumber || "—"}</span>
+                              {/* Individual Phone Copy Button (Item 11) */}
+                              <CopyPhoneButton
+                                phoneNumber={m.phoneNumber}
+                                onCopied={() => showToast(`Copied ${m.name}'s phone`)}
+                              />
+                            </div>
+                          </td>
+                          <td className="p-3 text-slate-600">
+                            {(m.attendedOtherStudies || m.attendingOtherStudy) && m.otherStudies && m.otherStudies.length > 0 ? (
+                              <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700">
+                                Attending: {m.otherStudies.map((s: { id: string; name: string }) => s.name).join(", ")}
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 italic">None</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
 
             {/* Pagination */}

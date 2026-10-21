@@ -2,12 +2,33 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Optional: small app-level utilities */
+/* App-level utilities & iOS mobile optimization */
 html,
 body,
 #root {
   height: 100%;
 }
+
 body {
   @apply bg-gray-50 text-gray-800;
+  -webkit-tap-highlight-color: transparent;
 }
+
+/* Prevent iOS auto-zoom on input focus for mobile viewports */
+@media screen and (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Safe area padding utilities for notched mobile screens */
+.safe-pb {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+}
+
+.safe-pt {
+  padding-top: max(1rem, env(safe-area-inset-top, 0px));
+}
+

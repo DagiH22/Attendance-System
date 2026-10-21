@@ -70,8 +70,8 @@ export const AppLayout: React.FC = () => {
             </div>
           </div>
 
-          {/* Persistent Navigation Tabs (mounted ONCE) */}
-          <nav className="flex space-x-1 sm:space-x-3 overflow-x-auto no-scrollbar border-b border-transparent">
+          {/* Desktop Persistent Navigation Tabs */}
+          <nav className="hidden sm:flex space-x-3 overflow-x-auto no-scrollbar border-b border-transparent">
             {navItems.map((item) => {
               const active = isTabActive(item);
               const Icon = item.icon;
@@ -98,10 +98,36 @@ export const AppLayout: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Content Area Swaps Inside Outlet Without Unmounting Shell */}
-      <main className="flex-1 pt-28 sm:pt-32 pb-20">
+      {/* Main Content Area */}
+      <main className="flex-1 pt-20 sm:pt-32 pb-24 sm:pb-20">
         <Outlet />
       </main>
+
+      {/* Mobile Thumb-Reachable Bottom Tab Bar (Safe-area inset aware, >=44px touch targets) */}
+      <nav className="fixed bottom-0 left-0 right-0 z-40 sm:hidden border-t border-slate-200/90 bg-white/95 backdrop-blur-md px-2 py-1 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-lg flex items-center justify-around">
+        {navItems.map((item) => {
+          const active = isTabActive(item);
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.path}
+              to={item.path}
+              className={`flex flex-col items-center justify-center min-h-[44px] min-w-[56px] py-1 px-2 rounded-xl text-[10px] font-bold transition active:scale-95 ${
+                active
+                  ? "text-blue-600 font-black"
+                  : "text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              <Icon
+                className={`w-5 h-5 mb-0.5 transition ${
+                  active ? "text-blue-600 stroke-[2.5]" : "text-slate-400 stroke-[1.8]"
+                }`}
+              />
+              <span>{item.label}</span>
+            </NavLink>
+          );
+        })}
+      </nav>
     </div>
   );
 };

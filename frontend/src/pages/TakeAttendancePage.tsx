@@ -1,12 +1,15 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, Suspense } from "react";
 import { isAxiosError } from "axios";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import api, { setSessionExpiredHandler } from "../lib/api";
 import formatDate from "../lib/formatDate";
-import QrAttendanceScanner from "../components/QrAttendanceScanner";
 import { usePersistedViewState } from "../hooks/usePersistedViewState";
 import { useScrollDirection } from "../hooks/useScrollDirection";
 import { RotateCcw } from "lucide-react";
+
+const QrAttendanceScanner = React.lazy(
+  () => import("../components/QrAttendanceScanner"),
+);
 import type {
   DashboardEvent,
   EventAttendanceRecord,
@@ -729,19 +732,19 @@ const TakeAttendancePage: React.FC = () => {
           </header>
 
           <div className="mt-4">
-            <div className="flex rounded-full bg-slate-200 p-1">
+            <div className="flex rounded-2xl bg-slate-200/80 p-1 min-h-[48px]">
               {(["QR", "MANUAL"] as PageTab[]).map((tab) => (
                 <button
                   key={tab}
                   type="button"
                   onClick={() => setActiveTab(tab)}
-                  className={`w-full rounded-full py-2 text-sm font-semibold transition-colors ${
+                  className={`w-full min-h-[44px] rounded-xl py-2.5 text-sm font-bold transition-all flex items-center justify-center gap-2 ${
                     activeTab === tab
                       ? "bg-white text-slate-900 shadow-sm"
                       : "bg-transparent text-slate-600 hover:bg-white/50"
                   }`}
                 >
-                  {tab}
+                  {tab === "QR" ? "📷 Camera QR" : "📋 Manual Lookup"}
                 </button>
               ))}
             </div>
@@ -766,30 +769,38 @@ const TakeAttendancePage: React.FC = () => {
         </div>
 
         {activeTab === "QR" && (
-          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
             {attendanceDisabled ? (
-              <div className="text-center text-slate-500">
-                <p>QR scanning is not available for this event.</p>
+              <div className="text-center text-slate-500 py-8">
+                <p className="font-semibold text-sm">QR scanning is not available for this event.</p>
               </div>
             ) : (
               <>
-                <div className="relative mx-auto max-w-sm">
-                  <QrAttendanceScanner
-                    eventId={event.id}
-                    onScanSuccess={handleQrSuccess}
-                    onApiError={handleQrError}
-                    resolveMemberId={(code) => {
-                      // Attempt to resolve custom uniqueId to UUID so we don't crash Postgres natively.
-                      const match = members.find(
-                        (m) => m.uniqueId === code || m.id === code,
-                      );
-                      return match ? match.id : code;
-                    }}
-                  />
+                <div className="relative mx-auto max-w-sm sm:max-w-md">
+                  <Suspense
+                    fallback={
+                      <div className="flex flex-col items-center justify-center py-16">
+                        <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-blue-600" />
+                        <p className="mt-3 text-sm font-semibold text-slate-500">Loading camera scanner...</p>
+                      </div>
+                    }
+                  >
+                    <QrAttendanceScanner
+                      eventId={event.id}
+                      onScanSuccess={handleQrSuccess}
+                      onApiError={handleQrError}
+                      resolveMemberId={(code) => {
+                        // Attempt to resolve custom uniqueId to UUID so we don't crash Postgres natively.
+                        const match = members.find(
+                          (m) => m.uniqueId === code || m.id === code,
+                        );
+                        return match ? match.id : code;
+                      }}
+                    />
+                  </Suspense>
                 </div>
-                <p className="mt-4 text-center text-sm text-slate-500">
-                  Point the camera at a member's QR code to mark their
-                  attendance.
+                <p className="mt-4 text-center text-xs sm:text-sm text-slate-500">
+                  Point the camera at a member's QR code to mark their attendance.
                 </p>
               </>
             )}
@@ -798,13 +809,13 @@ const TakeAttendancePage: React.FC = () => {
 
         {activeTab === "MANUAL" && (
           <div className="flex flex-col gap-4">
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
               <div className="flex items-start justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">
+                  <h2 className="text-lg font-bold text-slate-900">
                     Manual Check-in
                   </h2>
-                  <p className="mt-1 text-sm text-slate-500">
+                  <p className="mt-1 text-xs sm:text-sm text-slate-500">
                     {event.attendanceCount} of {members.length} members present
                   </p>
                 </div>
@@ -815,10 +826,10 @@ const TakeAttendancePage: React.FC = () => {
                 <div className="relative">
                   <input
                     type="text"
-                    placeholder="Search members..."
+                    placeholder="Search members by name, ID, phone..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full rounded-full border border-slate-200 bg-slate-50 py-2 pl-10 pr-4 text-sm text-slate-800 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    className="w-full min-h-[44px] rounded-2xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-base sm:text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200"
                   />
                   <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
                     <svg

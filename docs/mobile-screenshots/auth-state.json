@@ -1,0 +1,18 @@
+{
+  "cookies": [],
+  "origins": [
+    {
+      "origin": "http://127.0.0.1:4173",
+      "localStorage": [
+        {
+          "name": "attendance_auth_token",
+          "value": "mock-token-for-mobile-audit"
+        },
+        {
+          "name": "attendance_auth_user",
+          "value": "{\"id\":\"admin-1\",\"name\":\"Audit Admin\",\"role\":\"SUPER_ADMIN\",\"campus\":\"FIVE_KILO\"}"
+        }
+      ]
+    }
+  ]
+}

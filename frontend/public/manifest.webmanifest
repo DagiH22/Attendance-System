@@ -1,0 +1,16 @@
+{
+  "name": "Smart Attendance System",
+  "short_name": "Attendance",
+  "description": "Campus Smart Attendance & Study Management System",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png"
+    }
+  ]
+}
