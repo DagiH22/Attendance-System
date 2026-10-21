@@ -54,6 +54,16 @@ describe("Integration Tests against Throwaway Database", () => {
       email: superAdmin!.email,
       role: AdminRole.SUPER_ADMIN,
     });
+
+    // Clean up any existing test study from prior runs for test idempotency
+    const existingTestStudies = await prisma.study.findMany({
+      where: { name: { equals: "Integration Test Study 2026", mode: "insensitive" } },
+    });
+    for (const s of existingTestStudies) {
+      await prisma.attendance.deleteMany({ where: { event: { studyId: s.id } } });
+      await prisma.event.deleteMany({ where: { studyId: s.id } });
+      await prisma.study.delete({ where: { id: s.id } });
+    }
   });
 
   afterAll(async () => {

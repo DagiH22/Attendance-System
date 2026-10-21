@@ -186,18 +186,78 @@ export class StudyService {
   }
 
   async createStudy(adminId: string, input: CreateStudyInput) {
+    const name = input.name?.trim();
+    if (!name) {
+      const err: any = new Error("Study name is required");
+      err.statusCode = 400;
+      throw err;
+    }
+
     const startDate = normalizeToDateOnly(new Date(input.startDate));
     const endDate = normalizeToDateOnly(new Date(input.endDate));
 
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      const err: any = new Error("Invalid start or end date");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (endDate.getTime() < startDate.getTime()) {
+      const err: any = new Error("Study end date cannot be before start date");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const existingActive = await this.prisma.study.findFirst({
+      where: {
+        name: { equals: name, mode: "insensitive" },
+        isActive: true,
+      },
+    });
+    if (existingActive) {
+      const err: any = new Error("An active study with this name already exists");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const audienceType = input.audienceType || "ALL";
+    const audienceBatches = input.audienceBatches || [];
+
+    if (audienceType === "BATCHES") {
+      if (!audienceBatches || !Array.isArray(audienceBatches) || audienceBatches.length === 0) {
+        const err: any = new Error("audienceBatches cannot be empty when audience is BATCHES");
+        err.statusCode = 400;
+        throw err;
+      }
+      for (const b of audienceBatches) {
+        if (!Object.values(Batch).includes(b)) {
+          const err: any = new Error(`Invalid batch selected: ${b}`);
+          err.statusCode = 400;
+          throw err;
+        }
+      }
+    }
+
+    let requiredSessions: number | null = null;
+    if (input.requiredSessions !== undefined && input.requiredSessions !== null && (input.requiredSessions as any) !== "") {
+      const reqNum = Number(input.requiredSessions);
+      if (Number.isNaN(reqNum) || reqNum < 1) {
+        const err: any = new Error("Required sessions must be at least 1");
+        err.statusCode = 400;
+        throw err;
+      }
+      requiredSessions = reqNum;
+    }
+
     return this.prisma.study.create({
       data: {
-        name: input.name.trim(),
+        name,
         description: input.description?.trim() || null,
         startDate,
         endDate,
-        audienceType: input.audienceType || "ALL",
-        audienceBatches: input.audienceBatches || [],
-        requiredSessions: input.requiredSessions ?? null,
+        audienceType,
+        audienceBatches,
+        requiredSessions,
         defaultLateGraceMinutes: input.defaultLateGraceMinutes ?? 15,
         isActive: true,
       },
@@ -205,14 +265,81 @@ export class StudyService {
   }
 
   async updateStudy(id: string, input: Partial<CreateStudyInput> & { isActive?: boolean }) {
+    const existing = await this.prisma.study.findUnique({ where: { id } });
+    if (!existing) {
+      const err: any = new Error("Study not found");
+      err.statusCode = 404;
+      throw err;
+    }
+
     const data: any = {};
-    if (input.name !== undefined) data.name = input.name.trim();
+    if (input.name !== undefined) {
+      const name = input.name.trim();
+      if (!name) {
+        const err: any = new Error("Study name is required");
+        err.statusCode = 400;
+        throw err;
+      }
+      const duplicate = await this.prisma.study.findFirst({
+        where: {
+          name: { equals: name, mode: "insensitive" },
+          isActive: true,
+          NOT: { id },
+        },
+      });
+      if (duplicate) {
+        const err: any = new Error("An active study with this name already exists");
+        err.statusCode = 400;
+        throw err;
+      }
+      data.name = name;
+    }
+
+    const nextStartDate = input.startDate ? normalizeToDateOnly(new Date(input.startDate)) : existing.startDate;
+    const nextEndDate = input.endDate ? normalizeToDateOnly(new Date(input.endDate)) : existing.endDate;
+
+    if (nextEndDate.getTime() < nextStartDate.getTime()) {
+      const err: any = new Error("Study end date cannot be before start date");
+      err.statusCode = 400;
+      throw err;
+    }
+    if (input.startDate) data.startDate = nextStartDate;
+    if (input.endDate) data.endDate = nextEndDate;
+
+    const nextAudienceType = input.audienceType ?? existing.audienceType;
+    const nextAudienceBatches = input.audienceBatches ?? existing.audienceBatches;
+
+    if (nextAudienceType === "BATCHES") {
+      if (!nextAudienceBatches || !Array.isArray(nextAudienceBatches) || nextAudienceBatches.length === 0) {
+        const err: any = new Error("audienceBatches cannot be empty when audience is BATCHES");
+        err.statusCode = 400;
+        throw err;
+      }
+      for (const b of nextAudienceBatches) {
+        if (!Object.values(Batch).includes(b)) {
+          const err: any = new Error(`Invalid batch selected: ${b}`);
+          err.statusCode = 400;
+          throw err;
+        }
+      }
+    }
+    if (input.audienceType !== undefined) data.audienceType = input.audienceType;
+    if (input.audienceBatches !== undefined) data.audienceBatches = input.audienceBatches;
+
+    if (input.requiredSessions !== undefined) {
+      if (input.requiredSessions !== null && (input.requiredSessions as any) !== "") {
+        const reqNum = Number(input.requiredSessions);
+        if (Number.isNaN(reqNum) || reqNum < 1) {
+          const err: any = new Error("Required sessions must be at least 1");
+          err.statusCode = 400;
+          throw err;
+        }
+        data.requiredSessions = reqNum;
+      } else {
+        data.requiredSessions = null;
+      }
+    }
     if (input.description !== undefined) data.description = input.description?.trim() || null;
-    if (input.startDate) data.startDate = normalizeToDateOnly(new Date(input.startDate));
-    if (input.endDate) data.endDate = normalizeToDateOnly(new Date(input.endDate));
-    if (input.audienceType) data.audienceType = input.audienceType;
-    if (input.audienceBatches) data.audienceBatches = input.audienceBatches;
-    if (input.requiredSessions !== undefined) data.requiredSessions = input.requiredSessions;
     if (input.defaultLateGraceMinutes !== undefined)
       data.defaultLateGraceMinutes = input.defaultLateGraceMinutes;
     if (input.isActive !== undefined) data.isActive = input.isActive;
@@ -269,6 +396,39 @@ export class StudyService {
       const startTime = new Date(input.startTime || eventDate);
       const endTime = new Date(input.endTime || new Date(startTime.getTime() + 2 * 3600 * 1000));
 
+      if (Number.isNaN(startTime.getTime()) || Number.isNaN(endTime.getTime())) {
+        const err: any = new Error("Invalid date/time format");
+        err.statusCode = 400;
+        throw err;
+      }
+
+      if (endTime <= startTime) {
+        const err: any = new Error("Event end time must be after start time");
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const durationMs = endTime.getTime() - startTime.getTime();
+      if (durationMs > 24 * 3600 * 1000) {
+        const err: any = new Error("Session duration cannot exceed 24 hours");
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const grace = input.lateGraceMinutes ?? defaultGrace;
+      if (grace !== null && grace !== undefined) {
+        if (grace < 0) {
+          const err: any = new Error("Lateness grace period cannot be negative");
+          err.statusCode = 400;
+          throw err;
+        }
+        if (grace >= durationMs / (60 * 1000)) {
+          const err: any = new Error("Lateness grace period must be shorter than the session duration");
+          err.statusCode = 400;
+          throw err;
+        }
+      }
+
       const title = input.title?.trim() || `${study.name} - Session`;
       const description = input.description?.trim() || study.description || title;
       const location = (input.location ?? "").trim().replace(/\s+/g, " ");
@@ -285,7 +445,7 @@ export class StudyService {
           type: EventType.ONE_TIME,
           sessionType,
           location,
-          lateGraceMinutes: input.lateGraceMinutes ?? defaultGrace,
+          lateGraceMinutes: grace,
           studyId: study.id,
           createdById: adminId,
         },
@@ -303,6 +463,18 @@ export class StudyService {
         input.endTime || new Date(startTimeSource.getTime() + 2 * 3600 * 1000),
       );
 
+      const durationMs = endTimeSource.getTime() - startTimeSource.getTime();
+      if (durationMs <= 0) {
+        const err: any = new Error("Event end time must be after start time");
+        err.statusCode = 400;
+        throw err;
+      }
+      if (durationMs > 24 * 3600 * 1000) {
+        const err: any = new Error("Session duration cannot exceed 24 hours");
+        err.statusCode = 400;
+        throw err;
+      }
+
       const title = input.title?.trim() || study.name;
       const description = input.description?.trim() || study.description || title;
       const location = (input.location ?? "").trim().replace(/\s+/g, " ");
@@ -311,21 +483,38 @@ export class StudyService {
       const length = (() => {
         const weeks = input.recurrenceLengthWeeks || (input as any).weeksCount;
         if (weeks && weeks >= 1) {
-          return Math.floor(weeks);
+          const val = Math.floor(weeks);
+          if (val > 52) {
+            const err: any = new Error("Recurrence cannot exceed 52 weeks");
+            err.statusCode = 400;
+            throw err;
+          }
+          return val;
         }
         if (input.endDate) {
           const endDateOnly = normalizeToDateOnly(new Date(input.endDate));
+          if (endDateOnly.getTime() < startDateOnly.getTime()) {
+            const err: any = new Error("End date cannot be before start date");
+            err.statusCode = 400;
+            throw err;
+          }
           const diffDays = Math.floor(
             (endDateOnly.getTime() - startDateOnly.getTime()) / (1000 * 3600 * 24),
           );
-          return Math.max(1, Math.floor(diffDays / 7) + 1);
+          const computed = Math.max(1, Math.floor(diffDays / 7) + 1);
+          if (computed > 52) {
+            const err: any = new Error("Recurrence cannot exceed 52 weeks");
+            err.statusCode = 400;
+            throw err;
+          }
+          return computed;
         }
         return 8; // Default 8 sessions
       })();
 
       const week1Date = startDateOnly;
       const week1Start = setTimeOnDate(week1Date, startTimeSource);
-      const week1End = setTimeOnDate(week1Date, endTimeSource);
+      const week1End = new Date(week1Start.getTime() + durationMs);
 
       const week1 = await this.prisma.event.create({
         data: {
@@ -351,7 +540,7 @@ export class StudyService {
       for (let i = 1; i < length; i++) {
         const occDate = addDays(startDateOnly, i * 7);
         const occStart = setTimeOnDate(occDate, startTimeSource);
-        const occEnd = setTimeOnDate(occDate, endTimeSource);
+        const occEnd = new Date(occStart.getTime() + durationMs);
 
         rest.push(
           this.prisma.event.create({
@@ -383,10 +572,14 @@ export class StudyService {
     if (input.mode === "custom") {
       const sessions = input.sessions || [];
       if (sessions.length === 0) {
-        throw new Error("At least one session is required in custom mode");
+        const err: any = new Error("At least one session is required in custom mode");
+        err.statusCode = 400;
+        throw err;
       }
 
+      const seenTimes = new Set<number>();
       const creates: any[] = [];
+
       for (let i = 0; i < sessions.length; i++) {
         const item = sessions[i];
         const eventDate = normalizeToDateOnly(
@@ -394,6 +587,33 @@ export class StudyService {
         );
         const startTime = new Date(item.startTime || eventDate);
         const endTime = new Date(item.endTime || new Date(startTime.getTime() + 2 * 3600 * 1000));
+
+        if (Number.isNaN(startTime.getTime()) || Number.isNaN(endTime.getTime())) {
+          const err: any = new Error(`Invalid date/time format for session #${i + 1}`);
+          err.statusCode = 400;
+          throw err;
+        }
+
+        if (endTime <= startTime) {
+          const err: any = new Error(`End time must be after start time for session #${i + 1}`);
+          err.statusCode = 400;
+          throw err;
+        }
+
+        const durationMs = endTime.getTime() - startTime.getTime();
+        if (durationMs > 24 * 3600 * 1000) {
+          const err: any = new Error(`Session duration cannot exceed 24 hours for session #${i + 1}`);
+          err.statusCode = 400;
+          throw err;
+        }
+
+        if (seenTimes.has(startTime.getTime())) {
+          const err: any = new Error("Duplicate date/time pairs are not allowed in custom sessions");
+          err.statusCode = 400;
+          throw err;
+        }
+        seenTimes.add(startTime.getTime());
+
         const title = item.title?.trim() || `${study.name} - Session ${i + 1}`;
         const description = item.description?.trim() || study.description || title;
         const location = (item.location ?? input.location ?? "").trim().replace(/\s+/g, " ");

@@ -83,14 +83,26 @@ export const createStudy = async (req: Request, res: Response) => {
       );
     }
 
+    let warning: string | undefined;
+    if (
+      study.requiredSessions &&
+      generatedSessions.length > 0 &&
+      study.requiredSessions > generatedSessions.length
+    ) {
+      warning = `Required sessions (${study.requiredSessions}) exceeds the number of sessions (${generatedSessions.length})`;
+    }
+
     return res.status(201).json({
       message: "Study created successfully",
       study,
       generatedSessions,
+      warning,
     });
   } catch (err: any) {
     console.error("Error in createStudy:", err?.message ?? err);
-    return res.status(500).json({ error: err.message || "Internal server error" });
+    return res
+      .status(err.statusCode || 400)
+      .json({ error: err.message || "Internal server error" });
   }
 };
 
@@ -105,13 +117,29 @@ export const updateStudy = async (req: Request, res: Response) => {
     if (!idStr) return res.status(400).json({ error: "Study id is required" });
 
     const updated = await studyService.updateStudy(idStr, req.body ?? {});
+
+    const sessionCount = await prisma.event.count({
+      where: { studyId: idStr, isActive: true, cancelledAt: null },
+    });
+    let warning: string | undefined;
+    if (
+      updated.requiredSessions &&
+      sessionCount > 0 &&
+      updated.requiredSessions > sessionCount
+    ) {
+      warning = `Required sessions (${updated.requiredSessions}) exceeds the number of sessions (${sessionCount})`;
+    }
+
     return res.status(200).json({
       message: "Study updated successfully",
       study: updated,
+      warning,
     });
   } catch (err: any) {
     console.error("Error in updateStudy:", err?.message ?? err);
-    return res.status(500).json({ error: err.message || "Internal server error" });
+    return res
+      .status(err.statusCode || 400)
+      .json({ error: err.message || "Internal server error" });
   }
 };
 

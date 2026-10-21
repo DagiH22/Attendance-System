@@ -85,6 +85,12 @@ export const markAttendance = async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Event not found" });
     }
 
+    if (event.cancelledAt) {
+      return res
+        .status(400)
+        .json({ error: "Cannot mark attendance on a cancelled session" });
+    }
+
     const lifecycle = computeEventLifecycle(event);
     const isOverrideRequested = allowOverride === true;
     const isAdminOverrideAllowed =

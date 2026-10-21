@@ -83,6 +83,12 @@ export const StudyFormDrawer: React.FC<StudyFormDrawerProps> = ({
     if (audienceType === "BATCHES" && audienceBatches.length === 0) {
       errs.audienceBatches = "Please select at least one batch for the audience.";
     }
+    if (requiredSessions !== "" && Number(requiredSessions) < 1) {
+      errs.requiredSessions = "Required sessions must be at least 1.";
+    }
+    if (defaultLateGraceMinutes !== undefined && defaultLateGraceMinutes < 0) {
+      errs.defaultLateGraceMinutes = "Late grace minutes cannot be negative.";
+    }
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };

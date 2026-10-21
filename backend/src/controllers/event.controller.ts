@@ -33,6 +33,7 @@ const validateEventPayload = (payload: {
   startTime?: unknown;
   endTime?: unknown;
   location?: unknown;
+  lateGraceMinutes?: unknown;
 }) => {
   const title = String(payload.title ?? "").trim();
   const description = String(payload.description ?? "").trim();
@@ -58,11 +59,47 @@ const validateEventPayload = (payload: {
     return { error: "Event end time is required" };
   }
 
+  const parsedStart = new Date(payload.startTime as any);
+  const parsedEnd = new Date(payload.endTime as any);
+
+  if (Number.isNaN(parsedStart.getTime()) || Number.isNaN(parsedEnd.getTime())) {
+    return { error: "Invalid date/time format" };
+  }
+
+  if (parsedEnd <= parsedStart) {
+    return { error: "Event end time must be after start time" };
+  }
+
+  const durationMs = parsedEnd.getTime() - parsedStart.getTime();
+  if (durationMs > 24 * 60 * 60 * 1000) {
+    return { error: "Session duration cannot exceed 24 hours" };
+  }
+
+  if (
+    payload.lateGraceMinutes !== undefined &&
+    payload.lateGraceMinutes !== null &&
+    payload.lateGraceMinutes !== ""
+  ) {
+    const grace = Number(payload.lateGraceMinutes);
+    if (Number.isNaN(grace) || grace < 0) {
+      return { error: "Lateness grace period cannot be negative" };
+    }
+    const durationMinutes = durationMs / (60 * 1000);
+    if (grace >= durationMinutes) {
+      return {
+        error:
+          "Lateness grace period must be shorter than the session duration",
+      };
+    }
+  }
+
   return {
     value: {
       title,
       description,
       location,
+      startTime: parsedStart,
+      endTime: parsedEnd,
     },
   };
 };
@@ -99,6 +136,7 @@ const parseClusterEvents = (clusterEvents: unknown) => {
   }
 
   const parsed: ClusterEventInput[] = [];
+  const seenStartTimes = new Set<number>();
 
   for (const [index, rawEvent] of clusterEvents.entries()) {
     const eventDateValue = (rawEvent as any)?.eventDate;
@@ -123,6 +161,20 @@ const parseClusterEvents = (clusterEvents: unknown) => {
         error: `End time must be after start time for cluster event #${index + 1}`,
       };
     }
+
+    const durationMs = endTime.getTime() - startTime.getTime();
+    if (durationMs > 24 * 60 * 60 * 1000) {
+      return {
+        error: `Session duration cannot exceed 24 hours for cluster event #${index + 1}`,
+      };
+    }
+
+    if (seenStartTimes.has(startTime.getTime())) {
+      return {
+        error: "Duplicate date/time pairs are not allowed in custom sessions",
+      };
+    }
+    seenStartTimes.add(startTime.getTime());
 
     parsed.push({
       eventDate,
@@ -178,6 +230,7 @@ export const createEvent = async (req: Request, res: Response) => {
           startTime,
           endTime,
           location,
+          lateGraceMinutes: req.body.lateGraceMinutes,
         });
 
     if (validation.error) {
@@ -249,16 +302,8 @@ export const createEvent = async (req: Request, res: Response) => {
     }
 
     const parsedEventDate = new Date(eventDate);
-    const parsedStartTime = new Date(startTime);
-    const parsedEndTime = new Date(endTime);
-
-    if (
-      Number.isNaN(parsedEventDate.getTime()) ||
-      Number.isNaN(parsedStartTime.getTime()) ||
-      Number.isNaN(parsedEndTime.getTime())
-    ) {
-      return res.status(400).json({ error: "Invalid date/time format" });
-    }
+    const parsedStartTime = validated.startTime!;
+    const parsedEndTime = validated.endTime!;
 
     const eventType: EventType =
       type && Object.values(EventType).includes(type)
@@ -272,10 +317,52 @@ export const createEvent = async (req: Request, res: Response) => {
     const sessionType = req.body.sessionType || SessionType.EVENING;
     const lateGraceMinutes = req.body.lateGraceMinutes ? Number(req.body.lateGraceMinutes) : null;
 
+    let warning: string | undefined;
+    if (studyId) {
+      const study = await prisma.study.findUnique({ where: { id: studyId } });
+      if (study) {
+        const sessionDateOnly = normalizeToDateOnly(parsedStartTime);
+        const studyStartOnly = normalizeToDateOnly(study.startDate);
+        const studyEndOnly = normalizeToDateOnly(study.endDate);
+
+        if (sessionDateOnly < studyStartOnly || sessionDateOnly > studyEndOnly) {
+          warning = "Session date is outside the study date range";
+        }
+
+        const duplicateStart = await prisma.event.findFirst({
+          where: {
+            studyId,
+            isActive: true,
+            cancelledAt: null,
+            startTime: parsedStartTime,
+          },
+        });
+        if (duplicateStart) {
+          warning = warning
+            ? `${warning}; Another session in this study is scheduled at the same start time`
+            : "Another session in this study is scheduled at the same start time";
+        }
+      }
+    }
+
     if (eventType === EventType.WEEKLY) {
-      // create a parent recurring event and child occurrences
       const recurrenceLengthWeeks =
-        Number(req.body.recurrenceLengthWeeks ?? 4) || 4;
+        req.body.recurrenceLengthWeeks !== undefined &&
+        req.body.recurrenceLengthWeeks !== null &&
+        req.body.recurrenceLengthWeeks !== ""
+          ? Number(req.body.recurrenceLengthWeeks)
+          : 4;
+
+      if (recurrenceLengthWeeks < 1) {
+        return res
+          .status(400)
+          .json({ error: "Recurrence count must be at least 1" });
+      }
+      if (recurrenceLengthWeeks > 52) {
+        return res
+          .status(400)
+          .json({ error: "Recurrence cannot exceed 52 weeks" });
+      }
 
       const weeklyEndDateRaw = req.body.endDate;
       const parsedWeeklyEndDate = weeklyEndDateRaw
@@ -283,6 +370,15 @@ export const createEvent = async (req: Request, res: Response) => {
         : undefined;
       if (parsedWeeklyEndDate && Number.isNaN(parsedWeeklyEndDate.getTime())) {
         return res.status(400).json({ error: "Invalid endDate format" });
+      }
+      if (
+        parsedWeeklyEndDate &&
+        normalizeToDateOnly(parsedWeeklyEndDate).getTime() <
+          normalizeToDateOnly(parsedEventDate).getTime()
+      ) {
+        return res
+          .status(400)
+          .json({ error: "End date cannot be before start date" });
       }
 
       const { parent, children } = await recurrenceService.createWeeklyEvents(
@@ -306,6 +402,7 @@ export const createEvent = async (req: Request, res: Response) => {
       return res.status(201).json({
         parent: serializeEventForResponse(parent),
         occurrences: children.map((c: any) => serializeEventForResponse(c)),
+        warning,
       });
     }
 
@@ -335,7 +432,7 @@ export const createEvent = async (req: Request, res: Response) => {
       } as any,
     });
 
-    return res.status(201).json({ event: serializeEventForResponse(created) });
+    return res.status(201).json({ event: serializeEventForResponse(created), warning });
   } catch (err: any) {
     console.error("Error in createEvent:", err?.message ?? err);
     return res.status(500).json({ error: "Internal server error" });
@@ -879,8 +976,28 @@ export const rescheduleEvent = async (req: Request, res: Response) => {
 
     const newStart = new Date(finalStart);
     const newEnd = new Date(finalEnd);
+    if (Number.isNaN(newStart.getTime()) || Number.isNaN(newEnd.getTime())) {
+      return res.status(400).json({ error: "Invalid date/time format" });
+    }
     if (newEnd <= newStart) {
       return res.status(400).json({ error: "endTime must be after startTime" });
+    }
+
+    const durationMs = newEnd.getTime() - newStart.getTime();
+    if (durationMs > 24 * 60 * 60 * 1000) {
+      return res
+        .status(400)
+        .json({ error: "Session duration cannot exceed 24 hours" });
+    }
+
+    if (event.lateGraceMinutes !== null && event.lateGraceMinutes !== undefined) {
+      const durationMinutes = durationMs / (60 * 1000);
+      if (event.lateGraceMinutes >= durationMinutes) {
+        return res.status(400).json({
+          error:
+            "Lateness grace period must be shorter than the session duration",
+        });
+      }
     }
 
     const plannedStartTime = event.plannedStartTime ?? event.startTime;
@@ -1371,6 +1488,17 @@ export const updateEvent = async (req: Request, res: Response) => {
     const nextEndTime = updateData.endTime ?? existing.endTime;
     if (nextEndTime <= nextStartTime) {
       return res.status(400).json({ error: "endTime must be after startTime" });
+    }
+
+    const nextDurationMs = nextEndTime.getTime() - nextStartTime.getTime();
+    if (nextDurationMs > 24 * 60 * 60 * 1000) {
+      return res
+        .status(400)
+        .json({ error: "Session duration cannot exceed 24 hours" });
+    }
+
+    if (updateData.startTime) {
+      (updateData as any).eventDate = normalizeToDateOnly(updateData.startTime);
     }
 
     if (status !== undefined) {

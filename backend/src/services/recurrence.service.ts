@@ -51,8 +51,20 @@ export const createWeeklyEvents = async (
       ? Math.floor(input.recurrenceLengthWeeks)
       : 4;
 
+  const durationMs = input.endTime.getTime() - input.startTime.getTime();
+  if (durationMs <= 0) {
+    throw new Error("Event end time must be after start time");
+  }
+  if (durationMs > 24 * 60 * 60 * 1000) {
+    throw new Error("Session duration cannot exceed 24 hours");
+  }
+
   const length = (() => {
-    if (!endDateOnly) return fallbackLength;
+    if (!endDateOnly) {
+      if (fallbackLength < 1) throw new Error("Recurrence count must be at least 1");
+      if (fallbackLength > 52) throw new Error("Recurrence cannot exceed 52 weeks");
+      return fallbackLength;
+    }
     if (endDateOnly.getTime() < startDateOnly.getTime()) {
       throw new Error("endDate cannot be before startDate");
     }
@@ -60,7 +72,10 @@ export const createWeeklyEvents = async (
       (endDateOnly.getTime() - startDateOnly.getTime()) / (1000 * 60 * 60 * 24),
     );
     // inclusive weeks count: start date is week 1
-    return Math.floor(diffDays / 7) + 1;
+    const computed = Math.floor(diffDays / 7) + 1;
+    if (computed < 1) throw new Error("Recurrence count must be at least 1");
+    if (computed > 52) throw new Error("Recurrence cannot exceed 52 weeks");
+    return computed;
   })();
 
   // IMPORTANT: Do NOT create a separate parent/original row.
@@ -68,7 +83,7 @@ export const createWeeklyEvents = async (
   // to the Week 1 occurrence id.
   const week1Date = startDateOnly;
   const week1Start = setTimeOnDate(week1Date, input.startTime);
-  const week1End = setTimeOnDate(week1Date, input.endTime);
+  const week1End = new Date(week1Start.getTime() + durationMs);
 
   const week1 = await prisma.event.create({
     data: {
@@ -94,7 +109,7 @@ export const createWeeklyEvents = async (
   for (let i = 1; i < length; i++) {
     const occurrenceDate = addDays(startDateOnly, i * 7);
     const occurrenceStart = setTimeOnDate(occurrenceDate, input.startTime);
-    const occurrenceEnd = setTimeOnDate(occurrenceDate, input.endTime);
+    const occurrenceEnd = new Date(occurrenceStart.getTime() + durationMs);
 
     creates.push(
       prisma.event.create({

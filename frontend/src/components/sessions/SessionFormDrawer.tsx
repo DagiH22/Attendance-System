@@ -134,8 +134,25 @@ export const SessionFormDrawer: React.FC<SessionFormDrawerProps> = ({
     if (!startDate) errs.startDate = "Date is required.";
     if (!startTime) errs.startTime = "Start time is required.";
     if (!endTime) errs.endTime = "End time is required.";
-    if (startTime && endTime && startTime >= endTime) {
-      errs.endTime = "End time must be after start time.";
+    if (startTime && endTime) {
+      if (startTime >= endTime) {
+        errs.endTime = "End time must be after start time.";
+      } else {
+        const startD = new Date(`${startDate}T${startTime}:00`);
+        const endD = new Date(`${startDate}T${endTime}:00`);
+        const durationMinutes = (endD.getTime() - startD.getTime()) / (60 * 1000);
+        if (durationMinutes > 24 * 60) {
+          errs.endTime = "Session duration cannot exceed 24 hours.";
+        }
+        if (lateGraceMinutes !== undefined && lateGraceMinutes !== null) {
+          if (Number(lateGraceMinutes) < 0) {
+            errs.lateGraceMinutes = "Lateness grace period cannot be negative.";
+          } else if (Number(lateGraceMinutes) >= durationMinutes) {
+            errs.lateGraceMinutes =
+              "Lateness grace period must be shorter than session duration.";
+          }
+        }
+      }
     }
     if (mode === "weekly") {
       if (!weeklyEndDate) errs.weeklyEndDate = "Recurrence end date is required.";

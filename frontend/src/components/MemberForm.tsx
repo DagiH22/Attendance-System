@@ -113,12 +113,9 @@ export const validateMemberForm = (
 
   if (!values.phoneNumber.trim()) {
     nextErrors.phoneNumber = "Phone number is required";
-  } else if (!/^\+?[0-9]{10,13}$/.test(values.phoneNumber.trim())) {
+  } else if (!/^(\+251[79]\d{8}|0[79]\d{8})$/.test(values.phoneNumber.trim())) {
     nextErrors.phoneNumber =
-      "Use only digits or +, with 10 digits locally or 13 characters with +251.";
-  } else if (![10, 13].includes(values.phoneNumber.trim().length)) {
-    nextErrors.phoneNumber =
-      "Phone number must be 10 digits locally or 13 characters with +251.";
+      "Please enter a valid Ethiopian phone number (e.g. 0912345678 or +251912345678).";
   }
 
   if (!values.campus) {
@@ -131,6 +128,12 @@ export const validateMemberForm = (
 
   if (!values.batch) {
     nextErrors.batch = "Batch must be selected";
+  } else if (values.batch === "YEAR_5" && values.campus && values.campus !== "FIVE_KILO") {
+    nextErrors.batch = "Year 5 is only available for 5-year campuses (e.g., Five Kilo).";
+  }
+
+  if (values.batchOverride === "YEAR_5" && values.campus && values.campus !== "FIVE_KILO") {
+    nextErrors.batchOverride = "Year 5 override is only available for 5-year campuses (e.g., Five Kilo).";
   }
 
   if (!values.gender) {

@@ -9,11 +9,12 @@ import {
   computeBatch,
   deriveEntryAcademicYearForBackfill,
 } from "../services/academic.service";
+import { CAMPUS_PROGRAM_YEARS } from "../config/academic.config";
 
 const prisma = new PrismaClient();
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const ETHIOPIAN_PHONE_REGEX = /^\+?[0-9]{10,13}$/;
+const ETHIOPIAN_PHONE_REGEX = /^(\+251[79]\d{8}|0[79]\d{8})$/;
 
 const validateMemberPayload = (payload: {
   name?: unknown;
@@ -65,6 +66,14 @@ const validateMemberPayload = (payload: {
 
   if (!campus || !Object.values(Campus).includes(campus as Campus)) {
     return { error: "Please select a valid campus." };
+  }
+
+  const campusEnum = campus as Campus;
+  const maxYears = CAMPUS_PROGRAM_YEARS[campusEnum] ?? 4;
+  if (batch === "YEAR_5" && maxYears < 5) {
+    return {
+      error: "Year 5 is only available for 5-year campuses (e.g., Five Kilo).",
+    };
   }
 
   if (!gender || (gender !== "MALE" && gender !== "FEMALE")) {
@@ -122,6 +131,25 @@ export const createMember = async (req: Request, res: Response) => {
       return res
         .status(409)
         .json({ error: "A member with that email already exists" });
+    }
+
+    const existingByPhone = await prisma.member.findFirst({
+      where: { phoneNumber: validated.phoneNumber },
+    });
+    if (existingByPhone) {
+      return res
+        .status(409)
+        .json({ error: "A member with that phone number already exists" });
+    }
+
+    if (
+      batchOverride === "YEAR_5" &&
+      (CAMPUS_PROGRAM_YEARS[validated.campus] ?? 4) < 5
+    ) {
+      return res.status(400).json({
+        error:
+          "Year 5 override is only available for 5-year campuses (e.g., Five Kilo).",
+      });
     }
 
     const currentYear = new Date().getFullYear().toString();
@@ -626,6 +654,30 @@ export const updateMember = async (req: Request, res: Response) => {
       return res
         .status(409)
         .json({ error: "Another member with that email already exists" });
+    }
+
+    const duplicateByPhone = await prisma.member.findFirst({
+      where: {
+        phoneNumber: validated.phoneNumber,
+        NOT: { id: idStr },
+      },
+    });
+
+    if (duplicateByPhone) {
+      return res
+        .status(409)
+        .json({ error: "Another member with that phone number already exists" });
+    }
+
+    const targetCampus = (validated.campus || existingMember.campus) as Campus;
+    if (
+      batchOverride === "YEAR_5" &&
+      (CAMPUS_PROGRAM_YEARS[targetCampus] ?? 4) < 5
+    ) {
+      return res.status(400).json({
+        error:
+          "Year 5 override is only available for 5-year campuses (e.g., Five Kilo).",
+      });
     }
 
     const validatedOverride =
