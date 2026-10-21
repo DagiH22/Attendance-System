@@ -118,7 +118,7 @@ describe("Item 8 Excel Exports Round-Trip - Automated Test Suite", () => {
         title: `ክፍለ ጊዜ ጥናት - ${suffix}`,
         description: "Standalone session description",
         location: "ማዕከል 4ኛ ፎቅ",
-        sessionType: SessionType.REGULAR,
+        sessionType: SessionType.EVENING,
         eventDate: new Date(eventStart.toISOString().slice(0, 10)),
         startTime: eventStart,
         endTime: eventEnd,
@@ -146,7 +146,7 @@ describe("Item 8 Excel Exports Round-Trip - Automated Test Suite", () => {
         description: "Study session alpha description",
         location: "Hall A",
         studyId: study.id,
-        sessionType: SessionType.REGULAR,
+        sessionType: SessionType.EVENING,
         eventDate: new Date("2026-03-05"),
         startTime: new Date("2026-03-05T15:00:00Z"),
         endTime: new Date("2026-03-05T17:00:00Z"),
@@ -262,7 +262,7 @@ describe("Item 8 Excel Exports Round-Trip - Automated Test Suite", () => {
     expect(sheet!.views).toBeDefined();
     expect(sheet!.views.length).toBeGreaterThan(0);
     expect(sheet!.views[0].state).toBe("frozen");
-    expect(sheet!.views[0].ySplit).toBe(1);
+    expect((sheet!.views[0] as any).ySplit).toBe(1);
 
     // Verify header row contains "Attended Sessions" (not just Total Attended)
     const headerRow = sheet!.getRow(1);
@@ -335,7 +335,7 @@ describe("Item 8 Excel Exports Round-Trip - Automated Test Suite", () => {
     // Verify frozen view
     expect(sheet!.views).toBeDefined();
     expect(sheet!.views[0].state).toBe("frozen");
-    expect(sheet!.views[0].ySplit).toBe(1);
+    expect((sheet!.views[0] as any).ySplit).toBe(1);
 
     const headers: string[] = [];
     sheet!.getRow(1).eachCell((cell) => headers.push(String(cell.value)));
@@ -408,7 +408,7 @@ describe("Item 8 Excel Exports Round-Trip - Automated Test Suite", () => {
     // Verify frozen view
     expect(sheet!.views).toBeDefined();
     expect(sheet!.views[0].state).toBe("frozen");
-    expect(sheet!.views[0].ySplit).toBe(1);
+    expect((sheet!.views[0] as any).ySplit).toBe(1);
 
     const headers: string[] = [];
     sheet!.getRow(1).eachCell((cell) => headers.push(String(cell.value)));
@@ -467,7 +467,7 @@ describe("Item 8 Excel Exports Round-Trip - Automated Test Suite", () => {
     // Frozen header row
     expect(sheet.views).toBeDefined();
     expect(sheet.views[0].state).toBe("frozen");
-    expect(sheet.views[0].ySplit).toBe(1);
+    expect((sheet.views[0] as any).ySplit).toBe(1);
 
     const headers: string[] = [];
     sheet.getRow(1).eachCell((cell) => headers.push(String(cell.value)));
@@ -538,7 +538,7 @@ describe("Item 8 Excel Exports Round-Trip - Automated Test Suite", () => {
     // Frozen header row
     expect(sheet.views).toBeDefined();
     expect(sheet.views[0].state).toBe("frozen");
-    expect(sheet.views[0].ySplit).toBe(1);
+    expect((sheet.views[0] as any).ySplit).toBe(1);
 
     const headers: string[] = [];
     sheet.getRow(1).eachCell((cell) => headers.push(String(cell.value)));

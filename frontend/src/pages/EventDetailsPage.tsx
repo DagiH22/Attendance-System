@@ -1020,7 +1020,11 @@ const EventDetailsPage: React.FC = () => {
                   />
                 }
                 label="Date"
-                value={formatDate(event.startTime)}
+                value={
+                  new Date(event.startTime).toDateString() !== new Date(event.endTime).toDateString()
+                    ? `${formatDate(event.startTime)} → ${formatDate(event.endTime)}`
+                    : formatDate(event.startTime)
+                }
               />
               <InfoRow
                 icon={
@@ -1044,7 +1048,11 @@ const EventDetailsPage: React.FC = () => {
                   />
                 }
                 label="Time"
-                value={`${formatTime(event.startTime)} - ${formatTime(event.endTime)}`}
+                value={
+                  new Date(event.startTime).toDateString() !== new Date(event.endTime).toDateString()
+                    ? `${formatTime(event.startTime)} → ${formatTime(event.endTime)} (Next day)`
+                    : `${formatTime(event.startTime)} - ${formatTime(event.endTime)}`
+                }
               />
               <InfoRow
                 icon={

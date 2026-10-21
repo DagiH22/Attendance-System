@@ -192,14 +192,18 @@ export const updateWeeklyEvents = async (
   // handle start date change
   if (input.newStartDate) {
     const newStart = normalizeToDateOnly(input.newStartDate);
+    const parentDurationMs = parent.endTime.getTime() - parent.startTime.getTime();
+    const parentStart = setTimeOnDate(newStart, parent.startTime);
+    const parentEnd = new Date(parentStart.getTime() + parentDurationMs);
+
     // update parent eventDate / startTime / endTime
     updates.push(
       prisma.event.update({
         where: { id: parentEventId },
         data: {
           eventDate: newStart,
-          startTime: setTimeOnDate(newStart, parent.startTime),
-          endTime: setTimeOnDate(newStart, parent.endTime),
+          startTime: parentStart,
+          endTime: parentEnd,
           recurrenceLengthWeeks: targetLength,
         },
       }),
@@ -209,7 +213,7 @@ export const updateWeeklyEvents = async (
     for (let i = 0; i < targetLength; i++) {
       const occurrenceDate = addDays(newStart, i * 7);
       const start = setTimeOnDate(occurrenceDate, parent.startTime);
-      const end = setTimeOnDate(occurrenceDate, parent.endTime);
+      const end = new Date(start.getTime() + parentDurationMs);
 
       updates.push(
         prisma.event.upsert({

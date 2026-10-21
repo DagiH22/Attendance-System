@@ -306,8 +306,8 @@ export const createEvent = async (req: Request, res: Response) => {
     }
 
     const parsedEventDate = new Date(eventDate);
-    const parsedStartTime = validated.startTime!;
-    const parsedEndTime = validated.endTime!;
+    const parsedStartTime = (validated as any).startTime!;
+    const parsedEndTime = (validated as any).endTime!;
 
     const eventType: EventType =
       type && Object.values(EventType).includes(type)

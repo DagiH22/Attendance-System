@@ -34,6 +34,7 @@ export const SessionFormDrawer: React.FC<SessionFormDrawerProps> = ({
   // Recurrence / timing
   const [mode, setMode] = useState<"one-time" | "weekly">("one-time");
   const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
   const [weeklyEndDate, setWeeklyEndDate] = useState("");
@@ -45,6 +46,9 @@ export const SessionFormDrawer: React.FC<SessionFormDrawerProps> = ({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+
+  const isOvernight = sessionType === "OVERNIGHT";
+  const effectiveEndDate = isOvernight ? (endDate || startDate) : startDate;
 
   // Load studies list
   useEffect(() => {
@@ -77,9 +81,11 @@ export const SessionFormDrawer: React.FC<SessionFormDrawerProps> = ({
       }
       if (sessionToEdit.endTime) {
         const d = new Date(sessionToEdit.endTime);
+        setEndDate(d.toISOString().slice(0, 10));
         setEndTime(d.toTimeString().slice(0, 5));
       }
     } else {
+      const todayStr = new Date().toISOString().slice(0, 10);
       setTitle("");
       setDescription("");
       setLocation("");
@@ -87,7 +93,8 @@ export const SessionFormDrawer: React.FC<SessionFormDrawerProps> = ({
       setSessionType("EVENING");
       setLateGraceMinutes(15);
       setMode("one-time");
-      setStartDate(new Date().toISOString().slice(0, 10));
+      setStartDate(todayStr);
+      setEndDate(todayStr);
       setStartTime("17:30");
       setEndTime("19:30");
       setWeeklyEndDate("");
@@ -95,6 +102,62 @@ export const SessionFormDrawer: React.FC<SessionFormDrawerProps> = ({
     setErrors({});
     setIsDirty(false);
   }, [sessionToEdit, preselectedStudyId, isOpen]);
+
+  const handleSelectSessionType = (type: SessionType) => {
+    setSessionType(type);
+    setIsDirty(true);
+    if (type === "OVERNIGHT") {
+      setStartTime("21:00");
+      setEndTime("05:00");
+      if (startDate) {
+        const nextDay = new Date(new Date(`${startDate}T00:00:00`).getTime() + 86400000);
+        setEndDate(nextDay.toISOString().slice(0, 10));
+      }
+    } else {
+      setEndDate(startDate);
+    }
+  };
+
+  const handleStartDateChange = (val: string) => {
+    setStartDate(val);
+    setIsDirty(true);
+    if (sessionType === "OVERNIGHT") {
+      const nextDay = new Date(new Date(`${val}T00:00:00`).getTime() + 86400000);
+      setEndDate(nextDay.toISOString().slice(0, 10));
+    } else {
+      setEndDate(val);
+    }
+  };
+
+  const calculatedDuration = useMemo(() => {
+    if (!startDate || !startTime || !endTime) return null;
+    const startD = new Date(`${startDate}T${startTime}:00`);
+    const endD = new Date(`${effectiveEndDate}T${endTime}:00`);
+    if (isNaN(startD.getTime()) || isNaN(endD.getTime())) return null;
+    const diffMs = endD.getTime() - startD.getTime();
+    if (diffMs <= 0) return { isValid: false, message: "End date and time must be after start date and time." };
+    const totalMinutes = Math.floor(diffMs / 60000);
+    if (totalMinutes > 24 * 60) return { isValid: false, message: "Session duration cannot exceed 24 hours." };
+    const hours = Math.floor(totalMinutes / 60);
+    const mins = totalMinutes % 60;
+    const spansMidnight = startD.toDateString() !== endD.toDateString();
+    const formatOpts: Intl.DateTimeFormatOptions = {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    };
+    return {
+      isValid: true,
+      diffMs,
+      totalMinutes,
+      hours,
+      mins,
+      spansMidnight,
+      formattedRange: `${startD.toLocaleDateString("en-US", formatOpts)} → ${endD.toLocaleDateString("en-US", formatOpts)}`,
+    };
+  }, [startDate, effectiveEndDate, startTime, endTime]);
 
   const selectedStudy = useMemo(() => {
     if (studyId === "STANDALONE") return null;
@@ -131,15 +194,18 @@ export const SessionFormDrawer: React.FC<SessionFormDrawerProps> = ({
   const validate = (): boolean => {
     const errs: Record<string, string> = {};
     if (!title.trim()) errs.title = "Session title is required.";
-    if (!startDate) errs.startDate = "Date is required.";
+    if (!startDate) errs.startDate = "Start date is required.";
+    if (isOvernight && !endDate) errs.endDate = "End date is required.";
     if (!startTime) errs.startTime = "Start time is required.";
     if (!endTime) errs.endTime = "End time is required.";
-    if (startTime && endTime) {
-      if (startTime >= endTime) {
-        errs.endTime = "End time must be after start time.";
+
+    if (startDate && startTime && endTime) {
+      const startD = new Date(`${startDate}T${startTime}:00`);
+      const endD = new Date(`${effectiveEndDate}T${endTime}:00`);
+
+      if (isNaN(startD.getTime()) || isNaN(endD.getTime()) || endD <= startD) {
+        errs.endTime = "End date and time must be after start date and time.";
       } else {
-        const startD = new Date(`${startDate}T${startTime}:00`);
-        const endD = new Date(`${startDate}T${endTime}:00`);
         const durationMinutes = (endD.getTime() - startD.getTime()) / (60 * 1000);
         if (durationMinutes > 24 * 60) {
           errs.endTime = "Session duration cannot exceed 24 hours.";
@@ -170,8 +236,10 @@ export const SessionFormDrawer: React.FC<SessionFormDrawerProps> = ({
 
     try {
       setIsSaving(true);
-      const startDateTime = new Date(`${startDate}T${startTime}:00`).toISOString();
-      const endDateTime = new Date(`${startDate}T${endTime}:00`).toISOString();
+      const startD = new Date(`${startDate}T${startTime}:00`);
+      const endD = new Date(`${effectiveEndDate}T${endTime}:00`);
+      const startDateTime = startD.toISOString();
+      const endDateTime = endD.toISOString();
 
       if (isEditing && sessionToEdit) {
         const payload: any = {
@@ -408,10 +476,7 @@ export const SessionFormDrawer: React.FC<SessionFormDrawerProps> = ({
                 <button
                   key={t.type}
                   type="button"
-                  onClick={() => {
-                    setSessionType(t.type);
-                    setIsDirty(true);
-                  }}
+                  onClick={() => handleSelectSessionType(t.type)}
                   className={`flex-1 rounded-xl border py-2 text-xs font-bold transition ${
                     sessionType === t.type
                       ? "border-blue-600 bg-blue-50 text-blue-700"
@@ -485,54 +550,147 @@ export const SessionFormDrawer: React.FC<SessionFormDrawerProps> = ({
 
         {/* Schedule Timing */}
         <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 space-y-3">
-          <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
-            <Clock className="w-4 h-4 text-blue-600" />
-            <span>Session Schedule</span>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+              <Clock className="w-4 h-4 text-blue-600" />
+              <span>Session Schedule</span>
+            </div>
+            {isOvernight && (
+              <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                🌙 Overnight (Spans midnight)
+              </span>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-[11px] font-bold text-slate-600 mb-1">Date *</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => {
-                  setStartDate(e.target.value);
-                  setIsDirty(true);
-                }}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
-              />
-              {errors.startDate && <p className="mt-1 text-[11px] text-rose-600 font-medium">{errors.startDate}</p>}
-            </div>
+          {isOvernight ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Start Date *</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => handleStartDateChange(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                />
+                {errors.startDate && <p className="mt-1 text-[11px] text-rose-600 font-medium">{errors.startDate}</p>}
+              </div>
 
-            <div>
-              <label className="block text-[11px] font-bold text-slate-600 mb-1">Start Time *</label>
-              <input
-                type="time"
-                value={startTime}
-                onChange={(e) => {
-                  setStartTime(e.target.value);
-                  setIsDirty(true);
-                }}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
-              />
-              {errors.startTime && <p className="mt-1 text-[11px] text-rose-600 font-medium">{errors.startTime}</p>}
-            </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Start Time *</label>
+                <input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => {
+                    setStartTime(e.target.value);
+                    setIsDirty(true);
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                />
+                {errors.startTime && <p className="mt-1 text-[11px] text-rose-600 font-medium">{errors.startTime}</p>}
+              </div>
 
-            <div>
-              <label className="block text-[11px] font-bold text-slate-600 mb-1">End Time *</label>
-              <input
-                type="time"
-                value={endTime}
-                onChange={(e) => {
-                  setEndTime(e.target.value);
-                  setIsDirty(true);
-                }}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
-              />
-              {errors.endTime && <p className="mt-1 text-[11px] text-rose-600 font-medium">{errors.endTime}</p>}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">End Date *</label>
+                <input
+                  type="date"
+                  value={endDate}
+                  min={startDate}
+                  onChange={(e) => {
+                    setEndDate(e.target.value);
+                    setIsDirty(true);
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                />
+                {errors.endDate && <p className="mt-1 text-[11px] text-rose-600 font-medium">{errors.endDate}</p>}
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">End Time *</label>
+                <input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => {
+                    setEndTime(e.target.value);
+                    setIsDirty(true);
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                />
+                {errors.endTime && <p className="mt-1 text-[11px] text-rose-600 font-medium">{errors.endTime}</p>}
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Date *</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => handleStartDateChange(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                />
+                {errors.startDate && <p className="mt-1 text-[11px] text-rose-600 font-medium">{errors.startDate}</p>}
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Start Time *</label>
+                <input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => {
+                    setStartTime(e.target.value);
+                    setIsDirty(true);
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                />
+                {errors.startTime && <p className="mt-1 text-[11px] text-rose-600 font-medium">{errors.startTime}</p>}
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">End Time *</label>
+                <input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => {
+                    setEndTime(e.target.value);
+                    setIsDirty(true);
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                />
+                {errors.endTime && <p className="mt-1 text-[11px] text-rose-600 font-medium">{errors.endTime}</p>}
+              </div>
+            </div>
+          )}
+
+          {/* Time range preview banner */}
+          {calculatedDuration && (
+            <div
+              className={`rounded-xl p-2.5 text-xs flex items-center justify-between border ${
+                calculatedDuration.isValid
+                  ? calculatedDuration.spansMidnight
+                    ? "bg-indigo-50/80 border-indigo-200 text-indigo-900"
+                    : "bg-blue-50/80 border-blue-200 text-blue-900"
+                  : "bg-rose-50 border-rose-200 text-rose-800"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 shrink-0" />
+                <div>
+                  {calculatedDuration.isValid ? (
+                    <div>
+                      <div className="font-semibold">{calculatedDuration.formattedRange}</div>
+                      <div className="text-[11px] opacity-75">
+                        Duration: {calculatedDuration.hours ?? 0} hr{(calculatedDuration.hours ?? 0) !== 1 ? "s" : ""}{" "}
+                        {(calculatedDuration.mins ?? 0) > 0 ? `${calculatedDuration.mins} min` : ""}
+                        {calculatedDuration.spansMidnight && " • 🌙 Spans across midnight"}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="font-medium">{calculatedDuration.message}</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {mode === "weekly" && (
             <div className="pt-2 border-t border-slate-200/60">

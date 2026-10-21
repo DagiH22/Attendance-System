@@ -216,20 +216,9 @@ export const runEventLifecycleSweep = async (prisma: PrismaClient) => {
       isActive: true,
       endedAt: null,
       cancelledAt: null,
-      OR: [
-        {
-          startTime: {
-            gte: lowerBound,
-            lte: upperBound,
-          },
-        },
-        {
-          endTime: {
-            gte: lowerBound,
-            lte: upperBound,
-          },
-        },
-      ],
+      endTime: {
+        lte: upperBound,
+      },
     },
   });
 
