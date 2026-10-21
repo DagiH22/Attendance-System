@@ -777,7 +777,14 @@ export const resendMemberQr = async (req: Request, res: Response) => {
           email: member.email,
           gender: member.gender,
           department: member.department,
-          batch: member.batch,
+          batch: computeBatch(
+            {
+              campus: member.campus,
+              entryAcademicYear: member.entryAcademicYear ?? 2025,
+              batchOverride: member.batchOverride,
+            },
+            new Date(),
+          ),
           campus: member.campus,
         },
         qrCode,

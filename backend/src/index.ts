@@ -19,6 +19,7 @@ import dashboardRouter from "./routes/dashboard.route";
 import studyRouter from "./routes/study.route";
 import { PrismaClient } from "@prisma/client";
 import { startEventLifecycleScheduler } from "./services/event-lifecycle.service";
+import { startBatchSyncScheduler } from "./services/batch-sync.service";
 
 const app = express();
 const prisma = new PrismaClient();
@@ -62,6 +63,7 @@ process.on("uncaughtException", (error) => {
 
 if (process.env.NODE_ENV !== "test") {
   startEventLifecycleScheduler(prisma);
+  startBatchSyncScheduler(prisma);
   app.listen(port, host, () => {
     console.log(`Server listening on http://${host}:${port}`);
   });

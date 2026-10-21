@@ -2,9 +2,58 @@ import { Campus, Batch } from "@prisma/client";
 import {
   CAMPUS_PROGRAM_YEARS,
   ACADEMIC_YEAR_START_MONTH,
+  ACADEMIC_YEAR_ROLLOVER_DATE,
+  ACADEMIC_TIMEZONE,
   LEVEL_TO_BATCH,
   DEFAULT_LATE_GRACE_MINUTES,
 } from "../config/academic.config";
+
+export interface AddisDateParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+/**
+ * Extracts date parts for a Date evaluated in the Africa/Addis_Ababa timezone (UTC+3).
+ */
+export function getAddisDateParts(
+  date: Date,
+  timezone: string = ACADEMIC_TIMEZONE,
+): AddisDateParts {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hour12: false,
+  });
+
+  const parts = formatter.formatToParts(date);
+  const map: Record<string, number> = {};
+  for (const p of parts) {
+    if (p.type !== "literal") {
+      map[p.type] = Number(p.value);
+    }
+  }
+
+  const hour = map.hour === 24 ? 0 : (map.hour ?? 0);
+
+  return {
+    year: map.year,
+    month: map.month,
+    day: map.day,
+    hour,
+    minute: map.minute ?? 0,
+    second: map.second ?? 0,
+  };
+}
 
 export type AudienceType = "ALL" | "FINAL_YEAR" | "BATCHES";
 
@@ -75,20 +124,30 @@ export interface EventStatsResult {
 }
 
 /**
- * Returns the 4-digit starting calendar year for the academic year of the given date.
- * E.g., with startMonth = 9 (September):
- * - 2026-10-17 -> 2026 (2026/27 academic year)
- * - 2026-08-31 -> 2025 (2025/26 academic year)
- * - 2026-09-01 -> 2026 (2026/27 academic year)
+ * Returns the 4-digit starting calendar year for the academic year of the given date,
+ * evaluated strictly in the Africa/Addis_Ababa timezone against the configured rollover date ({ month: 9, day: 11 }).
+ *
+ * Enkutatash (Ethiopian New Year) is Meskerem 1.
+ * Note: Ethiopian New Year falls on Sept 12 in the Gregorian year preceding a Gregorian leap year;
+ * Sept 11 is kept as the configured rollover date per system specification.
+ *
+ * Examples in Africa/Addis_Ababa:
+ * - 2026-09-10 20:59:59 UTC (Sept 10 23:59:59 Addis) -> 2025 (2025/26 academic year)
+ * - 2026-09-10 21:00:00 UTC (Sept 11 00:00:00 Addis) -> 2026 (2026/27 academic year)
+ * - 2026-09-11 12:00:00 UTC (Sept 11 Addis) -> 2026 (2026/27 academic year)
+ * - 2026-09-12 12:00:00 UTC (Sept 12 Addis) -> 2026 (2026/27 academic year)
  */
 export function getAcademicYear(
   date: Date,
-  startMonth: number = ACADEMIC_YEAR_START_MONTH,
+  rollover: { month: number; day: number } = ACADEMIC_YEAR_ROLLOVER_DATE,
+  timezone: string = ACADEMIC_TIMEZONE,
 ): number {
-  const d = new Date(date);
-  const month = d.getMonth() + 1; // 1-12
-  const fullYear = d.getFullYear();
-  return month >= startMonth ? fullYear : fullYear - 1;
+  const parts = getAddisDateParts(new Date(date), timezone);
+  const isRolloverOrAfter =
+    parts.month > rollover.month ||
+    (parts.month === rollover.month && parts.day >= rollover.day);
+
+  return isRolloverOrAfter ? parts.year : parts.year - 1;
 }
 
 /**

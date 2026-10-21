@@ -28,12 +28,18 @@ import {
 
 describe("academic.service unit tests", () => {
   describe("getAcademicYear", () => {
-    it("returns correct academic year before and after rollover date (September 1)", () => {
+    it("returns correct academic year before and after rollover date (September 11)", () => {
       // In August 2026, academic year is 2025/26 (starts 2025)
       expect(getAcademicYear(new Date(2026, 7, 31))).toBe(2025); // month 7 is August in 0-indexed JS
 
-      // On September 1 2026, academic year is 2026/27 (starts 2026)
-      expect(getAcademicYear(new Date(2026, 8, 1))).toBe(2026); // month 8 is September in 0-indexed JS
+      // On September 1 2026, academic year is still 2025/26 (starts 2025)
+      expect(getAcademicYear(new Date(2026, 8, 1))).toBe(2025);
+
+      // On September 10 2026, academic year is still 2025/26 (starts 2025)
+      expect(getAcademicYear(new Date(2026, 8, 10))).toBe(2025);
+
+      // On September 11 2026, academic year rolls over to 2026/27 (starts 2026)
+      expect(getAcademicYear(new Date(2026, 8, 11))).toBe(2026);
 
       // In October 2026
       expect(getAcademicYear(new Date(2026, 9, 17))).toBe(2026);
@@ -94,6 +100,152 @@ describe("academic.service unit tests", () => {
         batchOverride: Batch.YEAR_3, // repeating year 3
       };
       expect(computeBatch(member, asOfDate)).toBe(Batch.YEAR_3);
+    });
+
+    describe("Sept 11 Rollover & Africa/Addis_Ababa Timezone Rules", () => {
+      // Addis is UTC+3.
+      // Sept 10 20:59:59 UTC = Sept 10 23:59:59 Addis (Academic year 2025)
+      // Sept 10 21:00:00 UTC = Sept 11 00:00:00 Addis (Academic year 2026)
+      const sept10AddisEveUTC = new Date("2026-09-10T20:59:59Z");
+      const sept11AddisMidnightUTC = new Date("2026-09-10T21:00:00Z");
+      const sept11AddisNoonUTC = new Date("2026-09-11T09:00:00Z"); // 12:00 in Addis
+      const sept12AddisNoonUTC = new Date("2026-09-12T09:00:00Z"); // 12:00 in Addis
+
+      it("evaluates academic year correctly across Addis Ababa timezone boundary", () => {
+        expect(getAcademicYear(sept10AddisEveUTC)).toBe(2025);
+        expect(getAcademicYear(sept11AddisMidnightUTC)).toBe(2026);
+        expect(getAcademicYear(sept11AddisNoonUTC)).toBe(2026);
+        expect(getAcademicYear(sept12AddisNoonUTC)).toBe(2026);
+      });
+
+      it("rolls over 4-year campuses (FOUR_KILO, SIX_KILO, ART) on Sept 11", () => {
+        const campuses = [Campus.FOUR_KILO, Campus.SIX_KILO, Campus.ART];
+        for (const campus of campuses) {
+          // Member entered in 2023 (final-year YEAR_4 in 2025/2026):
+          // On Sept 10 (still 2025/26): level = 2025 - 2023 + 1 = 3 -> YEAR_3? No, 2022 is YEAR_4 in 2025:
+          // Entry 2022: level in 2025 = 2025 - 2022 + 1 = 4 (YEAR_4, final year)
+          expect(computeBatch({ campus, entryAcademicYear: 2022 }, sept10AddisEveUTC)).toBe(Batch.YEAR_4);
+          // On Sept 11 midnight in Addis (2026/27): level = 2026 - 2022 + 1 = 5 -> GRADUATE
+          expect(computeBatch({ campus, entryAcademicYear: 2022 }, sept11AddisMidnightUTC)).toBe(Batch.GRADUATE);
+          // On Sept 12: remains GRADUATE
+          expect(computeBatch({ campus, entryAcademicYear: 2022 }, sept12AddisNoonUTC)).toBe(Batch.GRADUATE);
+
+          // Member entered in 2025 (FRESHMAN in 2025/2026):
+          // On Sept 10: FRESHMAN
+          expect(computeBatch({ campus, entryAcademicYear: 2025 }, sept10AddisEveUTC)).toBe(Batch.FRESHMAN);
+          // On Sept 11: advances to YEAR_2
+          expect(computeBatch({ campus, entryAcademicYear: 2025 }, sept11AddisMidnightUTC)).toBe(Batch.YEAR_2);
+          // On Sept 12: stays YEAR_2
+          expect(computeBatch({ campus, entryAcademicYear: 2025 }, sept12AddisNoonUTC)).toBe(Batch.YEAR_2);
+        }
+      });
+
+      it("rolls over 5-year campus (FIVE_KILO) on Sept 11: YEAR_5 -> GRADUATE, YEAR_4 -> YEAR_5", () => {
+        const campus = Campus.FIVE_KILO;
+        // Entry 2021: in 2025/26 (level = 5) is YEAR_5 (final year for FIVE_KILO)
+        expect(computeBatch({ campus, entryAcademicYear: 2021 }, sept10AddisEveUTC)).toBe(Batch.YEAR_5);
+        // On Sept 11 midnight (2026/27, level = 6) graduates!
+        expect(computeBatch({ campus, entryAcademicYear: 2021 }, sept11AddisMidnightUTC)).toBe(Batch.GRADUATE);
+        expect(computeBatch({ campus, entryAcademicYear: 2021 }, sept12AddisNoonUTC)).toBe(Batch.GRADUATE);
+
+        // Entry 2022: in 2025/26 (level = 4) is YEAR_4
+        expect(computeBatch({ campus, entryAcademicYear: 2022 }, sept10AddisEveUTC)).toBe(Batch.YEAR_4);
+        // On Sept 11 midnight (2026/27, level = 5) advances to YEAR_5 (final year)
+        expect(computeBatch({ campus, entryAcademicYear: 2022 }, sept11AddisMidnightUTC)).toBe(Batch.YEAR_5);
+      });
+
+      it("keeps already GRADUATE members as GRADUATE indefinitely across rollovers", () => {
+        const campus = Campus.FOUR_KILO;
+        const graduateMember = { campus, entryAcademicYear: 2018 };
+        expect(computeBatch(graduateMember, sept10AddisEveUTC)).toBe(Batch.GRADUATE);
+        expect(computeBatch(graduateMember, sept11AddisMidnightUTC)).toBe(Batch.GRADUATE);
+        expect(computeBatch(graduateMember, sept12AddisNoonUTC)).toBe(Batch.GRADUATE);
+      });
+
+      it("advances mid-year registered member on the next Sept 11", () => {
+        // Registered in February 2026 for academic year 2025/26 (entryAcademicYear: 2025)
+        const midYearMember = { campus: Campus.SIX_KILO, entryAcademicYear: 2025 };
+        // In June 2026 (still 2025/26 academic year):
+        expect(computeBatch(midYearMember, new Date("2026-06-15T10:00:00Z"))).toBe(Batch.FRESHMAN);
+        // On Sept 10, 2026 (day before rollover):
+        expect(computeBatch(midYearMember, sept10AddisEveUTC)).toBe(Batch.FRESHMAN);
+        // On Sept 11, 2026 (rollover to 2026/27 academic year):
+        expect(computeBatch(midYearMember, sept11AddisMidnightUTC)).toBe(Batch.YEAR_2);
+      });
+
+      it("respects batchOverride across rollover dates without advancing", () => {
+        const overridden = {
+          campus: Campus.FOUR_KILO,
+          entryAcademicYear: 2025,
+          batchOverride: Batch.YEAR_4,
+        };
+        expect(computeBatch(overridden, sept10AddisEveUTC)).toBe(Batch.YEAR_4);
+        expect(computeBatch(overridden, sept11AddisMidnightUTC)).toBe(Batch.YEAR_4);
+        expect(computeBatch(overridden, sept12AddisNoonUTC)).toBe(Batch.YEAR_4);
+      });
+    });
+  });
+
+  describe("syncMemberBatches (Idempotent DB Synchronization Job)", () => {
+    it("updates stale batches and is idempotent on repeat execution", async () => {
+      // Mock members table in memory
+      const mockMembers = [
+        {
+          id: "m-1",
+          name: "Abebe",
+          campus: Campus.FOUR_KILO,
+          batch: Batch.FRESHMAN, // stale, should be YEAR_2 in 2026/27
+          entryAcademicYear: 2025,
+          batchOverride: null,
+        },
+        {
+          id: "m-2",
+          name: "Sara",
+          campus: Campus.FOUR_KILO,
+          batch: Batch.YEAR_4, // stale, should be GRADUATE in 2026/27
+          entryAcademicYear: 2022,
+          batchOverride: null,
+        },
+        {
+          id: "m-3",
+          name: "Dawit",
+          campus: Campus.FIVE_KILO,
+          batch: Batch.YEAR_2, // already in sync with override
+          entryAcademicYear: 2025,
+          batchOverride: Batch.YEAR_2,
+        },
+      ];
+
+      const updateCalls: Array<{ id: string; batch: Batch }> = [];
+
+      const mockPrisma: any = {
+        member: {
+          findMany: async () => mockMembers,
+          update: async ({ where, data }: any) => {
+            updateCalls.push({ id: where.id, batch: data.batch });
+            const m = mockMembers.find((item) => item.id === where.id);
+            if (m) m.batch = data.batch;
+            return m;
+          },
+        },
+      };
+
+      // Import sync function dynamically
+      const { syncMemberBatches } = await import("./batch-sync.service");
+
+      // First run as of Sept 11, 2026: updates m-1 to YEAR_2 and m-2 to GRADUATE
+      const result1 = await syncMemberBatches(mockPrisma, new Date("2026-09-11T09:00:00Z"));
+      expect(result1.checkedCount).toBe(3);
+      expect(result1.updatedCount).toBe(2);
+      expect(updateCalls).toHaveLength(2);
+      expect(mockMembers[0].batch).toBe(Batch.YEAR_2);
+      expect(mockMembers[1].batch).toBe(Batch.GRADUATE);
+
+      // Second run immediately after (idempotency check): updates 0 rows
+      const result2 = await syncMemberBatches(mockPrisma, new Date("2026-09-11T09:00:00Z"));
+      expect(result2.checkedCount).toBe(3);
+      expect(result2.updatedCount).toBe(0);
+      expect(updateCalls).toHaveLength(2); // no new updates
     });
   });
 

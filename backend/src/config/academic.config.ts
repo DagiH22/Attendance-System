@@ -20,6 +20,22 @@ export const CAMPUS_PROGRAM_YEARS: Record<Campus, number> = {
 export const ACADEMIC_YEAR_START_MONTH = 9;
 
 /**
+ * Academic year rollover date.
+ * Enkutatash (Ethiopian New Year) is Meskerem 1.
+ * Note: Ethiopian New Year falls on Sept 12 in the Gregorian year preceding a Gregorian leap year;
+ * Sept 11 is kept as the configured rollover date per system specification.
+ */
+export const ACADEMIC_YEAR_ROLLOVER_DATE = {
+  month: 9,
+  day: 11,
+} as const;
+
+/**
+ * Default timezone for academic calendar evaluation.
+ */
+export const ACADEMIC_TIMEZONE = "Africa/Addis_Ababa";
+
+/**
  * Default grace minutes for late arrival before a check-in is marked LATE.
  */
 export const DEFAULT_LATE_GRACE_MINUTES = 15;
