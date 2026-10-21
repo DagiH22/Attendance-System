@@ -32,6 +32,7 @@ import {
   Clock,
   MapPin,
   Users,
+  RotateCcw,
 } from "lucide-react";
 
 const SORT_OPTIONS = [
@@ -92,8 +93,8 @@ export const EventsPage: React.FC = () => {
   const queryClient = useQueryClient();
   const isSuperAdmin = admin?.role === "SUPER_ADMIN";
 
-  // Item 4: Persisted View State Hook (URL search params -> sessionStorage -> defaults)
-  const { viewState, setField } = usePersistedViewState("sessions", {
+  // Item 4: Persisted View State Hook (URL search params -> localStorage -> defaults)
+  const { viewState, setField, resetFilters } = usePersistedViewState("sessions", {
     defaults: {
       search: "",
       status: "ALL",
@@ -320,6 +321,16 @@ export const EventsPage: React.FC = () => {
                 setField("sortDir", viewState.sortDir === "asc" ? "desc" : "asc")
               }
             />
+
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition shadow-sm"
+              title="Reset all session filters"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+              <span>Reset filters</span>
+            </button>
           </div>
         }
       >

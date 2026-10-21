@@ -2,6 +2,7 @@ import React from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { Calendar, BookOpen, Users, LayoutDashboard, LogOut, ShieldCheck } from "lucide-react";
+import { clearAllPersistedViewStates } from "../../hooks/usePersistedViewState";
 
 export const AppLayout: React.FC = () => {
   const { admin, logout } = useAuth();
@@ -16,6 +17,7 @@ export const AppLayout: React.FC = () => {
   ];
 
   const handleLogout = async () => {
+    clearAllPersistedViewStates();
     await logout();
     navigate("/login", { replace: true });
   };

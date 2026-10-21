@@ -4,8 +4,9 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import api, { setSessionExpiredHandler } from "../lib/api";
 import formatDate from "../lib/formatDate";
 import QrAttendanceScanner from "../components/QrAttendanceScanner";
-import { usePersistentState } from "../hooks/usePersistentState";
+import { usePersistedViewState } from "../hooks/usePersistedViewState";
 import { useScrollDirection } from "../hooks/useScrollDirection";
+import { RotateCcw } from "lucide-react";
 import type {
   DashboardEvent,
   EventAttendanceRecord,
@@ -87,11 +88,9 @@ const TakeAttendancePage: React.FC = () => {
   const [loadingEvent, setLoadingEvent] = useState<boolean>(!state?.event);
   const [loadingMembers, setLoadingMembers] = useState<boolean>(true);
   const [pageError, setPageError] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<PageTab>("QR");
   const [submittingMemberId, setSubmittingMemberId] = useState<string | null>(
     null,
   );
-  const [searchQuery, setSearchQuery] = useState("");
   const [feedback, setFeedback] = useState<AttendanceFeedback | null>(null);
   const [presentMembers, setPresentMembers] = useState<Set<string>>(
     () => new Set(),
@@ -99,7 +98,6 @@ const TakeAttendancePage: React.FC = () => {
   const [attendanceRecords, setAttendanceRecords] = useState<
     EventAttendanceRecord[]
   >([]);
-  const [manualPage, setManualPage] = useState(1);
   const [prefetchingPage, setPrefetchingPage] = useState<number | null>(null);
 
   type StatusFilter = "ALL" | "ACTIVE" | "INACTIVE";
@@ -109,14 +107,56 @@ const TakeAttendancePage: React.FC = () => {
     | "ALPHA_DESC"
     | "RECENTLY_REGISTERED";
 
-  const [statusFilter, setStatusFilter] = usePersistentState<StatusFilter>(
-    "take-attendance-status-filter",
-    "ALL",
-  );
-  const [sortBy, setSortBy] = usePersistentState<SortOption>(
-    "take-attendance-sort-by",
-    "DEFAULT",
-  );
+  const {
+    viewState: attendanceViewState,
+    setField: setAttendanceField,
+    resetFilters: resetAttendanceFilters,
+  } = usePersistedViewState("take_attendance", {
+    defaults: {
+      activeTab: "QR" as PageTab,
+      searchQuery: "",
+      manualPage: 1,
+      statusFilter: "ALL" as StatusFilter,
+      sortBy: "DEFAULT" as SortOption,
+    },
+  });
+
+  const activeTab = attendanceViewState.activeTab;
+  const setActiveTab = (tab: PageTab) => setAttendanceField("activeTab", tab);
+
+  const searchQuery = attendanceViewState.searchQuery;
+  const setSearchQuery = (q: string) => {
+    setAttendanceField("searchQuery", q);
+    setAttendanceField("manualPage", 1);
+  };
+
+  const manualPage = attendanceViewState.manualPage;
+  const setManualPage = (p: number | ((prev: number) => number)) => {
+    if (typeof p === "function") {
+      setAttendanceField("manualPage", p(attendanceViewState.manualPage));
+    } else {
+      setAttendanceField("manualPage", p);
+    }
+  };
+
+  const statusFilter = attendanceViewState.statusFilter;
+  const setStatusFilter = (
+    sf: StatusFilter | ((prev: StatusFilter) => StatusFilter),
+  ) => {
+    const nextVal =
+      typeof sf === "function" ? sf(attendanceViewState.statusFilter) : sf;
+    setAttendanceField("statusFilter", nextVal);
+    setAttendanceField("manualPage", 1);
+  };
+
+  const sortBy = attendanceViewState.sortBy;
+  const setSortBy = (
+    sb: SortOption | ((prev: SortOption) => SortOption),
+  ) => {
+    const nextVal =
+      typeof sb === "function" ? sb(attendanceViewState.sortBy) : sb;
+    setAttendanceField("sortBy", nextVal);
+  };
   const [isSortModalOpen, setIsSortModalOpen] = useState(false);
   const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
 
@@ -969,6 +1009,16 @@ const TakeAttendancePage: React.FC = () => {
                       </div>
                     )}
                   </div>
+
+                  {/* Reset Filters Button */}
+                  <button
+                    onClick={resetAttendanceFilters}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors mb-1"
+                    title="Reset manual attendance filters"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+                    <span className="hidden sm:inline">Reset</span>
+                  </button>
                 </div>
               </div>
 

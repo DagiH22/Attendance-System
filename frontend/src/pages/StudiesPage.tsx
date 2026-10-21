@@ -38,6 +38,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Search,
+  RotateCcw,
 } from "lucide-react";
 
 const formatCampus = (campus: string) => {
@@ -85,7 +86,7 @@ export const StudiesPage: React.FC = () => {
   const isSuperAdmin = admin?.role === "SUPER_ADMIN";
 
   // Item 4: Persisted View State Hook
-  const { viewState, setField } = usePersistedViewState("studies", {
+  const { viewState, setField, resetFilters } = usePersistedViewState("studies", {
     defaults: {
       studyId: "",
       gridSearch: "",
@@ -126,13 +127,16 @@ export const StudiesPage: React.FC = () => {
   });
 
   // Item 4: Default selection logic:
-  // "A user's chosen study overrides the default (the default is the ongoing study with the nearest active/upcoming session) until that study no longer exists or has ended."
+  // "A user's chosen study overrides the default until that study no longer exists or has ended."
   const activeStudyId = useMemo(() => {
-    if (viewState.studyId && studies.some((s) => s.id === viewState.studyId)) {
-      return viewState.studyId;
+    if (viewState.studyId) {
+      const chosen = studies.find((s) => s.id === viewState.studyId);
+      if (chosen && chosen.isActive && new Date(chosen.endDate) >= new Date()) {
+        return chosen.id;
+      }
     }
     if (studies.length === 0) return "";
-    // Default to first active study or first study
+    // Default to first active ongoing study or first study
     const ongoing = studies.find((s) => s.isActive && new Date(s.endDate) >= new Date());
     return ongoing ? ongoing.id : studies[0].id;
   }, [viewState.studyId, studies]);
@@ -409,6 +413,16 @@ export const StudiesPage: React.FC = () => {
             >
               <Download className="w-3.5 h-3.5 text-emerald-600" />
               <span>Export (.xlsx)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition shadow-sm"
+              title="Reset all filters on this page to defaults"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+              <span>Reset filters</span>
             </button>
           </div>
         )}

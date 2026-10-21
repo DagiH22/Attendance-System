@@ -23,6 +23,8 @@ import type {
 import { useAuth } from "../contexts/AuthContext";
 import CopyPhoneButton from "../components/shared/CopyPhoneButton";
 import CopyAllPhonesDropdown from "../components/shared/CopyAllPhonesDropdown";
+import { usePersistedViewState } from "../hooks/usePersistedViewState";
+import { RotateCcw } from "lucide-react";
 
 type LocationState = {
   event?: DashboardEvent;
@@ -146,31 +148,55 @@ const EventDetailsPage: React.FC = () => {
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancelError, setCancelError] = useState("");
 
-  // Attendance Modal & Tabs
+  // Attendance Modal & Tabs (Item 4: Persisted View State)
   const [isAttendanceModalOpen, setIsAttendanceModalOpen] = useState(false);
-  const [attendanceModalTab, setAttendanceModalTab] = useState<
-    "ATTENDEES" | "ABSENTEES"
-  >("ATTENDEES");
+  const {
+    viewState: modalViewState,
+    setField: setModalField,
+    resetFilters: resetModalFilters,
+  } = usePersistedViewState("session_details", {
+    defaults: {
+      tab: "ATTENDEES" as "ATTENDEES" | "ABSENTEES",
+      page: 1,
+      sortBy: "time" as AttendanceSortBy,
+      order: "asc" as AttendanceSortOrder,
+      showAllEligible: false,
+      search: "",
+    },
+  });
+
+  const attendanceModalTab = modalViewState.tab;
+  const setAttendanceModalTab = (tab: "ATTENDEES" | "ABSENTEES") => setModalField("tab", tab);
+
+  const attendancePage = modalViewState.page;
+  const setAttendancePage = (p: number) => setModalField("page", p);
+
+  const attendanceSortBy = modalViewState.sortBy;
+  const setAttendanceSortBy = (s: AttendanceSortBy) => setModalField("sortBy", s);
+
+  const attendanceOrder = modalViewState.order;
+  const setAttendanceOrder = (o: AttendanceSortOrder) => setModalField("order", o);
+
+  const showAllEligibleAbsentees = modalViewState.showAllEligible;
+  const setShowAllEligibleAbsentees = (val: boolean) => setModalField("showAllEligible", val);
+
+  const absenteesSearch = modalViewState.search;
+  const setAbsenteesSearch = (s: string) => setModalField("search", s);
+
   const [attendanceRecords, setAttendanceRecords] = useState<
     EventAttendanceRecord[]
   >([]);
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [attendanceError, setAttendanceError] = useState("");
-  const [attendancePage, setAttendancePage] = useState(1);
   const [attendanceTotalPages, setAttendanceTotalPages] = useState(1);
   const [attendanceTotalCount, setAttendanceTotalCount] = useState(0);
   const [attendanceExporting, setAttendanceExporting] = useState(false);
   const [membersCount, setMembersCount] = useState<number | null>(null);
-  const [attendanceSortBy, setAttendanceSortBy] =
-    useState<AttendanceSortBy>("time");
-  const [attendanceOrder, setAttendanceOrder] =
-    useState<AttendanceSortOrder>("asc");
+
   // Absentees Tab State
   const [absenteesList, setAbsenteesList] = useState<EventAbsentee[]>([]);
-  const [showAllEligibleAbsentees, setShowAllEligibleAbsentees] = useState(false);
   const [absenteesLoading, setAbsenteesLoading] = useState(false);
   const [absenteesError, setAbsenteesError] = useState("");
-  const [absenteesSearch, setAbsenteesSearch] = useState("");
 
   // Excuse Modal
   const [isExcuseModalOpen, setIsExcuseModalOpen] = useState(false);
@@ -1360,6 +1386,15 @@ const EventDetailsPage: React.FC = () => {
                         {showAllEligibleAbsentees
                           ? "← Show Participants Only"
                           : "Show All Eligible Members →"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={resetModalFilters}
+                        className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-100 transition inline-flex items-center gap-1"
+                        title="Reset absentees filters"
+                      >
+                        <RotateCcw className="w-3 h-3 text-slate-500" />
+                        <span>Reset filters</span>
                       </button>
                     </div>
                   </div>

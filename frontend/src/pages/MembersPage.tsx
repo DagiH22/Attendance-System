@@ -23,6 +23,7 @@ import {
   ChevronLeft,
   ChevronRight,
   AlertCircle,
+  RotateCcw,
 } from "lucide-react";
 
 export interface DashboardMember extends Member {
@@ -77,7 +78,7 @@ export const MembersPage: React.FC = () => {
   const isSuperAdmin = admin?.role === "SUPER_ADMIN";
 
   // URL-persisted view state (Item 4)
-  const { viewState, setViewState } = usePersistedViewState("members", {
+  const { viewState, setViewState, resetFilters } = usePersistedViewState("members", {
     defaults: {
       q: "",
       status: "ALL",
@@ -351,6 +352,15 @@ export const MembersPage: React.FC = () => {
               onToast={(msg) => showToast(msg)}
               label="Copy Phones"
             />
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition shadow-sm"
+              title="Reset all member filters"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+              <span>Reset filters</span>
+            </button>
           </div>
         }
       >
